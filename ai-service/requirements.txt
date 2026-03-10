@@ -1,0 +1,27 @@
+# model access
+transformers
+sentence_transformers
+google-genai
+google-cloud-vision
+scikit-learn
+
+# rag focus
+langchain
+chromadb
+rank_bm25
+
+# ocr
+pytesseract
+opencv-python
+
+# preprocessing
+pandas
+numpy
+matplotlib
+seaborn
+
+
+# core tech
+fastapi
+pydantic
+uvicorn
