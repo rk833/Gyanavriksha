@@ -26,10 +26,10 @@ class DocumentType(str, Enum):
 
 
 class EmbeddingStatus(str, Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    DONE = "done"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    DONE = "DONE"
+    FAILED = "FAILED"
 
 
 class SubmissionProcessingStatus(str, Enum):
@@ -57,15 +57,15 @@ class QuestionType(str, Enum):
 
 
 class QuestionDifficulty(str, Enum):
-    EASY = "easy"
-    MEDIUM = "medium"
-    HARD = "hard"
+    EASY = "EASY"
+    MEDIUM = "MEDIUM"
+    HARD = "HARD"
 
 
 class MicroQuizStatus(str, Enum):
-    ASSIGNED = "assigned"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
+    ASSIGNED = "ASSIGNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
 
 
 class PeriodType(str, Enum):
