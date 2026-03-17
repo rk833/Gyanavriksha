@@ -1,6 +1,5 @@
 version: "3.9"
 
-# =============================================================================
 #  Gyanavriksha – full-stack development compose
 #  Services: frontend-web | frontend-mobile | backend | ai-service |
 #            postgres | redis | mosquitto
@@ -9,14 +8,11 @@ version: "3.9"
 #    docker-compose up --build          # start everything
 #    docker-compose up backend postgres # start specific services
 #    docker-compose down -v             # stop and remove volumes
-# =============================================================================
 
 services:
 
-  # ---------------------------------------------------------------------------
   # React + Vite web dashboard
   # http://localhost:5173
-  # ---------------------------------------------------------------------------
   frontend-web:
     container_name: gyanavriksha_frontend_web
     build:
@@ -38,10 +34,8 @@ services:
     networks:
       - app-network
 
-  # ---------------------------------------------------------------------------
   # Expo React Native mobile app (development tunnel)
   # Scan QR from Expo Go app to connect
-  # ---------------------------------------------------------------------------
   frontend-mobile:
     container_name: gyanavriksha_frontend_mobile
     build:
@@ -64,11 +58,9 @@ services:
     networks:
       - app-network
 
-  # ---------------------------------------------------------------------------
   # FastAPI backend (core API)
   # http://localhost:8000
   # Docs: http://localhost:8000/docs
-  # ---------------------------------------------------------------------------
   backend:
     container_name: gyanavriksha_backend
     build:
@@ -105,11 +97,9 @@ services:
     networks:
       - app-network
 
-  # ---------------------------------------------------------------------------
   # FastAPI AI micro-service (OCR, RAG, grading, quiz generation)
   # http://localhost:8001
   # Docs: http://localhost:8001/docs
-  # ---------------------------------------------------------------------------
   ai-service:
     container_name: gyanavriksha_ai_service
     build:
@@ -142,9 +132,7 @@ services:
     networks:
       - app-network
 
-  # ---------------------------------------------------------------------------
   # PostgreSQL 16 – primary relational database
-  # ---------------------------------------------------------------------------
   postgres:
     container_name: gyanavriksha_postgres
     image: postgres:16-alpine
@@ -166,9 +154,7 @@ services:
     networks:
       - app-network
 
-  # ---------------------------------------------------------------------------
   # Redis 7 – job queue, rate limiting, session cache
-  # ---------------------------------------------------------------------------
   redis:
     container_name: gyanavriksha_redis
     image: redis:7-alpine
@@ -186,11 +172,9 @@ services:
     networks:
       - app-network
 
-  # ---------------------------------------------------------------------------
   # Eclipse Mosquitto – MQTT broker for IoT smart desk (ESP32)
   # MQTT:      localhost:1883
   # WebSocket: localhost:9001
-  # ---------------------------------------------------------------------------
   mosquitto:
     container_name: gyanavriksha_mosquitto
     build:
@@ -206,17 +190,13 @@ services:
     networks:
       - app-network
 
-# =============================================================================
 # Networks
-# =============================================================================
 networks:
   app-network:
     driver: bridge
     name: gyanavriksha_network
 
-# =============================================================================
 # Volumes
-# =============================================================================
 volumes:
   pg_data:
     name: gyanavriksha_pg_data

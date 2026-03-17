@@ -5,7 +5,7 @@ WORKDIR /app
 RUN npm install -g @expo/ngrok@^4.1.0
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 
