@@ -1,46 +1,30 @@
 # Gyanavriksha CI Pipeline
-# Triggers on push to develop and PRs targeting develop
-# Runs backend, frontend-web, and ai-service checks in parallel
+# Triggers on push/PR to develop/main when relevant files change
+# Runs backend, frontend-web, frontend-mobile, and ai-service checks in parallel
 
 name: Gyanavriksha CI
 
-# comment this after few commits to github
 on:
   push:
     branches: [develop, main]
+    paths:
+      - 'backend/**'
+      - 'ai-service/**'
+      - 'frontend-web/**'
+      - 'frontend-mobile/**'
+      - '.github/workflows/**'
+      - 'docker-compose.yml'
+      - 'docker/**'
   pull_request:
     branches: [develop, main]
 
-
-# uncomment this after few commits to github - so each job runs when its own files change
-# on:
-#   push:
-#     branches: [develop, main]
-#     paths:
-#       - 'backend/**'
-#       - 'frontend-web/**'
-#       - 'ai-service/**'
-#       - '.github/workflows/**'
-#   pull_request:
-#     branches: [develop, main]
-
-# And add this to each jon individually:
-# backend:
-#     name: Backend (FastAPI)
-#     runs-on: ubuntu-latest
-#     # Only trigger when backend files change
-#     if: |
-#       contains(github.event.head_commit.modified, 'backend/') ||
-#       contains(github.event.head_commit.added, 'backend/') ||
-#       github.event_name == 'pull_request'
-
-# Cancel any in-progress runs for the same branch
+# Cancel in-progress runs for the same branch
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # BACKEND — Python FastAPI
+  # BACKEND — Python 3.12 FastAPI (uv)
   backend:
     name: Backend (FastAPI)
     runs-on: ubuntu-latest
@@ -48,45 +32,47 @@ jobs:
       run:
         working-directory: backend
 
-    # Only run when backend files change (or workflow file changes)
-    # On first push this filter won't exist yet, so it runs everything
+    # Only trigger when backend files (or workflow files) change, or on any PR
     if: |
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request'
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'backend/') ||
+      contains(github.event.head_commit.added, 'backend/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Cache pip dependencies
+      - name: Install uv
+        run: pip install --upgrade uv
+
+      - name: Cache uv virtualenv
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-backend-${{ hashFiles('backend/requirements.txt') }}
+          path: backend/.venv
+          key: ${{ runner.os }}-uv-backend-${{ hashFiles('backend/uv.lock') }}
           restore-keys: |
-            ${{ runner.os }}-pip-backend-
+            ${{ runner.os }}-uv-backend-
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx flake8
+        run: uv sync --frozen
+
+      - name: Install dev/test tools
+        run: uv add --dev pytest pytest-asyncio httpx flake8 --no-sync || true
 
       - name: Lint with flake8
         run: |
-          # Stop the build if there are syntax errors or undefined names
-          flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Warnings as non-blocking (exit-zero so it doesn't fail the build yet)
-          flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+          uv run flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          uv run flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
       - name: Run tests
-        run: |
-          python -m pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short
         env:
           DATABASE_URL: sqlite+aiosqlite:///./test.db
           SECRET_KEY: test-secret-key-ci-only
@@ -101,6 +87,14 @@ jobs:
       run:
         working-directory: frontend-web
 
+    # Only trigger when frontend-web files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'frontend-web/') ||
+      contains(github.event.head_commit.added, 'frontend-web/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -109,28 +103,58 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        with:
-          path: frontend-web/node_modules
-          key: ${{ runner.os }}-node-frontend-${{ hashFiles('frontend-web/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-frontend-
+          cache: "npm"
+          cache-dependency-path: frontend-web/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Lint check
         run: npm run lint
-        # If lint script doesn't exist yet, this will fail gracefully
         continue-on-error: true
 
       - name: Build
         run: npm run build
 
-  # AI SERVICE — Python Microservice
+  # FRONTEND MOBILE — Expo (React Native)
+  frontend-mobile:
+    name: Frontend Mobile (Expo)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-mobile
 
+    # Only trigger when frontend-mobile files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'frontend-mobile/') ||
+      contains(github.event.head_commit.added, 'frontend-mobile/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend-mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint check
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Test
+        run: npm test
+        continue-on-error: true
+
+  # AI SERVICE — Python 3.12 FastAPI microservice (uv)
   ai-service:
     name: AI Microservice
     runs-on: ubuntu-latest
@@ -138,54 +162,65 @@ jobs:
       run:
         working-directory: ai-service
 
+    # Only trigger when ai-service files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'ai-service/') ||
+      contains(github.event.head_commit.added, 'ai-service/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Cache pip dependencies
+      - name: Install uv
+        run: pip install --upgrade uv
+
+      - name: Cache uv virtualenv
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-ai-${{ hashFiles('ai-service/requirements.txt') }}
+          path: ai-service/.venv
+          key: ${{ runner.os }}-uv-ai-${{ hashFiles('ai-service/uv.lock') }}
           restore-keys: |
-            ${{ runner.os }}-pip-ai-
+            ${{ runner.os }}-uv-ai-
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx flake8
+        run: uv sync --frozen
+
+      - name: Install dev/test tools
+        run: uv add --dev pytest pytest-asyncio httpx flake8 --no-sync || true
 
       - name: Lint with flake8
         run: |
-          flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+          uv run flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          uv run flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
       - name: Run tests
-        run: |
-          python -m pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short
         env:
           GOOGLE_CLOUD_VISION_KEY: test-key
           GEMINI_API_KEY: test-key
           CHROMA_HOST: localhost
           CHROMA_PORT: 8000
 
-  # STATUS CHECK — Final gate (useful for branch protection)
+  # CI STATUS — Final gate for branch protection rules
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [backend, frontend-web, ai-service]
+    needs: [backend, frontend-web, frontend-mobile, ai-service]
     if: always()
     steps:
       - name: Check all jobs passed
         run: |
           if [[ "${{ needs.backend.result }}" == "failure" || \
                 "${{ needs.frontend-web.result }}" == "failure" || \
+                "${{ needs.frontend-mobile.result }}" == "failure" || \
                 "${{ needs.ai-service.result }}" == "failure" ]]; then
             echo "One or more CI jobs failed"
             exit 1
