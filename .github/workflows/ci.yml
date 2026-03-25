@@ -1,38 +1,22 @@
 # Gyanavriksha CI Pipeline
-# Triggers on push to develop/main and PRs targeting develop/main
-# Runs backend, frontend-web, and ai-service checks in parallel
+# Triggers on push/PR to develop/main when relevant files change
+# Runs backend, frontend-web, frontend-mobile, and ai-service checks in parallel
 
 name: Gyanavriksha CI
 
-# comment this after few commits to github
 on:
   push:
     branches: [develop, main]
+    paths:
+      - 'backend/**'
+      - 'ai-service/**'
+      - 'frontend-web/**'
+      - 'frontend-mobile/**'
+      - '.github/workflows/**'
+      - 'docker-compose.yml'
+      - 'docker/**'
   pull_request:
     branches: [develop, main]
-
-# Uncomment below + per-job `if:` filters once the repo has enough history
-# on:
-#   push:
-#     branches: [develop, main]
-#     paths:
-#       - 'backend/**'
-#       - 'frontend-web/**'
-#       - 'ai-service/**'
-#       - '.github/workflows/**'
-#   pull_request:
-#     branches: [develop, main]
-
-# And add this to each job individually:
-# Example job-level filter (backend):
-# backend:
-#   name: Backend (FastAPI)
-#   runs-on: ubuntu-latest
-# Only trigger when backend files change
-#   if: |
-#     contains(github.event.head_commit.modified, 'backend/') ||
-#     contains(github.event.head_commit.added, 'backend/') ||
-#     github.event_name == 'pull_request'
 
 # Cancel in-progress runs for the same branch
 concurrency:
@@ -47,6 +31,14 @@ jobs:
     defaults:
       run:
         working-directory: backend
+
+    # Only trigger when backend files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'backend/') ||
+      contains(github.event.head_commit.added, 'backend/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
 
     steps:
       - name: Checkout code
@@ -95,6 +87,14 @@ jobs:
       run:
         working-directory: frontend-web
 
+    # Only trigger when frontend-web files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'frontend-web/') ||
+      contains(github.event.head_commit.added, 'frontend-web/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,6 +123,14 @@ jobs:
     defaults:
       run:
         working-directory: frontend-mobile
+
+    # Only trigger when frontend-mobile files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'frontend-mobile/') ||
+      contains(github.event.head_commit.added, 'frontend-mobile/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
 
     steps:
       - name: Checkout code
@@ -153,6 +161,14 @@ jobs:
     defaults:
       run:
         working-directory: ai-service
+
+    # Only trigger when ai-service files (or workflow files) change, or on any PR
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(github.event.head_commit.modified, 'ai-service/') ||
+      contains(github.event.head_commit.added, 'ai-service/') ||
+      contains(github.event.head_commit.modified, '.github/workflows/') ||
+      contains(github.event.head_commit.added, '.github/workflows/')
 
     steps:
       - name: Checkout code
