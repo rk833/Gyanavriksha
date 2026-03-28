@@ -6,13 +6,17 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.db.models.user import User
 from app.schemas.user import (
+    ForgotPasswordRequest,
     LoginResponse,
     MessageResponse,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
     TokenRefreshRequest,
     TokenResponse,
     UserLoginRequest,
     UserRegisterRequest,
     UserResponse,
+    VerifyEmailRequest,
 )
 from app.services import auth_service
 
@@ -135,3 +139,65 @@ def logout(
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
+
+
+# Email verification
+
+@router.post("/verify-email", response_model=MessageResponse)
+def verify_email(data: VerifyEmailRequest, db: Session = Depends(get_db)):
+    try:
+        auth_service.verify_email(db, data.token)
+        return MessageResponse(message="Email verified successfully")
+    except ValueError as e:
+        error = str(e)
+        if error == "INVALID_TOKEN":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification token")
+        if error == "TOKEN_ALREADY_USED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This token has already been used")
+        if error == "TOKEN_EXPIRED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification token has expired")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+def resend_verification(data: ResendVerificationRequest, db: Session = Depends(get_db)):
+    try:
+        token = auth_service.resend_verification(db, data.email)
+        if token:
+            from app.services.email_service import send_verification_email
+            send_verification_email(data.email, token)
+        return MessageResponse(message="If your email is registered and unverified, a new verification email has been sent")
+    except ValueError as e:
+        error = str(e)
+        if error == "ALREADY_VERIFIED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already verified")
+        # Don't reveal if user exists or not
+        return MessageResponse(message="If your email is registered and unverified, a new verification email has been sent")
+
+
+# Password reset
+
+@router.post("/forgot-password", response_model=MessageResponse)
+def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    token = auth_service.request_password_reset(db, data.email)
+    if token:
+        from app.services.email_service import send_password_reset_email
+        send_password_reset_email(data.email, token)
+    # Always return 200 to prevent email enumeration
+    return MessageResponse(message="If an account with that email exists, a password reset link has been sent")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    try:
+        auth_service.reset_password(db, data.token, data.new_password)
+        return MessageResponse(message="Password has been reset successfully")
+    except ValueError as e:
+        error = str(e)
+        if error == "INVALID_TOKEN":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reset token")
+        if error == "TOKEN_ALREADY_USED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This reset token has already been used")
+        if error == "TOKEN_EXPIRED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset token has expired")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)

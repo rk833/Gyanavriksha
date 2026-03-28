@@ -7,9 +7,11 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    generate_verification_token,
     hash_password,
     hash_token,
     verify_password,
+    verify_token_hash,
 )
 from app.db.models.email_verification import EmailVerification
 from app.db.models.refresh_token import RefreshToken
@@ -41,8 +43,6 @@ def register_user(db: Session, data: UserRegisterRequest) -> User:
     db.flush()
 
     # Create email verification record
-    from app.core.security import generate_verification_token
-
     raw_token = generate_verification_token()
     verification = EmailVerification(
         user_id=user.user_id,
@@ -198,8 +198,124 @@ def get_user_by_id(db: Session, user_id: str) -> User | None:
     return db.query(User).filter(User.user_id == user_id).first()
 
 
-# Internal Helpers 
+# Email verification
 
+def verify_email(db: Session, token: str) -> None:
+    token_hash_val = hash_token(token)
+    record = (
+        db.query(EmailVerification)
+        .filter(
+            EmailVerification.token_hash == token_hash_val,
+            EmailVerification.type == EmailVerificationType.EMAIL_VERIFY,
+        )
+        .first()
+    )
+    if not record:
+        raise ValueError("INVALID_TOKEN")
+    if record.used_at is not None:
+        raise ValueError("TOKEN_ALREADY_USED")
+    if record.expires_at < datetime.now(timezone.utc):
+        raise ValueError("TOKEN_EXPIRED")
+
+    record.used_at = datetime.now(timezone.utc)
+    user = db.query(User).filter(User.user_id == record.user_id).first()
+    if user:
+        user.is_email_verified = True
+    db.commit()
+
+
+def resend_verification(db: Session, email: str) -> str | None:
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise ValueError("USER_NOT_FOUND")
+    if user.is_email_verified:
+        raise ValueError("ALREADY_VERIFIED")
+
+    # Invalidate old verification tokens
+    db.query(EmailVerification).filter(
+        EmailVerification.user_id == user.user_id,
+        EmailVerification.type == EmailVerificationType.EMAIL_VERIFY,
+        EmailVerification.used_at.is_(None),
+    ).delete()
+
+    raw_token = generate_verification_token()
+    verification = EmailVerification(
+        user_id=user.user_id,
+        token_hash=hash_token(raw_token),
+        type=EmailVerificationType.EMAIL_VERIFY,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+    )
+    db.add(verification)
+    db.commit()
+
+    if settings.ENVIRONMENT == "development":
+        print(f"\n[DEV] Resend verification token for {email}: {raw_token}\n")
+
+    return raw_token
+
+
+# Password reset
+
+def request_password_reset(db: Session, email: str) -> str | None:
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        # Always return None silently to prevent email enumeration
+        return None
+
+    # Invalidate old reset tokens
+    db.query(EmailVerification).filter(
+        EmailVerification.user_id == user.user_id,
+        EmailVerification.type == EmailVerificationType.PASSWORD_RESET,
+        EmailVerification.used_at.is_(None),
+    ).delete()
+
+    raw_token = generate_verification_token()
+    record = EmailVerification(
+        user_id=user.user_id,
+        token_hash=hash_token(raw_token),
+        type=EmailVerificationType.PASSWORD_RESET,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    db.add(record)
+    db.commit()
+
+    if settings.ENVIRONMENT == "development":
+        print(f"\n[DEV] Password reset token for {email}: {raw_token}\n")
+
+    return raw_token
+
+
+def reset_password(db: Session, token: str, new_password: str) -> None:
+    token_hash_val = hash_token(token)
+    record = (
+        db.query(EmailVerification)
+        .filter(
+            EmailVerification.token_hash == token_hash_val,
+            EmailVerification.type == EmailVerificationType.PASSWORD_RESET,
+        )
+        .first()
+    )
+    if not record:
+        raise ValueError("INVALID_TOKEN")
+    if record.used_at is not None:
+        raise ValueError("TOKEN_ALREADY_USED")
+    if record.expires_at < datetime.now(timezone.utc):
+        raise ValueError("TOKEN_EXPIRED")
+
+    record.used_at = datetime.now(timezone.utc)
+
+    user = db.query(User).filter(User.user_id == record.user_id).first()
+    if not user:
+        raise ValueError("USER_NOT_FOUND")
+
+    user.password_hash = hash_password(new_password)
+
+    # Force re-login everywhere by clearing all refresh tokens
+    db.query(RefreshToken).filter(RefreshToken.user_id == user.user_id).delete()
+    db.commit()
+
+
+# Internal helpers
 
 def _store_refresh_token(db: Session, user_id, raw_token: str) -> None:
     expires_at = datetime.now(timezone.utc) + timedelta(
