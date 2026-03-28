@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status  # type: ignore
+from fastapi import APIRouter, Depends, HTTPException, Request, status  # type: ignore
 from fastapi.security import OAuth2PasswordBearer  # type: ignore
 from sqlalchemy.orm import Session
 
+from app.api.middleware.rate_limiter import limiter
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.db.models.user import User
@@ -9,10 +10,18 @@ from app.schemas.user import (
     ForgotPasswordRequest,
     LoginResponse,
     MessageResponse,
+    QrAuthenticateRequest,
+    QrScanRequest,
+    QrSessionResponse,
+    QrStatusResponse,
     ResendVerificationRequest,
     ResetPasswordRequest,
     TokenRefreshRequest,
     TokenResponse,
+    TwoFactorDisableRequest,
+    TwoFactorSetupResponse,
+    TwoFactorSetupVerifyRequest,
+    TwoFactorValidateRequest,
     UserLoginRequest,
     UserRegisterRequest,
     UserResponse,
@@ -64,7 +73,8 @@ def get_current_user(
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def register(data: UserRegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+def register(request: Request, data: UserRegisterRequest, db: Session = Depends(get_db)):
     try:
         user = auth_service.register_user(db, data)
         return UserResponse.model_validate(user)
@@ -81,7 +91,8 @@ def register(data: UserRegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(data: UserLoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def login(request: Request, data: UserLoginRequest, db: Session = Depends(get_db)):
     try:
         result = auth_service.authenticate_user(db, data.email, data.password)
         return result
@@ -160,7 +171,8 @@ def verify_email(data: VerifyEmailRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
-def resend_verification(data: ResendVerificationRequest, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+def resend_verification(request: Request, data: ResendVerificationRequest, db: Session = Depends(get_db)):
     try:
         token = auth_service.resend_verification(db, data.email)
         if token:
@@ -178,7 +190,8 @@ def resend_verification(data: ResendVerificationRequest, db: Session = Depends(g
 # Password reset
 
 @router.post("/forgot-password", response_model=MessageResponse)
-def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session = Depends(get_db)):
     token = auth_service.request_password_reset(db, data.email)
     if token:
         from app.services.email_service import send_password_reset_email
@@ -200,4 +213,129 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This reset token has already been used")
         if error == "TOKEN_EXPIRED":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset token has expired")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+# 2FA (TOTP) endpoints
+
+@router.post("/2fa/setup", response_model=TwoFactorSetupResponse)
+def setup_2fa(current_user: User = Depends(get_current_user)):
+    try:
+        result = auth_service.setup_2fa(current_user)
+        return TwoFactorSetupResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/2fa/verify", response_model=MessageResponse)
+def verify_2fa_setup(
+    data: TwoFactorSetupVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        auth_service.verify_2fa_setup(db, current_user, data.secret, data.code)
+        return MessageResponse(message="Two-factor authentication enabled successfully")
+    except ValueError as e:
+        error = str(e)
+        if error == "INVALID_CODE":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+@router.post("/2fa/validate", response_model=TokenResponse)
+@limiter.limit("5/minute")
+def validate_2fa(request: Request, data: TwoFactorValidateRequest, db: Session = Depends(get_db)):
+    try:
+        result = auth_service.validate_2fa(db, str(data.user_id), data.code)
+        return TokenResponse(**result)
+    except ValueError as e:
+        error = str(e)
+        if error == "2FA_NOT_ENABLED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Two-factor authentication is not enabled")
+        if error == "INVALID_CODE":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication code")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+@router.post("/2fa/disable", response_model=MessageResponse)
+def disable_2fa(
+    data: TwoFactorDisableRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        auth_service.disable_2fa(db, current_user, data.code, data.password)
+        return MessageResponse(message="Two-factor authentication disabled successfully")
+    except ValueError as e:
+        error = str(e)
+        if error == "2FA_NOT_ENABLED":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Two-factor authentication is not enabled")
+        if error == "INVALID_PASSWORD":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+        if error == "INVALID_CODE":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication code")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+# QR Login endpoints
+
+@router.post("/qr/create", response_model=QrSessionResponse)
+def create_qr_session(db: Session = Depends(get_db)):
+    try:
+        result = auth_service.create_qr_session(db)
+        return QrSessionResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/qr/scan")
+def scan_qr_session(
+    data: QrScanRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        auth_service.scan_qr_session(db, str(data.session_id), current_user)
+        return MessageResponse(message="QR code scanned successfully")
+    except ValueError as e:
+        error = str(e)
+        if error == "SESSION_NOT_FOUND":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR session not found")
+        if error == "SESSION_EXPIRED":
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="QR session has expired")
+        if error == "SESSION_INVALID_STATE":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="QR session is not in a valid state")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+@router.get("/qr/status/{session_id}", response_model=QrStatusResponse)
+def get_qr_status(session_id: str, db: Session = Depends(get_db)):
+    try:
+        result = auth_service.get_qr_session_status(db, session_id)
+        return QrStatusResponse(**result)
+    except ValueError as e:
+        error = str(e)
+        if error == "SESSION_NOT_FOUND":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR session not found")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+@router.post("/qr/authenticate")
+def authenticate_qr(
+    data: QrAuthenticateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = auth_service.authenticate_qr_session(db, str(data.session_id), current_user)
+        return result
+    except ValueError as e:
+        error = str(e)
+        if error == "SESSION_NOT_FOUND":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR session not found")
+        if error == "SESSION_INVALID_STATE":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="QR session is not in a valid state")
+        if error == "SESSION_USER_MISMATCH":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session user mismatch")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)

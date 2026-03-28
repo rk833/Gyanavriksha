@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from app.core.security import (
     verify_token_hash,
 )
 from app.db.models.email_verification import EmailVerification
+from app.db.models.qr_session import QrSession
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
 from app.schemas.user import (
@@ -22,7 +24,7 @@ from app.schemas.user import (
     UserRegisterRequest,
     UserResponse,
 )
-from app.shared.source_enum import EmailVerificationType
+from app.shared.source_enum import EmailVerificationType, QrSessionStatus
 
 
 # Registration 
@@ -313,6 +315,177 @@ def reset_password(db: Session, token: str, new_password: str) -> None:
     # Force re-login everywhere by clearing all refresh tokens
     db.query(RefreshToken).filter(RefreshToken.user_id == user.user_id).delete()
     db.commit()
+
+
+# 2FA (TOTP)
+
+def setup_2fa(user: User) -> dict:
+    import base64
+    import io
+
+    import pyotp  # type: ignore
+    import qrcode  # type: ignore
+
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=user.email, issuer_name="Gyanavriksha")
+
+    # Generate QR code as base64
+    img = qrcode.make(uri)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    return {"qr_code_base64": qr_base64, "secret": secret}
+
+
+def verify_2fa_setup(db: Session, user: User, secret: str, code: str) -> None:
+    import pyotp  # type: ignore
+
+    totp = pyotp.TOTP(secret)
+    if not totp.verify(code):
+        raise ValueError("INVALID_CODE")
+
+    user.totp_secret = secret
+    user.totp_enabled = True
+    db.commit()
+
+
+def validate_2fa(db: Session, user_id: str, code: str) -> dict:
+    import pyotp  # type: ignore
+
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user or not user.totp_enabled or not user.totp_secret:
+        raise ValueError("2FA_NOT_ENABLED")
+
+    totp = pyotp.TOTP(user.totp_secret)
+    if not totp.verify(code):
+        raise ValueError("INVALID_CODE")
+
+    # Issue tokens
+    token_data = {
+        "sub": str(user.user_id),
+        "email": user.email,
+        "role": user.role.value,
+    }
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+    _store_refresh_token(db, user.user_id, refresh_token)
+
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
+
+def disable_2fa(db: Session, user: User, code: str, password: str) -> None:
+    import pyotp  # type: ignore
+
+    if not user.totp_enabled or not user.totp_secret:
+        raise ValueError("2FA_NOT_ENABLED")
+
+    if not verify_password(password, user.password_hash):
+        raise ValueError("INVALID_PASSWORD")
+
+    totp = pyotp.TOTP(user.totp_secret)
+    if not totp.verify(code):
+        raise ValueError("INVALID_CODE")
+
+    user.totp_secret = None
+    user.totp_enabled = False
+    db.commit()
+
+
+# QR session login
+
+def create_qr_session(db: Session) -> dict:
+    session_id = str(uuid.uuid4())
+    qr_data = f"gyanavriksha://auth?session={session_id}"
+
+    qr_session = QrSession(
+        qr_code_hash=hash_token(session_id),
+        status=QrSessionStatus.PENDING,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+    )
+    db.add(qr_session)
+    db.commit()
+    db.refresh(qr_session)
+
+    return {
+        "session_id": str(qr_session.qr_session_id),
+        "qr_data": qr_data,
+        "expires_in": 120,
+    }
+
+
+def scan_qr_session(db: Session, session_id: str, user: User) -> None:
+    qr_session = db.query(QrSession).filter(QrSession.qr_session_id == session_id).first()
+    if not qr_session:
+        raise ValueError("SESSION_NOT_FOUND")
+
+    if qr_session.expires_at < datetime.now(timezone.utc):
+        qr_session.status = QrSessionStatus.EXPIRED
+        db.commit()
+        raise ValueError("SESSION_EXPIRED")
+
+    if qr_session.status != QrSessionStatus.PENDING:
+        raise ValueError("SESSION_INVALID_STATE")
+
+    qr_session.status = QrSessionStatus.SCANNED
+    qr_session.user_id = user.user_id
+    qr_session.scanned_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def get_qr_session_status(db: Session, session_id: str) -> dict:
+    qr_session = db.query(QrSession).filter(QrSession.qr_session_id == session_id).first()
+    if not qr_session:
+        raise ValueError("SESSION_NOT_FOUND")
+
+    # Check expiry
+    if qr_session.status == QrSessionStatus.PENDING and qr_session.expires_at < datetime.now(timezone.utc):
+        qr_session.status = QrSessionStatus.EXPIRED
+        db.commit()
+
+    return {"status": qr_session.status.value}
+
+
+def authenticate_qr_session(db: Session, session_id: str, user: User) -> dict:
+    qr_session = db.query(QrSession).filter(QrSession.qr_session_id == session_id).first()
+    if not qr_session:
+        raise ValueError("SESSION_NOT_FOUND")
+
+    if qr_session.status != QrSessionStatus.SCANNED:
+        raise ValueError("SESSION_INVALID_STATE")
+
+    if qr_session.user_id != user.user_id:
+        raise ValueError("SESSION_USER_MISMATCH")
+
+    # Issue tokens for web session
+    token_data = {
+        "sub": str(user.user_id),
+        "email": user.email,
+        "role": user.role.value,
+    }
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+    _store_refresh_token(db, user.user_id, refresh_token)
+
+    qr_session.status = QrSessionStatus.AUTHENTICATED
+    db.commit()
+
+    return {
+        "status": "authenticated",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
 
 
 # Internal helpers
