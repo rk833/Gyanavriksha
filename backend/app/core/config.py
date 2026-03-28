@@ -1,4 +1,6 @@
 from functools import lru_cache
+from urllib.parse import quote_plus
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,7 +9,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Gyanavriksha Backend API"
     ENVIRONMENT: str = "development"
 
-    # Database settings – values come from .env / environment
+    # Database settings
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
@@ -15,24 +17,35 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "gyanavriksha"
     POSTGRES_LOG_LEVEL: str = "info"
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Email / SMTP
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "noreply@gyanavriksha.com"
+
+    # Frontend URL (for email verification/reset links)
+    FRONTEND_URL: str = "http://localhost:5173"
+
     @property
     def SYNC_DATABASE_URL(self) -> str:
-        """
-        Synchronous URL used by Alembic for migrations.
-        Uses psycopg2 driver.
-        """
+        password = quote_plus(self.POSTGRES_PASSWORD)
         return (
-            f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+psycopg2://{self.POSTGRES_USER}:{password}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     @property
     def ASYNC_DATABASE_URL(self) -> str:
-        """
-        Async URL for application runtime (if/when async engine is used).
-        """
+        password = quote_plus(self.POSTGRES_PASSWORD)
         return (
-            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{password}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
@@ -49,4 +62,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
