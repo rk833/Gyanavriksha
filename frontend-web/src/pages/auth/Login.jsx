@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, QrCode, User, GraduationCap, Settings, Loader2, ArrowRight } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, QrCode, Loader2, ArrowRight, User, GraduationCap, Settings } from 'lucide-react';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 
 const ROLES = [
-  { value: 'student', label: 'STUDENT', icon: GraduationCap },
-  { value: 'instructor', label: 'INSTRUCTOR', icon: User },
-  { value: 'admin', label: 'ADMIN', icon: Settings },
+  { key: 'student', label: 'Student', icon: GraduationCap },
+  { key: 'instructor', label: 'Instructor', icon: User },
+  { key: 'admin', label: 'Admin', icon: Settings },
 ];
 
 export default function Login() {
@@ -22,7 +22,6 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
 
-  // 2FA state
   const [needs2FA, setNeeds2FA] = useState(false);
   const [twoFACode, setTwoFACode] = useState('');
   const [twoFAUserId, setTwoFAUserId] = useState(null);
@@ -60,7 +59,7 @@ export default function Login() {
         toast('Enter your 2FA code to continue');
       } else {
         toast.success('Welcome back!');
-        navigate(getRedirectPath(selectedRole), { replace: true });
+        navigate(getRedirectPath(data.user?.role || selectedRole), { replace: true });
       }
     } catch (err) {
       const detail = err.response?.data?.detail || 'Login failed';
@@ -78,9 +77,9 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await complete2FA(twoFAUserId, twoFACode);
+      const data = await complete2FA(twoFAUserId, twoFACode);
       toast.success('Welcome back!');
-      navigate(getRedirectPath(selectedRole), { replace: true });
+      navigate(getRedirectPath(data.user?.role || selectedRole), { replace: true });
     } catch (err) {
       const detail = err.response?.data?.detail || 'Invalid code';
       toast.error(detail);
@@ -89,13 +88,12 @@ export default function Login() {
     }
   };
 
-  // 2FA input screen
   if (needs2FA) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <div className="w-full max-w-md bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Two-Factor Authentication</h2>
-          <p className="text-gray-600 mb-6">Enter the 6-digit code from your authenticator app.</p>
+      <div className="min-h-screen bg-background flex items-center justify-center px-4 font-display">
+        <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-primary-light p-8">
+          <h2 className="text-2xl font-bold text-primary-dark mb-2">Two-Factor Authentication</h2>
+          <p className="text-slate-500 mb-6">Enter the 6-digit code from your authenticator app.</p>
           <form onSubmit={handle2FASubmit} className="space-y-4">
             <input
               type="text"
@@ -104,20 +102,20 @@ export default function Login() {
               value={twoFACode}
               onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ''))}
               placeholder="000000"
-              className="w-full text-center text-2xl tracking-[0.5em] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900 outline-none"
+              className="w-full text-center text-2xl tracking-[0.5em] px-4 py-3 border border-primary-light rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
               autoFocus
             />
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gray-900 text-white rounded-lg font-semibold uppercase tracking-wider hover:bg-gray-800 transition disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full py-3 bg-primary text-white rounded-lg font-semibold hover:bg-primary/90 transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Verify'}
             </button>
             <button
               type="button"
               onClick={() => { setNeeds2FA(false); setTwoFACode(''); }}
-              className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
+              className="w-full text-center text-sm text-slate-500 hover:text-primary-dark"
             >
               Back to login
             </button>
@@ -128,52 +126,59 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex">
-      {/* Left: Hero image placeholder */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gray-100 items-center justify-center relative">
-        <div className="border-2 border-dashed border-gray-300 w-3/4 h-3/4 flex flex-col items-center justify-center text-gray-400">
-          <div className="w-12 h-12 border border-gray-300 mb-4" />
-          <p className="text-sm uppercase tracking-wider">Hero / Campaign Image</p>
-          <p className="text-sm uppercase tracking-wider">Replace with actual asset</p>
-          <p className="text-xs mt-2">Recommended: 880 x 660 px</p>
+    <div className="min-h-screen flex font-display">
+      {/* Left: Hero panel */}
+      <div className="hidden lg:flex lg:w-1/2 bg-primary-dark items-center justify-center relative overflow-hidden">
+        <div className="flex flex-col items-center justify-center text-white z-10">
+          <img src="/images/logo.png" alt="Gyanavriksha" className="w-64 h-64 object-contain mb-6 drop-shadow-lg" />
+          <h2 className="text-2xl font-bold tracking-tight">Smart Learning Ecosystem</h2>
+          <p className="text-primary-light/80 mt-2 text-sm">AI-Powered Education for Nepal's Secondary Schools</p>
         </div>
+        {/* Decorative circles */}
+        <div className="absolute -top-20 -left-20 w-80 h-80 rounded-full bg-primary/20" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-primary/10" />
+
         {/* Bottom bar */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gray-900 text-white px-6 py-3 flex items-center gap-3">
-          <div className="w-8 h-8 border border-white rounded flex items-center justify-center">
-            <ArrowRight className="w-4 h-4" />
-          </div>
-          <span className="font-bold uppercase tracking-wider">Gyanavriksha</span>
-          <span className="text-gray-400 text-sm ml-auto uppercase tracking-wider">Smart Learning Ecosystem</span>
+        <div className="absolute bottom-0 left-0 right-0 bg-black/20 backdrop-blur-sm text-white px-6 py-3 flex items-center gap-3">
+          <img src="/images/logo-icon.png" alt="" className="w-8 h-8" />
+          <span className="font-bold uppercase tracking-wider text-sm">Gyanavriksha</span>
+          <span className="text-primary-light/60 text-xs ml-auto uppercase tracking-wider">Learning Ecosystem for Secondary Education</span>
         </div>
       </div>
 
       {/* Right: Login form */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
+      <div className="flex-1 bg-background flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
-          <h1 className="text-3xl font-bold text-gray-900 mb-1">Welcome Back</h1>
-          <p className="text-gray-600 mb-8">Select your role, then sign in to continue.</p>
+          {/* Mobile logo */}
+          <div className="lg:hidden flex items-center gap-3 mb-8">
+            <img src="/images/logo-icon.png" alt="Gyanavriksha" className="w-10 h-10" />
+            <span className="font-bold text-primary-dark text-lg">Gyanavriksha</span>
+          </div>
+
+          <h1 className="text-3xl font-bold text-primary-dark mb-1">Welcome Back</h1>
+          <p className="text-slate-500 mb-6">Select your role, then sign in to continue.</p>
 
           {/* Role selector */}
-          <div className="mb-8">
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 block">
+          <div className="mb-6">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">
               Select Role
             </label>
-            <div className="grid grid-cols-3 gap-3">
-              {ROLES.map(({ value, label, icon: Icon }) => (
+            <div className="grid grid-cols-3 gap-2">
+              {ROLES.map(({ key, label, icon: Icon }) => (
                 <button
-                  key={value}
+                  key={key}
                   type="button"
-                  onClick={() => setSelectedRole(value)}
-                  className={`relative flex flex-col items-center gap-2 py-4 rounded-lg border-2 transition ${
-                    selectedRole === value
-                      ? 'bg-gray-900 text-white border-gray-900'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                  onClick={() => setSelectedRole(key)}
+                  className={`relative flex flex-col items-center gap-2 py-4 px-3 rounded-lg border-2 transition-all ${
+                    selectedRole === key
+                      ? 'border-primary bg-primary text-white shadow-md'
+                      : 'border-primary-light bg-white text-slate-600 hover:border-primary/40'
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className="w-6 h-6" />
                   <span className="text-xs font-semibold uppercase tracking-wider">{label}</span>
-                  {selectedRole === value && (
-                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-gray-900 border-2 border-white rounded-full" />
+                  {selectedRole === key && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-white" />
                   )}
                 </button>
               ))}
@@ -183,11 +188,11 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Email */}
             <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">
                 Email Address
               </label>
               <div className="relative">
-                <div className="absolute left-0 top-0 bottom-0 w-12 flex items-center justify-center border-r border-gray-300 text-gray-400">
+                <div className="absolute left-0 top-0 bottom-0 w-12 flex items-center justify-center border-r border-primary-light text-slate-400">
                   <Mail className="w-4 h-4" />
                 </div>
                 <input
@@ -196,7 +201,7 @@ export default function Login() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@gyanavriksha.edu.np"
                   className={`w-full pl-14 pr-4 py-3 border rounded-lg outline-none transition ${
-                    errors.email ? 'border-red-400 focus:ring-red-200' : 'border-gray-300 focus:ring-gray-200'
+                    errors.email ? 'border-red-400 focus:ring-red-200' : 'border-primary-light focus:ring-primary/20 focus:border-primary'
                   } focus:ring-2`}
                 />
               </div>
@@ -205,11 +210,11 @@ export default function Login() {
 
             {/* Password */}
             <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">
                 Password
               </label>
               <div className="relative">
-                <div className="absolute left-0 top-0 bottom-0 w-12 flex items-center justify-center border-r border-gray-300 text-gray-400">
+                <div className="absolute left-0 top-0 bottom-0 w-12 flex items-center justify-center border-r border-primary-light text-slate-400">
                   <Lock className="w-4 h-4" />
                 </div>
                 <input
@@ -218,19 +223,19 @@ export default function Login() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   className={`w-full pl-14 pr-12 py-3 border rounded-lg outline-none transition ${
-                    errors.password ? 'border-red-400 focus:ring-red-200' : 'border-gray-300 focus:ring-gray-200'
+                    errors.password ? 'border-red-400 focus:ring-red-200' : 'border-primary-light focus:ring-primary/20 focus:border-primary'
                   } focus:ring-2`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary"
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
               <div className="flex justify-end mt-1">
-                <Link to="/forgot-password" className="text-sm text-blue-600 hover:underline">
+                <Link to="/forgot-password" className="text-sm text-primary hover:underline">
                   Forgot password?
                 </Link>
               </div>
@@ -241,7 +246,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gray-900 text-white rounded-lg font-semibold uppercase tracking-wider hover:bg-gray-800 transition disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full py-3 bg-primary-dark text-white rounded-lg font-semibold uppercase tracking-wider hover:bg-primary-dark/90 transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -255,39 +260,31 @@ export default function Login() {
 
           {/* Divider */}
           <div className="flex items-center my-6">
-            <div className="flex-1 border-t border-gray-200" />
-            <span className="px-4 text-xs text-gray-400 uppercase tracking-wider">Alternative Access</span>
-            <div className="flex-1 border-t border-gray-200" />
+            <div className="flex-1 border-t border-primary-light" />
+            <span className="px-4 text-xs text-slate-400 uppercase tracking-wider">Alternative Access</span>
+            <div className="flex-1 border-t border-primary-light" />
           </div>
 
           {/* QR Login */}
           <Link
             to="/qr-login"
-            className="w-full flex items-center justify-center gap-2 py-3 border-2 border-gray-200 rounded-lg text-gray-700 font-semibold uppercase tracking-wider text-sm hover:border-gray-400 transition"
+            className="w-full flex items-center justify-center gap-2 py-3 border-2 border-primary-light rounded-lg text-primary-dark font-semibold uppercase tracking-wider text-sm hover:border-primary/40 hover:bg-primary-light/30 transition"
           >
             <QrCode className="w-5 h-5" />
             Login with QR Code (IoT Bridge)
           </Link>
 
           {/* Footer links */}
-          <div className="mt-6 flex items-center justify-between text-sm text-gray-500">
+          <div className="mt-6 flex items-center justify-between text-sm text-slate-500">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-gray-400 inline-block" />
+              <span className="w-2 h-2 rounded-full bg-primary inline-block" />
               2FA Active
             </span>
             <div className="space-x-4">
-              <span className="hover:text-gray-700 cursor-pointer">Privacy policy</span>
-              <span className="hover:text-gray-700 cursor-pointer">Terms of Service</span>
+              <span className="hover:text-primary-dark cursor-pointer">Privacy policy</span>
+              <span className="hover:text-primary-dark cursor-pointer">Terms of Service</span>
             </div>
           </div>
-
-          {/* Sign up link */}
-          <p className="mt-6 text-center text-sm text-gray-600">
-            Don't have an account?{' '}
-            <Link to="/register" className="text-blue-600 font-medium hover:underline">
-              Sign up
-            </Link>
-          </p>
         </div>
       </div>
     </div>
