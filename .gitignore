@@ -245,3 +245,10 @@ dist
 # VS Code
 .vscode/
 *.pdf
+
+# Uploaded files
+uploads/
+
+# claude artefacts
+claude-artefacts/
+.claude

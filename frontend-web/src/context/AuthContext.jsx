@@ -55,11 +55,6 @@ export function AuthProvider({ children }) {
     return data;
   };
 
-  const register = async (userData) => {
-    const data = await authService.register(userData);
-    return data;
-  };
-
   const logout = async () => {
     try {
       await authService.logout();
@@ -77,7 +72,6 @@ export function AuthProvider({ children }) {
     isAuthenticated,
     login,
     complete2FA,
-    register,
     logout,
     fetchUser,
   };
