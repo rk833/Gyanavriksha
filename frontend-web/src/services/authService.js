@@ -6,11 +6,6 @@ const authService = {
     return data;
   },
 
-  async register(userData) {
-    const { data } = await api.post('/api/auth/register', userData);
-    return data;
-  },
-
   async refreshToken(refreshToken) {
     const { data } = await api.post('/api/auth/refresh', { refresh_token: refreshToken });
     return data;
@@ -36,16 +31,6 @@ const authService = {
       token,
       new_password: newPassword,
     });
-    return data;
-  },
-
-  async verifyEmail(token) {
-    const { data } = await api.post('/api/auth/verify-email', { token });
-    return data;
-  },
-
-  async resendVerification(email) {
-    const { data } = await api.post('/api/auth/resend-verification', { email });
     return data;
   },
 
