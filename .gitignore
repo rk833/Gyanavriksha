@@ -244,3 +244,4 @@ dist
 
 # VS Code
 .vscode/
+*.pdf

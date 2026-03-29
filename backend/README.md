@@ -56,7 +56,7 @@ You should now see `(.venv)` or similar in your prompt.
 uv sync
 ```
 
-This reads `pyproject.toml` / `requirements.txt` and installs everything into `.venv`.
+This installs dependencies from `pyproject.toml` / `uv.lock` into `.venv`.
 
 ### 5. Run Alembic migrations
 
@@ -68,7 +68,13 @@ uv run alembic upgrade head
 
 This will apply all migrations and bring the database schema up to date.
 
-### 6. (Optional) Create new migrations
+### 6. Run the backend locally
+
+```bash
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 7. (Optional) Create new migrations
 
 After changing or adding models:
 
@@ -79,9 +85,42 @@ uv run alembic upgrade head
 
 ---
 
+## Run backend via Docker Compose (recommended)
+
+This repository provides a full-stack `docker-compose.yml` in the project root.
+
+### 1. Start all services
+
+From the **project root**:
+
+```bash
+docker-compose up --build
+```
+
+Backend will be available at:
+
+- `http://localhost:8000`
+- Swagger docs: `http://localhost:8000/docs`
+
+### 2. Run migrations inside the backend container
+
+In a new terminal (still from the **project root**):
+
+```bash
+docker-compose exec backend uv run alembic upgrade head
+```
+
+### 3. View backend logs
+
+```bash
+docker-compose logs -f backend
+```
+
+---
+
 ## Alternative setup (without `uv`)
 
-If you prefer plain `pip` + `venv`:
+If you prefer plain `pip` + `venv` (legacy / only if you still keep `requirements.txt`):
 
 ### 1. Create and activate virtual environment
 
