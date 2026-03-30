@@ -43,16 +43,16 @@ export function AuthProvider({ children }) {
 
     localStorage.setItem('access_token', data.access_token);
     localStorage.setItem('refresh_token', data.refresh_token);
-    await fetchUser();
-    return data;
+    const userData = await fetchUser();
+    return { ...data, user: userData };
   };
 
   const complete2FA = async (userId, code) => {
     const data = await authService.verify2FA(userId, code);
     localStorage.setItem('access_token', data.access_token);
     localStorage.setItem('refresh_token', data.refresh_token);
-    await fetchUser();
-    return data;
+    const userData = await fetchUser();
+    return { ...data, user: userData };
   };
 
   const logout = async () => {

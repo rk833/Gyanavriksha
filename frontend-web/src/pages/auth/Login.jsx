@@ -13,7 +13,7 @@ const ROLES = [
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, complete2FA } = useAuth();
+  const { login, complete2FA, logout } = useAuth();
 
   const [selectedRole, setSelectedRole] = useState('student');
   const [email, setEmail] = useState('');
@@ -58,8 +58,14 @@ export default function Login() {
         setTwoFAUserId(data.user_id);
         toast('Enter your 2FA code to continue');
       } else {
+        const actualRole = data.user?.role;
+        if (actualRole && actualRole !== selectedRole) {
+          toast.error('Invalid email or password for the selected role.');
+          await logout();
+          return;
+        }
         toast.success('Welcome back!');
-        navigate(getRedirectPath(data.user?.role || selectedRole), { replace: true });
+        navigate(getRedirectPath(actualRole || selectedRole), { replace: true });
       }
     } catch (err) {
       const detail = err.response?.data?.detail || 'Login failed';
@@ -78,8 +84,16 @@ export default function Login() {
     setLoading(true);
     try {
       const data = await complete2FA(twoFAUserId, twoFACode);
+      const actualRole = data.user?.role;
+      if (actualRole && actualRole !== selectedRole) {
+        toast.error('Invalid email or password for the selected role.');
+        await logout();
+        setNeeds2FA(false);
+        setTwoFACode('');
+        return;
+      }
       toast.success('Welcome back!');
-      navigate(getRedirectPath(data.user?.role || selectedRole), { replace: true });
+      navigate(getRedirectPath(actualRole || selectedRole), { replace: true });
     } catch (err) {
       const detail = err.response?.data?.detail || 'Invalid code';
       toast.error(detail);

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.db.base import Base
 
@@ -16,6 +16,7 @@ class Assignment(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     topic_tags = Column(ARRAY(String), nullable=True)
+    max_score = Column(Float, nullable=False, default=100.0, server_default="100.0")
     is_exam_mode = Column(Boolean, nullable=False, default=False, server_default="false")
     due_date = Column(DateTime(timezone=True), nullable=True)
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
