@@ -12,6 +12,7 @@ from app.core.database import SessionLocal
 from app.core.security import hash_password
 from app.db.models.assignment import Assignment
 from app.db.models.grade import Grade
+from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.subject import Subject
 from app.db.models.user import User
@@ -139,7 +140,29 @@ def seed_demo_data(db: Session) -> None:
         db, DEMO_INSTRUCTOR_EMAIL, DEMO_INSTRUCTOR_PASSWORD, DEMO_INSTRUCTOR_NAME, UserRole.INSTRUCTOR
     )
 
-    # 4. Enroll student in first 3 subjects
+    # 4. Assign instructor to first 3 subjects
+    print("[SEED] Assigning instructor to subjects...")
+    for subject in subject_records[:3]:
+        existing = (
+            db.query(InstructorSubject)
+            .filter(
+                InstructorSubject.instructor_id == instructor.user_id,
+                InstructorSubject.subject_id == subject.subject_id,
+            )
+            .first()
+        )
+        if existing:
+            continue
+        assignment_link = InstructorSubject(
+            instructor_id=instructor.user_id,
+            subject_id=subject.subject_id,
+            assigned_by=instructor.user_id,
+        )
+        db.add(assignment_link)
+        db.flush()
+        print(f"  [+] Assigned {DEMO_INSTRUCTOR_NAME} to {subject.subject_name}")
+
+    # 5. Enroll student in first 3 subjects (re-numbered from 4)
     print("[SEED] Creating enrollments...")
     for subject in subject_records[:3]:
         existing = (

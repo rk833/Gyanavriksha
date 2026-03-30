@@ -22,6 +22,10 @@ import StudentNotifications from './pages/student/Notifications';
 import StudentLibrary from './pages/student/Library';
 import StudentHelp from './pages/student/Help';
 
+// Instructor Pages
+import InstructorLayout from './layouts/InstructorLayout';
+import InstructorDashboard from './pages/instructor/Dashboard';
+
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
 
@@ -63,8 +67,18 @@ function App() {
             <Route path="help" element={<StudentHelp />} />
           </Route>
 
-          {/* Instructor Routes — coming in Sprint 4 */}
-          {/* <Route path="/instructor" element={...}> */}
+          {/* Instructor Routes */}
+          <Route
+            path="/instructor"
+            element={
+              <ProtectedRoute allowedRoles={['instructor']}>
+                <InstructorLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<InstructorDashboard />} />
+          </Route>
 
           {/* Admin Routes — coming in Sprint 5 */}
           {/* <Route path="/admin" element={...}> */}
