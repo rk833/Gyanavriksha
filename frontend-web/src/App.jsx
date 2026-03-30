@@ -20,6 +20,7 @@ import StudentKnowledgeGaps from './pages/student/KnowledgeGaps';
 import StudentPerformance from './pages/student/Performance';
 import StudentNotifications from './pages/student/Notifications';
 import StudentLibrary from './pages/student/Library';
+import StudentHelp from './pages/student/Help';
 
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
@@ -59,6 +60,7 @@ function App() {
             <Route path="performance" element={<StudentPerformance />} />
             <Route path="notifications" element={<StudentNotifications />} />
             <Route path="library" element={<StudentLibrary />} />
+            <Route path="help" element={<StudentHelp />} />
           </Route>
 
           {/* Instructor Routes — coming in Sprint 4 */}

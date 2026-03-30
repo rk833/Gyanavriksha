@@ -401,6 +401,17 @@ def disable_2fa(db: Session, user: User, code: str, password: str) -> None:
     db.commit()
 
 
+def change_password(db: Session, user: User, current_password: str, new_password: str) -> None:
+    if not verify_password(current_password, user.password_hash):
+        raise ValueError("INVALID_CURRENT_PASSWORD")
+
+    if len(new_password) < 8:
+        raise ValueError("PASSWORD_TOO_SHORT")
+
+    user.password_hash = hash_password(new_password)
+    db.commit()
+
+
 # QR session login
 
 def create_qr_session(db: Session) -> dict:

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Shield, Monitor, Smartphone, Loader2 } from 'lucide-react';
+import { User, Shield, Monitor, Lock, Loader2, Eye, EyeOff, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getProfile, updateProfile, getEnrollments } from '../../services/studentService';
+import authService from '../../services/authService';
 import useAuth from '../../hooks/useAuth';
 
 function Toggle({ checked, onChange, label }) {
@@ -43,12 +44,26 @@ export default function StudentSettings() {
     posture_connection: false,
   });
 
+  // 2FA disable modal
+  const [showDisable2FA, setShowDisable2FA] = useState(false);
+  const [disableCode, setDisableCode] = useState('');
+  const [disablePassword, setDisablePassword] = useState('');
+  const [disabling2FA, setDisabling2FA] = useState(false);
+
+  // Change password modal
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+
   useEffect(() => {
     Promise.all([
       getProfile().then((r) => {
         setProfile(r.data);
         setFullName(r.data.full_name || '');
-        setTwoFaEnabled(false); // 2FA status from auth
+        setTwoFaEnabled(r.data.totp_enabled || false);
       }),
       getEnrollments().then((r) => setEnrollments(r.data.items || [])),
     ])
@@ -71,6 +86,60 @@ export default function StudentSettings() {
   const handleDiscard = () => {
     setFullName(profile?.full_name || '');
     toast('Changes discarded');
+  };
+
+  const handle2FAToggle = () => {
+    if (twoFaEnabled) {
+      setShowDisable2FA(true);
+    } else {
+      navigate('/2fa-setup');
+    }
+  };
+
+  const handleDisable2FA = async (e) => {
+    e.preventDefault();
+    if (!disableCode || disableCode.length !== 6) {
+      toast.error('Enter a valid 6-digit code');
+      return;
+    }
+    setDisabling2FA(true);
+    try {
+      await authService.disable2FA(disableCode, disablePassword);
+      setTwoFaEnabled(false);
+      setShowDisable2FA(false);
+      setDisableCode('');
+      setDisablePassword('');
+      toast.success('Two-factor authentication disabled');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to disable 2FA');
+    } finally {
+      setDisabling2FA(false);
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (newPassword.length < 8) {
+      toast.error('New password must be at least 8 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await authService.changePassword(currentPassword, newPassword);
+      setShowChangePassword(false);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast.success('Password changed successfully');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to change password');
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   if (loading) {
@@ -159,7 +228,7 @@ export default function StudentSettings() {
               </div>
               <button
                 type="button"
-                onClick={() => navigate('/2fa-setup')}
+                onClick={handle2FAToggle}
                 className={`relative w-11 h-6 rounded-full transition-colors ${
                   twoFaEnabled ? 'bg-primary' : 'bg-slate-300'
                 }`}
@@ -171,10 +240,16 @@ export default function StudentSettings() {
                 />
               </button>
             </div>
+            {twoFaEnabled && (
+              <p className="text-xs text-green-600 flex items-center gap-1">
+                <Shield className="w-3 h-3" /> 2FA is active
+              </p>
+            )}
             <button
-              onClick={() => navigate('/reset-password')}
-              className="text-sm text-primary hover:underline"
+              onClick={() => setShowChangePassword(true)}
+              className="text-sm text-primary hover:underline flex items-center gap-1"
             >
+              <Lock className="w-3.5 h-3.5" />
               Update Password
             </button>
           </div>
@@ -248,7 +323,7 @@ export default function StudentSettings() {
                 </td>
                 <td className="py-3 pr-4 text-slate-500">Current Session</td>
                 <td className="py-3 pr-4 text-slate-500">Now</td>
-                <td className="py-3 text-slate-400">—</td>
+                <td className="py-3 text-slate-400">&mdash;</td>
               </tr>
             </tbody>
           </table>
@@ -272,6 +347,150 @@ export default function StudentSettings() {
           Save Settings
         </button>
       </div>
+
+      {/* Disable 2FA Modal */}
+      {showDisable2FA && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowDisable2FA(false)} />
+          <div className="relative bg-white rounded-xl border border-primary-light shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-primary-dark">Disable Two-Factor Authentication</h3>
+              <button onClick={() => setShowDisable2FA(false)} className="p-1 rounded-lg hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 mb-4">
+              Enter your authenticator code and account password to disable 2FA.
+            </p>
+            <form onSubmit={handleDisable2FA} className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-1">
+                  Authenticator Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={disableCode}
+                  onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6-digit code"
+                  className="w-full text-center text-lg tracking-[0.2em] border border-primary-light rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-1">
+                  Account Password
+                </label>
+                <input
+                  type="password"
+                  value={disablePassword}
+                  onChange={(e) => setDisablePassword(e.target.value)}
+                  placeholder="Enter your password"
+                  className="w-full border border-primary-light rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDisable2FA(false)}
+                  className="flex-1 px-4 py-2 border border-primary-light rounded-lg text-sm text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={disabling2FA}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {disabling2FA && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Disable 2FA
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {showChangePassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowChangePassword(false)} />
+          <div className="relative bg-white rounded-xl border border-primary-light shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-primary-dark">Change Password</h3>
+              <button onClick={() => setShowChangePassword(false)} className="p-1 rounded-lg hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <form onSubmit={handleChangePassword} className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-1">
+                  Current Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPasswords ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    className="w-full border border-primary-light rounded-lg px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswords(!showPasswords)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary"
+                  >
+                    {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-1">
+                  New Password
+                </label>
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Min 8 characters, 1 uppercase, 1 digit"
+                  className="w-full border border-primary-light rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-1">
+                  Confirm New Password
+                </label>
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat new password"
+                  className="w-full border border-primary-light rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePassword(false)}
+                  className="flex-1 px-4 py-2 border border-primary-light rounded-lg text-sm text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={changingPassword}
+                  className="flex-1 px-4 py-2 bg-primary-dark text-white rounded-lg text-sm font-medium hover:bg-primary disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {changingPassword && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Change Password
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

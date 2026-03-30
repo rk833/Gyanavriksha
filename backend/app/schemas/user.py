@@ -67,6 +67,22 @@ class ResetPasswordRequest(BaseModel):
         return v
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        return v
+
+
 class TwoFactorSetupVerifyRequest(BaseModel):
     secret: str
     code: str = Field(..., min_length=6, max_length=6)
@@ -98,6 +114,7 @@ class UserResponse(BaseModel):
     role: UserRole
     is_active: bool
     is_email_verified: bool
+    totp_enabled: bool = False
     profile_image_url: str | None = None
     created_at: datetime
 

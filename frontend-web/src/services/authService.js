@@ -56,6 +56,14 @@ const authService = {
     const { data } = await api.post('/api/auth/2fa/disable', { code, password });
     return data;
   },
+
+  async changePassword(currentPassword, newPassword) {
+    const { data } = await api.post('/api/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+    return data;
+  },
 };
 
 export default authService;

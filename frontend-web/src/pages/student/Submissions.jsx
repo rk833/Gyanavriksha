@@ -7,8 +7,14 @@ import {
   Eye,
   ChevronLeft,
   ChevronRight,
+  X,
+  FileText,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
-import { getSubmissions, getSubjects, getDashboard } from '../../services/studentService';
+import { getSubmissions, getSubjects, getDashboard, getSubmissionDetail, getSubmissionFeedback } from '../../services/studentService';
 
 const STATUS_COLORS = {
   queued: 'bg-yellow-100 text-yellow-700',
@@ -35,6 +41,26 @@ export default function StudentSubmissions() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [total, setTotal] = useState(0);
+  const [selectedSubmission, setSelectedSubmission] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (submissionId) => {
+    setDetailLoading(true);
+    setSelectedSubmission({ loading: true });
+    try {
+      const [detailRes, feedbackRes] = await Promise.allSettled([
+        getSubmissionDetail(submissionId),
+        getSubmissionFeedback(submissionId),
+      ]);
+      const detail = detailRes.status === 'fulfilled' ? detailRes.value.data : null;
+      const feedback = feedbackRes.status === 'fulfilled' ? feedbackRes.value.data : null;
+      setSelectedSubmission({ ...detail, feedback });
+    } catch {
+      setSelectedSubmission(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -163,7 +189,10 @@ export default function StudentSubmissions() {
                     </span>
                   </td>
                   <td className="px-5 py-3.5">
-                    <button className="text-xs text-primary hover:underline flex items-center gap-1">
+                    <button
+                      onClick={() => openDetail(s.submission_id)}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
                       <Eye className="w-3 h-3" />
                       View
                     </button>
@@ -209,6 +238,114 @@ export default function StudentSubmissions() {
             >
               <ChevronRight className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Submission Detail Modal */}
+      {selectedSubmission && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setSelectedSubmission(null)} />
+          <div className="relative bg-white rounded-xl border border-primary-light shadow-xl w-full max-w-lg max-h-[80vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-primary-light px-5 py-4 flex items-center justify-between rounded-t-xl">
+              <h3 className="font-bold text-primary-dark">Submission Details</h3>
+              <button
+                onClick={() => setSelectedSubmission(null)}
+                className="p-1 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+
+            {selectedSubmission.loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              </div>
+            ) : (
+              <div className="p-5 space-y-4">
+                {/* Assignment info */}
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Assignment</p>
+                  <p className="font-semibold text-primary-dark">{selectedSubmission.assignment_title || 'N/A'}</p>
+                  <p className="text-sm text-slate-500">{selectedSubmission.subject_name || ''}</p>
+                </div>
+
+                {/* Status & Score */}
+                <div className="flex gap-3">
+                  <div className="flex-1 bg-primary-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-500 mb-1">Status</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[selectedSubmission.processing_status] || 'bg-slate-100 text-slate-600'}`}>
+                      {selectedSubmission.processing_status || 'unknown'}
+                    </span>
+                  </div>
+                  <div className="flex-1 bg-primary-50 rounded-lg p-3">
+                    <p className="text-xs text-slate-500 mb-1">Score</p>
+                    <p className="font-bold text-primary-dark text-lg">
+                      {selectedSubmission.score_percentage != null
+                        ? `${selectedSubmission.score_percentage.toFixed(0)}%`
+                        : 'Pending'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Submitted at */}
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Clock className="w-4 h-4" />
+                  <span>Submitted: {new Date(selectedSubmission.submitted_at).toLocaleString()}</span>
+                </div>
+
+                {/* Uploaded files */}
+                {selectedSubmission.uploaded_files && selectedSubmission.uploaded_files.length > 0 && (
+                  <div>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Uploaded Files</p>
+                    <div className="space-y-1.5">
+                      {selectedSubmission.uploaded_files.map((f, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
+                          <FileText className="w-4 h-4 text-primary" />
+                          <span className="text-slate-700 truncate">{f}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Feedback */}
+                {selectedSubmission.feedback ? (
+                  <div className="border-t border-primary-light pt-4">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Feedback</p>
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <div className="flex items-start gap-2">
+                        <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-green-800 mb-1">
+                            Score: {selectedSubmission.feedback.score_percentage?.toFixed(0)}%
+                          </p>
+                          {selectedSubmission.feedback.strengths && (
+                            <p className="text-sm text-green-700 mb-1">
+                              <strong>Strengths:</strong> {selectedSubmission.feedback.strengths}
+                            </p>
+                          )}
+                          {selectedSubmission.feedback.improvements && (
+                            <p className="text-sm text-green-700">
+                              <strong>To improve:</strong> {selectedSubmission.feedback.improvements}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : selectedSubmission.processing_status !== 'done' ? (
+                  <div className="border-t border-primary-light pt-4">
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center gap-2">
+                      <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0" />
+                      <p className="text-sm text-yellow-700">
+                        Feedback will be available once grading is complete.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
       )}
