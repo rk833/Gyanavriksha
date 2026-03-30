@@ -19,6 +19,11 @@ class SubmissionFeedback(Base):
     llm_model_used = Column(String(100), nullable=True)
     llm_tokens_used = Column(Integer, nullable=True)
     knowledge_gap_detected = Column(Boolean, nullable=False, default=False, server_default="false")
+    score_percentage = Column(Float, nullable=True)
+    strengths = Column(Text, nullable=True)
+    improvements = Column(Text, nullable=True)
+    instructor_comments = Column(Text, nullable=True)
+    graded_by = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
