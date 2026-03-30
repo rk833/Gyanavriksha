@@ -1,10 +1,10 @@
 """
 Instructor API routes — full instructor dashboard.
-Sprint 4 Phase 1: GD-82, Phase 2: GD-84-86, Phase 3: GD-87-89, Phase 4: GD-90-93
+Sprint 4 Phases 1-5: GD-82 to GD-96
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.middleware.auth_middleware import require_role
@@ -15,14 +15,18 @@ from app.schemas.instructor import (
     AssignmentCreateRequest,
     AssignmentUpdateRequest,
     AtRiskStudentResponse,
+    ConceptHeatmapResponse,
     FeedbackOverrideRequest,
     InstructorAssignmentDetailResponse,
     InstructorAssignmentResponse,
     InstructorDashboardResponse,
+    InstructorProfileResponse,
+    InstructorProfileUpdateRequest,
     InstructorSubmissionDetailResponse,
     InstructorSubmissionListItem,
     InstructorSubjectDetailResponse,
     InstructorSubjectResponse,
+    KnowledgeBaseDocumentResponse,
     StudentInSubjectResponse,
     VelocityAnalyticsResponse,
 )
@@ -369,3 +373,144 @@ def get_at_risk_students(
         per_page=per_page,
         total_pages=total_pages,
     )
+
+
+# GD-94: Concept heatmap
+
+@router.get("/analytics/concept-heatmap", response_model=ConceptHeatmapResponse)
+def get_concept_heatmap(
+    subject_id: int | None = Query(None),
+    timeframe: str = Query("all", pattern="^(7d|30d|all)$"),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Concept heatmap showing topic-level struggle areas."""
+    data = instructor_service.get_concept_heatmap(
+        db, str(current_user.user_id),
+        subject_id=subject_id,
+        timeframe=timeframe,
+    )
+    return ConceptHeatmapResponse(**data)
+
+
+# GD-95: Knowledge base
+
+@router.get("/knowledge-base", response_model=PaginatedResponse[KnowledgeBaseDocumentResponse])
+def list_knowledge_base(
+    subject_id: int | None = Query(None),
+    doc_type: str | None = Query(None, pattern="^(curriculum_pdf|instructor_note)$"),
+    search: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """List knowledge base documents uploaded by this instructor."""
+    items, total = instructor_service.get_knowledge_base_documents(
+        db,
+        str(current_user.user_id),
+        subject_id=subject_id,
+        doc_type=doc_type,
+        search=search,
+        page=page,
+        per_page=per_page,
+    )
+    total_pages = (total + per_page - 1) // per_page if total else 0
+    return PaginatedResponse(
+        items=[KnowledgeBaseDocumentResponse(**d) for d in items],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
+
+
+@router.post("/knowledge-base/upload", response_model=KnowledgeBaseDocumentResponse, status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    subject_id: int = Form(...),
+    doc_type: str = Form(..., pattern="^(curriculum_pdf|instructor_note)$"),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Upload a document to the knowledge base."""
+    # Validate file type
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are allowed",
+        )
+
+    # Validate file size (50MB max)
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds 50MB limit",
+        )
+
+    # Verify instructor is assigned to subject
+    if not instructor_service.verify_instructor_subject(db, str(current_user.user_id), subject_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to this subject",
+        )
+
+    result = instructor_service.upload_document(
+        db,
+        str(current_user.user_id),
+        subject_id,
+        file.filename,
+        content,
+        doc_type,
+    )
+    return KnowledgeBaseDocumentResponse(**result)
+
+
+@router.delete("/knowledge-base/{doc_id}", status_code=204)
+def delete_document(
+    doc_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Delete a knowledge base document."""
+    result = instructor_service.delete_document(
+        db, str(current_user.user_id), doc_id,
+    )
+    if result == "NOT_FOUND":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+    return None
+
+
+# GD-96: Instructor profile
+
+@router.get("/profile", response_model=InstructorProfileResponse)
+def get_profile(
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Get instructor profile with assigned subjects."""
+    data = instructor_service.get_instructor_profile(db, str(current_user.user_id))
+    return InstructorProfileResponse(**data)
+
+
+@router.patch("/profile", response_model=InstructorProfileResponse)
+def update_profile(
+    data: InstructorProfileUpdateRequest,
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Update instructor profile (name and image only)."""
+    update_data = data.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update",
+        )
+    result = instructor_service.update_instructor_profile(
+        db, str(current_user.user_id), update_data,
+    )
+    return InstructorProfileResponse(**result)

@@ -1,14 +1,18 @@
 """
 Instructor service — helper functions for instructor API endpoints.
-Sprint 4 Phase 1: GD-82, Phase 2: GD-84-86, Phase 3: GD-87-89, Phase 4: GD-90-93
+Sprint 4 Phases 1-5: GD-82 to GD-96
 """
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, extract, case
 
 from app.db.models.assignment import Assignment
+from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
+from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.grade import Grade
 from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.knowledge_gap import KnowledgeGap
@@ -17,7 +21,7 @@ from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.submission_feedback import SubmissionFeedback
 from app.db.models.user import User
-from app.shared.source_enum import SubmissionProcessingStatus
+from app.shared.source_enum import DocumentType, EmbeddingStatus, SubmissionProcessingStatus
 
 
 def get_instructor_subjects(db: Session, instructor_id: str) -> list[dict]:
@@ -1205,3 +1209,294 @@ def get_at_risk_students(
     end = start + per_page
 
     return at_risk[start:end], total
+
+
+# Phase 5: GD-94 — Concept heatmap
+
+def get_concept_heatmap(
+    db: Session,
+    instructor_id: str,
+    subject_id: int | None = None,
+    timeframe: str = "all",
+) -> dict:
+    """Get concept heatmap data from knowledge_gaps and concept_heatmap_entries."""
+    subject_ids = get_instructor_subject_ids(db, instructor_id)
+    if subject_id is not None:
+        subject_ids = [sid for sid in subject_ids if sid == subject_id]
+    if not subject_ids:
+        return {"heatmap_entries": [], "emerging_friction": [], "teaching_insight": None}
+
+    total_enrolled = (
+        db.query(func.count(func.distinct(StudentEnrollment.student_id)))
+        .filter(
+            StudentEnrollment.subject_id.in_(subject_ids),
+            StudentEnrollment.is_active == True,
+        )
+        .scalar()
+        or 0
+    )
+
+    # Apply timeframe filter
+    gap_query = (
+        db.query(
+            KnowledgeGap.topic_tag,
+            KnowledgeGap.concept_name,
+            Subject.subject_name,
+            func.count(func.distinct(KnowledgeGap.student_id)).label("affected_count"),
+            func.avg(
+                case(
+                    (Submission.score_percentage.isnot(None), Submission.score_percentage),
+                    else_=None,
+                )
+            ).label("avg_score"),
+        )
+        .join(Subject, Subject.subject_id == KnowledgeGap.subject_id)
+        .join(Submission, Submission.submission_id == KnowledgeGap.submission_id)
+        .filter(KnowledgeGap.subject_id.in_(subject_ids))
+    )
+
+    if timeframe == "7d":
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        gap_query = gap_query.filter(KnowledgeGap.detected_at >= cutoff)
+    elif timeframe == "30d":
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        gap_query = gap_query.filter(KnowledgeGap.detected_at >= cutoff)
+
+    rows = (
+        gap_query.group_by(
+            KnowledgeGap.topic_tag,
+            KnowledgeGap.concept_name,
+            Subject.subject_name,
+        )
+        .order_by(desc(func.count(func.distinct(KnowledgeGap.student_id))))
+        .all()
+    )
+
+    heatmap_entries = []
+    for r in rows:
+        struggle_pct = round((r.affected_count / total_enrolled) * 100, 1) if total_enrolled > 0 else 0.0
+        avg = round(float(r.avg_score), 1) if r.avg_score else None
+        heatmap_entries.append({
+            "topic_tag": r.topic_tag,
+            "concept_name": r.concept_name,
+            "subject_name": r.subject_name,
+            "struggle_percentage": struggle_pct,
+            "affected_student_count": r.affected_count,
+            "avg_score": avg,
+            "severity_score": struggle_pct,
+        })
+
+    # Also check concept_heatmap_entries table for pre-aggregated data
+    heatmap_rows = (
+        db.query(ConceptHeatmapEntry, Subject.subject_name)
+        .join(Subject, Subject.subject_id == ConceptHeatmapEntry.subject_id)
+        .filter(ConceptHeatmapEntry.subject_id.in_(subject_ids))
+        .order_by(desc(ConceptHeatmapEntry.affected_student_count))
+        .all()
+    )
+
+    existing_tags = {e["topic_tag"] for e in heatmap_entries}
+    for entry, subject_name in heatmap_rows:
+        if entry.topic_tag not in existing_tags:
+            struggle_pct = round((entry.affected_student_count / total_enrolled) * 100, 1) if total_enrolled > 0 else 0.0
+            heatmap_entries.append({
+                "topic_tag": entry.topic_tag,
+                "concept_name": entry.concept_name,
+                "subject_name": subject_name,
+                "struggle_percentage": struggle_pct,
+                "affected_student_count": entry.affected_student_count,
+                "avg_score": None,
+                "severity_score": entry.severity_score,
+            })
+
+    heatmap_entries.sort(key=lambda x: x["struggle_percentage"], reverse=True)
+
+    # Emerging friction: top 3
+    emerging_friction = [
+        {"topic": e["topic_tag"], "subject": e["subject_name"], "percentage": e["struggle_percentage"]}
+        for e in heatmap_entries[:3]
+    ]
+
+    # Teaching insight
+    teaching_insight = None
+    if heatmap_entries:
+        top = heatmap_entries[0]
+        teaching_insight = f"{top['struggle_percentage']}% of students struggle with {top['topic_tag']} in {top['subject_name']}"
+
+    return {
+        "heatmap_entries": heatmap_entries,
+        "emerging_friction": emerging_friction,
+        "teaching_insight": teaching_insight,
+    }
+
+
+# Phase 5: GD-95 — Knowledge base
+
+UPLOAD_DIR = Path("uploads/documents")
+
+
+def upload_document(
+    db: Session,
+    instructor_id: str,
+    subject_id: int,
+    file_name: str,
+    file_bytes: bytes,
+    doc_type: str,
+) -> dict:
+    """Upload a document to the knowledge base."""
+    doc_id = uuid.uuid4()
+    dir_path = UPLOAD_DIR / instructor_id / str(doc_id)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    file_path = dir_path / file_name
+    file_path.write_bytes(file_bytes)
+
+    # Get grade_id from subject
+    subject = db.query(Subject).filter(Subject.subject_id == subject_id).first()
+
+    doc = CurriculumDocument(
+        doc_id=doc_id,
+        subject_id=subject_id,
+        uploaded_by=instructor_id,
+        file_name=file_name,
+        file_path=str(file_path),
+        file_size_bytes=len(file_bytes),
+        doc_type=DocumentType(doc_type),
+        embedding_status=EmbeddingStatus.PENDING,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    grade = db.query(Grade).filter(Grade.grade_id == subject.grade_id).first() if subject else None
+
+    return {
+        "doc_id": doc.doc_id,
+        "subject_id": doc.subject_id,
+        "subject_name": subject.subject_name if subject else None,
+        "grade_name": grade.grade_name if grade else None,
+        "file_name": doc.file_name,
+        "file_size_bytes": doc.file_size_bytes,
+        "doc_type": doc.doc_type.value,
+        "created_at": doc.created_at,
+    }
+
+
+def get_knowledge_base_documents(
+    db: Session,
+    instructor_id: str,
+    subject_id: int | None = None,
+    doc_type: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> tuple[list[dict], int]:
+    """List knowledge base documents uploaded by this instructor."""
+    query = (
+        db.query(CurriculumDocument, Subject.subject_name, Grade.grade_name)
+        .join(Subject, Subject.subject_id == CurriculumDocument.subject_id)
+        .join(Grade, Grade.grade_id == Subject.grade_id)
+        .filter(CurriculumDocument.uploaded_by == instructor_id)
+    )
+
+    if subject_id is not None:
+        query = query.filter(CurriculumDocument.subject_id == subject_id)
+    if doc_type is not None:
+        query = query.filter(CurriculumDocument.doc_type == doc_type)
+    if search:
+        query = query.filter(CurriculumDocument.file_name.ilike(f"%{search}%"))
+
+    total = query.count()
+    rows = (
+        query.order_by(desc(CurriculumDocument.created_at))
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    items = []
+    for doc, subject_name, grade_name in rows:
+        items.append({
+            "doc_id": doc.doc_id,
+            "subject_id": doc.subject_id,
+            "subject_name": subject_name,
+            "grade_name": grade_name,
+            "file_name": doc.file_name,
+            "file_size_bytes": doc.file_size_bytes,
+            "doc_type": doc.doc_type.value,
+            "created_at": doc.created_at,
+        })
+
+    return items, total
+
+
+def delete_document(
+    db: Session,
+    instructor_id: str,
+    doc_id: uuid.UUID,
+) -> str | None:
+    """Delete a document. Returns error string or None on success."""
+    doc = (
+        db.query(CurriculumDocument)
+        .filter(
+            CurriculumDocument.doc_id == doc_id,
+            CurriculumDocument.uploaded_by == instructor_id,
+        )
+        .first()
+    )
+    if not doc:
+        return "NOT_FOUND"
+
+    # Remove file from disk
+    try:
+        file_path = Path(doc.file_path)
+        if file_path.exists():
+            file_path.unlink()
+            # Remove parent dir if empty
+            parent = file_path.parent
+            if parent.exists() and not any(parent.iterdir()):
+                parent.rmdir()
+    except OSError:
+        pass
+
+    db.delete(doc)
+    db.commit()
+    return None
+
+
+# Phase 5: GD-96 — Instructor profile
+
+def get_instructor_profile(db: Session, instructor_id: str) -> dict:
+    """Get instructor profile with assigned subjects."""
+    user = db.query(User).filter(User.user_id == instructor_id).first()
+    if not user:
+        return None
+
+    subjects = get_instructor_subjects(db, instructor_id)
+
+    return {
+        "user_id": user.user_id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role.value,
+        "is_active": user.is_active,
+        "totp_enabled": user.totp_enabled,
+        "profile_image_url": user.profile_image_url,
+        "created_at": user.created_at,
+        "subjects": subjects,
+    }
+
+
+def update_instructor_profile(db: Session, instructor_id: str, data: dict) -> dict:
+    """Update instructor profile fields."""
+    user = db.query(User).filter(User.user_id == instructor_id).first()
+    if not user:
+        return None
+
+    if data.get("full_name") is not None:
+        user.full_name = data["full_name"]
+    if data.get("profile_image_url") is not None:
+        user.profile_image_url = data["profile_image_url"]
+
+    db.commit()
+    db.refresh(user)
+    return get_instructor_profile(db, instructor_id)
