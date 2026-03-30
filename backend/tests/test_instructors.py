@@ -630,3 +630,203 @@ class TestAssignmentDelete:
             headers=_auth_header(token),
         )
         assert resp.status_code == 404
+
+
+# Phase 4: Submissions, Feedback Override, Velocity, At-Risk tests
+
+
+class TestSubmissionsList:
+    """GD-90: GET /api/instructors/submissions"""
+
+    def test_list_submissions_requires_auth(self):
+        resp = client.get("/api/instructors/submissions")
+        assert resp.status_code == 401
+
+    def test_list_submissions_empty(self):
+        email, _ = _create_user("sub_empty")
+        token = _login(email)
+        resp = client.get("/api/instructors/submissions", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+    def test_list_submissions_with_data(self):
+        email, instructor_id = _create_user("sub_list")
+        grade_id, subject_id = _create_grade_and_subject("sub_list")
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+
+        _, stu_id = _create_user("sub_list_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        _create_submission(stu_id, assignment_id, subject_id)
+
+        token = _login(email)
+        resp = client.get("/api/instructors/submissions", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["student_name"] is not None
+
+    def test_list_submissions_filter_by_status(self):
+        email, instructor_id = _create_user("sub_filt")
+        grade_id, subject_id = _create_grade_and_subject("sub_filt")
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+
+        _, stu_id = _create_user("sub_filt_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        _create_submission(stu_id, assignment_id, subject_id, status_val=SubmissionProcessingStatus.DONE, score=80.0)
+
+        token = _login(email)
+        resp = client.get("/api/instructors/submissions?status=done", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+
+        resp = client.get("/api/instructors/submissions?status=queued", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
+
+
+class TestSubmissionDetail:
+    """GD-90: GET /api/instructors/submissions/{id}"""
+
+    def test_submission_detail_not_found(self):
+        email, _ = _create_user("sub_det_nf")
+        token = _login(email)
+        fake_id = str(uuid.uuid4())
+        resp = client.get(f"/api/instructors/submissions/{fake_id}", headers=_auth_header(token))
+        assert resp.status_code == 404
+
+    def test_submission_detail_success(self):
+        email, instructor_id = _create_user("sub_det_ok")
+        grade_id, subject_id = _create_grade_and_subject("sub_det_ok")
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+
+        _, stu_id = _create_user("sub_det_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        sub_id = _create_submission(stu_id, assignment_id, subject_id)
+
+        token = _login(email)
+        resp = client.get(f"/api/instructors/submissions/{sub_id}", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["submission_id"] == str(sub_id)
+        assert data["image_path"] is not None
+
+
+class TestFeedbackOverride:
+    """GD-91: PATCH /api/instructors/submissions/{id}/feedback"""
+
+    def test_override_feedback_success(self):
+        email, instructor_id = _create_user("fb_override")
+        grade_id, subject_id = _create_grade_and_subject("fb_override")
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+
+        _, stu_id = _create_user("fb_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        sub_id = _create_submission(stu_id, assignment_id, subject_id)
+
+        token = _login(email)
+        resp = client.patch(
+            f"/api/instructors/submissions/{sub_id}/feedback",
+            json={
+                "score_percentage": 88.5,
+                "strengths": "Good work",
+                "improvements": "Improve formatting",
+                "instructor_comments": "Well done overall",
+            },
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["score_percentage"] == 88.5
+        assert data["processing_status"] == "done"
+        assert data["feedback"] is not None
+        assert data["feedback"]["score_percentage"] == 88.5
+        assert data["feedback"]["strengths"] == "Good work"
+
+    def test_override_feedback_not_found(self):
+        email, _ = _create_user("fb_nf")
+        token = _login(email)
+        fake_id = str(uuid.uuid4())
+        resp = client.patch(
+            f"/api/instructors/submissions/{fake_id}/feedback",
+            json={"score_percentage": 50.0},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+
+class TestVelocityAnalytics:
+    """GD-92: GET /api/instructors/analytics/velocity"""
+
+    def test_velocity_requires_auth(self):
+        resp = client.get("/api/instructors/analytics/velocity")
+        assert resp.status_code == 401
+
+    def test_velocity_empty(self):
+        email, _ = _create_user("vel_empty")
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/velocity", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["class_avg_velocity"] == 0.0
+        assert data["student_velocities"] == []
+
+    def test_velocity_with_data(self):
+        email, instructor_id = _create_user("vel_data")
+        grade_id, subject_id = _create_grade_and_subject("vel_data")
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+
+        _, stu_id = _create_user("vel_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        _create_submission(stu_id, assignment_id, subject_id, score=90.0, status_val=SubmissionProcessingStatus.DONE)
+
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/velocity", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["student_velocities"]) == 1
+        assert data["student_velocities"][0]["submission_count"] == 1
+        assert data["class_avg_velocity"] > 0
+
+
+class TestAtRiskStudents:
+    """GD-93: GET /api/instructors/analytics/at-risk"""
+
+    def test_at_risk_requires_auth(self):
+        resp = client.get("/api/instructors/analytics/at-risk")
+        assert resp.status_code == 401
+
+    def test_at_risk_empty(self):
+        email, _ = _create_user("risk_empty")
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/at-risk", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+    def test_at_risk_with_low_performer(self):
+        email, instructor_id = _create_user("risk_data")
+        grade_id, subject_id = _create_grade_and_subject("risk_data")
+        _assign_instructor(instructor_id, subject_id)
+
+        # Create 3 published assignments
+        for i in range(3):
+            _create_assignment(instructor_id, subject_id, title=f"Risk Asgn {i}")
+
+        # Create student with only 1 submission and low score
+        _, stu_id = _create_user("risk_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        a_id = _create_assignment(instructor_id, subject_id, title="Risk Submitted")
+        _create_submission(stu_id, a_id, subject_id, score=30.0, status_val=SubmissionProcessingStatus.DONE)
+
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/at-risk", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        # Student should be at risk (low score + missed assignments)
+        assert data["total"] >= 1
+        if data["total"] > 0:
+            assert data["items"][0]["risk_score"] > 30
