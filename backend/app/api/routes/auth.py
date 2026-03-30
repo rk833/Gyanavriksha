@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.db.models.user import User
 from app.schemas.user import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginResponse,
     MessageResponse,
@@ -148,6 +149,24 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This reset token has already been used")
         if error == "TOKEN_EXPIRED":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset token has expired")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+
+@router.post("/change-password", response_model=MessageResponse)
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        auth_service.change_password(db, current_user, data.current_password, data.new_password)
+        return MessageResponse(message="Password changed successfully")
+    except ValueError as e:
+        error = str(e)
+        if error == "INVALID_CURRENT_PASSWORD":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
+        if error == "PASSWORD_TOO_SHORT":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be at least 8 characters")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
 

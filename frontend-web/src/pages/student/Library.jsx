@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Search,
   FileText,
@@ -8,6 +8,7 @@ import {
   Video,
   Filter,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { getLibraryDocuments, getSubjects, getEnrollments } from '../../services/studentService';
 
 const DOC_TYPE_ICONS = {
@@ -31,6 +32,21 @@ export default function StudentLibrary() {
   const [subjectFilter, setSubjectFilter] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
+  const docGridRef = useRef(null);
+
+  const handleResumeReading = () => {
+    if (currentSubject?.subject_id) {
+      setSubjectFilter(String(currentSubject.subject_id));
+      setPage(1);
+      setTimeout(() => {
+        docGridRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  };
+
+  const handleViewNotes = () => {
+    toast('Notes feature coming soon!', { icon: '📝' });
+  };
 
   useEffect(() => {
     Promise.all([
@@ -70,10 +86,16 @@ export default function StudentLibrary() {
             Continue your journey. You have completed {currentSubject.completion_percentage}% of this module.
           </p>
           <div className="flex gap-2">
-            <button className="bg-white text-primary-dark text-sm font-medium px-4 py-2 rounded-lg hover:bg-white/90 transition-colors">
+            <button
+              onClick={handleResumeReading}
+              className="bg-white text-primary-dark text-sm font-medium px-4 py-2 rounded-lg hover:bg-white/90 transition-colors"
+            >
               Resume Reading
             </button>
-            <button className="bg-white/10 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-white/20 transition-colors border border-white/20">
+            <button
+              onClick={handleViewNotes}
+              className="bg-white/10 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-white/20 transition-colors border border-white/20"
+            >
               View Notes
             </button>
           </div>
@@ -123,6 +145,7 @@ export default function StudentLibrary() {
       </div>
 
       {/* Document grid */}
+      <div ref={docGridRef} />
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
