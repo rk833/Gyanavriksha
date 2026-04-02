@@ -3,6 +3,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   ClipboardList,
+  BookOpen,
   FileText,
   TrendingUp,
   AlertTriangle,
@@ -19,13 +20,14 @@ import useAuth from '../hooks/useAuth';
 
 const NAV_ITEMS = [
   { to: '/instructor/dashboard', label: 'Intelligence', icon: LayoutDashboard },
-  { to: '/instructor/concept-heatmap', label: 'Concept Heatmap', icon: Grid3X3 },
+  { to: '/instructor/subjects', label: 'My Subjects', icon: BookOpen },
+  { to: '/instructor/assignments', label: 'Assignments', icon: ClipboardList },
+  { to: '/instructor/submissions', label: 'Submissions', icon: FileText },
   { to: '/instructor/velocity-analytics', label: 'Velocity Analytics', icon: TrendingUp },
   { to: '/instructor/at-risk-students', label: 'At-Risk Students', icon: AlertTriangle },
-  { to: '/instructor/submissions', label: 'Submissions', icon: FileText },
+  { to: '/instructor/concept-heatmap', label: 'Concept Heatmap', icon: Grid3X3 },
   { to: '/instructor/knowledge-base', label: 'Knowledge Base', icon: Upload },
-  { to: '/instructor/exam-monitor', label: 'Exam', icon: Monitor, disabled: true },
-  { to: '/instructor/assignments', label: 'Assignments', icon: ClipboardList },
+  { to: '/instructor/exam-monitor', label: 'Exam', icon: Monitor },
 ];
 
 export default function InstructorLayout() {

@@ -1,6 +1,6 @@
 """
-Sprint 4 Phase 2 & 3 — Instructor API Integration Tests
-Tests dashboard, subjects, subject detail, and assignment CRUD endpoints.
+Sprint 4 Phases 2-5 — Instructor API Integration Tests
+Tests dashboard, subjects, assignments, submissions, analytics, knowledge base, and profile.
 """
 import uuid
 
@@ -19,8 +19,11 @@ from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.user import User
+from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
+from app.db.models.curriculum_document import CurriculumDocument
+from app.db.models.knowledge_gap import KnowledgeGap
 from app.main import app
-from app.shared.source_enum import SubmissionProcessingStatus, UserRole
+from app.shared.source_enum import DocumentType, EmbeddingStatus, SubmissionProcessingStatus, UserRole
 
 engine = create_engine(settings.SYNC_DATABASE_URL)
 TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -830,3 +833,310 @@ class TestAtRiskStudents:
         assert data["total"] >= 1
         if data["total"] > 0:
             assert data["items"][0]["risk_score"] > 30
+
+
+# -- Phase 5 helpers --
+
+def _create_knowledge_gap(student_id, subject_id, submission_id, topic_tag="Algebra", concept_name="Quadratic Equations"):
+    db = TestSession()
+    gap = KnowledgeGap(
+        student_id=student_id,
+        subject_id=subject_id,
+        submission_id=submission_id,
+        topic_tag=topic_tag,
+        concept_name=concept_name,
+    )
+    db.add(gap)
+    db.commit()
+    gap_id = gap.gap_id
+    db.close()
+    return gap_id
+
+
+def _create_heatmap_entry(subject_id, grade_id, topic_tag="Geometry", concept_name="Triangles"):
+    db = TestSession()
+    entry = ConceptHeatmapEntry(
+        subject_id=subject_id,
+        grade_id=grade_id,
+        topic_tag=topic_tag,
+        concept_name=concept_name,
+        occurrence_count=5,
+        affected_student_count=3,
+        severity_score=75.0,
+    )
+    db.add(entry)
+    db.commit()
+    entry_id = entry.heatmap_id
+    db.close()
+    return entry_id
+
+
+def _create_document(instructor_id, subject_id, file_name="test.pdf"):
+    db = TestSession()
+    doc = CurriculumDocument(
+        subject_id=subject_id,
+        uploaded_by=instructor_id,
+        file_name=file_name,
+        file_path=f"/fake/path/{file_name}",
+        file_size_bytes=1024,
+        doc_type=DocumentType.CURRICULUM_PDF,
+        embedding_status=EmbeddingStatus.PENDING,
+    )
+    db.add(doc)
+    db.commit()
+    doc_id = doc.doc_id
+    db.close()
+    return doc_id
+
+
+# -- Phase 5 Tests --
+
+
+class TestConceptHeatmap:
+    """GD-94: GET /api/instructors/analytics/concept-heatmap"""
+
+    def test_heatmap_requires_auth(self):
+        resp = client.get("/api/instructors/analytics/concept-heatmap")
+        assert resp.status_code == 401
+
+    def test_heatmap_empty(self):
+        email, _ = _create_user("hm_empty")
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/concept-heatmap", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["heatmap_entries"] == []
+        assert data["teaching_insight"] is None
+
+    def test_heatmap_with_knowledge_gaps(self):
+        email, instructor_id = _create_user("hm_gaps")
+        grade_id, subject_id = _create_grade_and_subject("hm_gaps")
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+
+        _, stu_id = _create_user("hm_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        sub_id = _create_submission(stu_id, assignment_id, subject_id, score=40.0, status_val=SubmissionProcessingStatus.DONE)
+        _create_knowledge_gap(stu_id, subject_id, sub_id, topic_tag="Calculus", concept_name="Derivatives")
+
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/concept-heatmap", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["heatmap_entries"]) >= 1
+        assert data["heatmap_entries"][0]["topic_tag"] == "Calculus"
+        assert data["teaching_insight"] is not None
+
+    def test_heatmap_with_precomputed_entries(self):
+        email, instructor_id = _create_user("hm_pre")
+        grade_id, subject_id = _create_grade_and_subject("hm_pre")
+        _assign_instructor(instructor_id, subject_id)
+
+        _, stu_id = _create_user("hm_pre_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        _create_heatmap_entry(subject_id, grade_id, topic_tag="Stats", concept_name="Mean & Median")
+
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/concept-heatmap", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["heatmap_entries"]) >= 1
+        tags = [e["topic_tag"] for e in data["heatmap_entries"]]
+        assert "Stats" in tags
+
+    def test_heatmap_timeframe_filter(self):
+        email, _ = _create_user("hm_time")
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/concept-heatmap?timeframe=7d", headers=_auth_header(token))
+        assert resp.status_code == 200
+
+        resp = client.get("/api/instructors/analytics/concept-heatmap?timeframe=30d", headers=_auth_header(token))
+        assert resp.status_code == 200
+
+        resp = client.get("/api/instructors/analytics/concept-heatmap?timeframe=invalid", headers=_auth_header(token))
+        assert resp.status_code == 422
+
+
+class TestKnowledgeBase:
+    """GD-95: Knowledge base CRUD endpoints"""
+
+    def test_list_knowledge_base_requires_auth(self):
+        resp = client.get("/api/instructors/knowledge-base")
+        assert resp.status_code == 401
+
+    def test_list_knowledge_base_empty(self):
+        email, _ = _create_user("kb_empty")
+        token = _login(email)
+        resp = client.get("/api/instructors/knowledge-base", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["items"] == []
+        assert data["total"] == 0
+
+    def test_list_knowledge_base_with_docs(self):
+        email, instructor_id = _create_user("kb_list")
+        grade_id, subject_id = _create_grade_and_subject("kb_list")
+        _assign_instructor(instructor_id, subject_id)
+        _create_document(instructor_id, subject_id, "chapter1.pdf")
+        _create_document(instructor_id, subject_id, "chapter2.pdf")
+
+        token = _login(email)
+        resp = client.get("/api/instructors/knowledge-base", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 2
+        assert len(data["items"]) == 2
+
+    def test_list_knowledge_base_filter_by_subject(self):
+        email, instructor_id = _create_user("kb_filter")
+        grade_id, subject_id = _create_grade_and_subject("kb_filter")
+        _assign_instructor(instructor_id, subject_id)
+        _create_document(instructor_id, subject_id, "filtered.pdf")
+
+        token = _login(email)
+        resp = client.get(f"/api/instructors/knowledge-base?subject_id={subject_id}", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+
+    def test_list_knowledge_base_search(self):
+        email, instructor_id = _create_user("kb_search")
+        grade_id, subject_id = _create_grade_and_subject("kb_search")
+        _assign_instructor(instructor_id, subject_id)
+        _create_document(instructor_id, subject_id, "unique_searchable_doc.pdf")
+
+        token = _login(email)
+        resp = client.get("/api/instructors/knowledge-base?search=unique_searchable", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+        assert "unique_searchable" in data["items"][0]["file_name"]
+
+    def test_upload_document_requires_auth(self):
+        resp = client.post("/api/instructors/knowledge-base/upload")
+        assert resp.status_code == 401
+
+    def test_upload_document_rejects_non_pdf(self):
+        email, instructor_id = _create_user("kb_nonpdf")
+        grade_id, subject_id = _create_grade_and_subject("kb_nonpdf")
+        _assign_instructor(instructor_id, subject_id)
+
+        token = _login(email)
+        resp = client.post(
+            "/api/instructors/knowledge-base/upload",
+            data={"subject_id": str(subject_id), "doc_type": "curriculum_pdf"},
+            files={"file": ("test.txt", b"not a pdf", "text/plain")},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
+        assert "PDF" in resp.json()["detail"]
+
+    def test_upload_document_forbidden_subject(self):
+        email, instructor_id = _create_user("kb_forbidden")
+        _, subject_id = _create_grade_and_subject("kb_forbidden")
+        # NOT assigned to subject
+
+        token = _login(email)
+        resp = client.post(
+            "/api/instructors/knowledge-base/upload",
+            data={"subject_id": str(subject_id), "doc_type": "curriculum_pdf"},
+            files={"file": ("test.pdf", b"%PDF-1.4 test content", "application/pdf")},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 403
+
+    def test_upload_document_success(self):
+        email, instructor_id = _create_user("kb_upload")
+        grade_id, subject_id = _create_grade_and_subject("kb_upload")
+        _assign_instructor(instructor_id, subject_id)
+
+        token = _login(email)
+        resp = client.post(
+            "/api/instructors/knowledge-base/upload",
+            data={"subject_id": str(subject_id), "doc_type": "curriculum_pdf"},
+            files={"file": ("notes.pdf", b"%PDF-1.4 test content", "application/pdf")},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["file_name"] == "notes.pdf"
+        assert data["subject_id"] == subject_id
+        assert data["doc_type"] == "curriculum_pdf"
+
+    def test_delete_document_not_found(self):
+        email, _ = _create_user("kb_del_nf")
+        token = _login(email)
+        fake_id = str(uuid.uuid4())
+        resp = client.delete(f"/api/instructors/knowledge-base/{fake_id}", headers=_auth_header(token))
+        assert resp.status_code == 404
+
+    def test_delete_document_success(self):
+        email, instructor_id = _create_user("kb_del_ok")
+        grade_id, subject_id = _create_grade_and_subject("kb_del_ok")
+        _assign_instructor(instructor_id, subject_id)
+        doc_id = _create_document(instructor_id, subject_id, "delete_me.pdf")
+
+        token = _login(email)
+        resp = client.delete(f"/api/instructors/knowledge-base/{doc_id}", headers=_auth_header(token))
+        assert resp.status_code == 204
+
+        # Verify deleted
+        resp = client.get("/api/instructors/knowledge-base", headers=_auth_header(token))
+        data = resp.json()
+        doc_ids = [d["doc_id"] for d in data["items"]]
+        assert str(doc_id) not in doc_ids
+
+
+class TestInstructorProfile:
+    """GD-96: GET/PATCH /api/instructors/profile"""
+
+    def test_profile_requires_auth(self):
+        resp = client.get("/api/instructors/profile")
+        assert resp.status_code == 401
+
+    def test_get_profile_success(self):
+        email, instructor_id = _create_user("prof_get")
+        grade_id, subject_id = _create_grade_and_subject("prof_get")
+        _assign_instructor(instructor_id, subject_id)
+
+        token = _login(email)
+        resp = client.get("/api/instructors/profile", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == email
+        assert data["role"] == "instructor"
+        assert len(data["subjects"]) >= 1
+
+    def test_update_profile_success(self):
+        email, _ = _create_user("prof_upd")
+        token = _login(email)
+        resp = client.patch(
+            "/api/instructors/profile",
+            json={"full_name": "Updated Name"},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["full_name"] == "Updated Name"
+
+    def test_update_profile_empty_body(self):
+        email, _ = _create_user("prof_empty")
+        token = _login(email)
+        resp = client.patch(
+            "/api/instructors/profile",
+            json={},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
+
+    def test_update_profile_image_url(self):
+        email, _ = _create_user("prof_img")
+        token = _login(email)
+        resp = client.patch(
+            "/api/instructors/profile",
+            json={"profile_image_url": "/images/avatar.png"},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["profile_image_url"] == "/images/avatar.png"

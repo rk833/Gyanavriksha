@@ -25,6 +25,19 @@ import StudentHelp from './pages/student/Help';
 // Instructor Pages
 import InstructorLayout from './layouts/InstructorLayout';
 import InstructorDashboard from './pages/instructor/Dashboard';
+import InstructorAssignments from './pages/instructor/Assignments';
+import InstructorSubjects from './pages/instructor/Subjects';
+import InstructorSubmissions from './pages/instructor/Submissions';
+import InstructorVelocity from './pages/instructor/VelocityAnalytics';
+import InstructorAtRisk from './pages/instructor/AtRiskStudents';
+import InstructorHeatmap from './pages/instructor/ConceptHeatmap';
+import InstructorKnowledgeBase from './pages/instructor/KnowledgeBase';
+import InstructorExamMonitor from './pages/instructor/ExamMonitor';
+import InstructorSettings from './pages/instructor/Settings';
+import InstructorHelp from './pages/instructor/Help';
+import InstructorNotifications from './pages/instructor/Notifications';
+import InstructorProfile from './pages/instructor/Profile';
+import InstructorStudentReview from './pages/instructor/StudentReview';
 
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
@@ -78,6 +91,20 @@ function App() {
           >
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<InstructorDashboard />} />
+            <Route path="assignments" element={<InstructorAssignments />} />
+            <Route path="subjects" element={<InstructorSubjects />} />
+            <Route path="subjects/:subjectId" element={<InstructorSubjects />} />
+            <Route path="submissions" element={<InstructorSubmissions />} />
+            <Route path="velocity-analytics" element={<InstructorVelocity />} />
+            <Route path="at-risk-students" element={<InstructorAtRisk />} />
+            <Route path="concept-heatmap" element={<InstructorHeatmap />} />
+            <Route path="knowledge-base" element={<InstructorKnowledgeBase />} />
+            <Route path="exam-monitor" element={<InstructorExamMonitor />} />
+            <Route path="settings" element={<InstructorSettings />} />
+            <Route path="help" element={<InstructorHelp />} />
+            <Route path="notifications" element={<InstructorNotifications />} />
+            <Route path="profile" element={<InstructorProfile />} />
+            <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
 
           {/* Admin Routes — coming in Sprint 5 */}

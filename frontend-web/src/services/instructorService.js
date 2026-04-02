@@ -5,7 +5,7 @@ export const getDashboard = () => api.get('/api/instructors/dashboard');
 
 // Subjects
 export const getSubjects = () => api.get('/api/instructors/subjects');
-export const getSubjectDetail = (id) => api.get(`/api/instructors/subjects/${id}`);
+export const getSubjectDetail = (id, params = {}) => api.get(`/api/instructors/subjects/${id}`, { params });
 
 // Assignments
 export const getAssignments = (params = {}) => api.get('/api/instructors/assignments', { params });
