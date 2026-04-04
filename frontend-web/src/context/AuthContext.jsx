@@ -3,13 +3,29 @@ import authService from '../services/authService';
 
 export const AuthContext = createContext(null);
 
+/**
+ * Provides authentication state and actions to the entire React tree.
+ *
+ * Exposed context value:
+ * - `user`            Current user object, or null when unauthenticated.
+ * - `loading`         True while the initial auth check is in progress.
+ * - `isAuthenticated` Derived boolean from user presence.
+ * - `login`           Email/password sign-in; handles 2FA redirect.
+ * - `complete2FA`     Exchange a TOTP code for full tokens after login.
+ * - `logout`          Revoke tokens and clear local state.
+ * - `changePassword`  Change the authenticated user's password.
+ * - `fetchUser`       Re-fetch the /me endpoint and update user state.
+ */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const isAuthenticated = !!user;
 
-  // Fetch current user from /me endpoint
+  /**
+   * Fetch the current user from /api/auth/me and update state.
+   * Returns the user object on success, or null on any error.
+   */
   const fetchUser = useCallback(async () => {
     try {
       const userData = await authService.getMe();
@@ -21,7 +37,6 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // On mount: check for existing token and load user
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('access_token');
@@ -33,20 +48,33 @@ export function AuthProvider({ children }) {
     initAuth();
   }, [fetchUser]);
 
+  /**
+   * Sign in with email and password.
+   * When 2FA is required the raw API response is returned without storing tokens;
+   * the caller must redirect to the 2FA validation step.
+   *
+   * @param {string} email
+   * @param {string} password
+   * @returns {Promise<object>} Login response, possibly with `requires_2fa: true`.
+   */
   const login = async (email, password) => {
     const data = await authService.login(email, password);
-
-    // If 2FA is required, return the response without storing tokens
     if (data.requires_2fa) {
       return data;
     }
-
     localStorage.setItem('access_token', data.access_token);
     localStorage.setItem('refresh_token', data.refresh_token);
     const userData = await fetchUser();
     return { ...data, user: userData };
   };
 
+  /**
+   * Complete a 2FA login by exchanging the TOTP code for full tokens.
+   *
+   * @param {string} userId
+   * @param {string} code
+   * @returns {Promise<object>} Token response with the resolved user.
+   */
   const complete2FA = async (userId, code) => {
     const data = await authService.verify2FA(userId, code);
     localStorage.setItem('access_token', data.access_token);
@@ -55,16 +83,30 @@ export function AuthProvider({ children }) {
     return { ...data, user: userData };
   };
 
+  /**
+   * Sign out the current user: revoke server tokens and clear local state.
+   * Proceeds with local cleanup even when the API call fails.
+   */
   const logout = async () => {
     try {
       await authService.logout();
     } catch {
-      // Proceed with local cleanup even if API call fails
+      /* intentional no-op */
     }
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     setUser(null);
   };
+
+  /**
+   * Change the authenticated user's password.
+   *
+   * @param {string} currentPassword
+   * @param {string} newPassword
+   * @returns {Promise<{message: string}>}
+   */
+  const changePassword = (currentPassword, newPassword) =>
+    authService.changePassword(currentPassword, newPassword);
 
   const value = {
     user,
@@ -73,6 +115,7 @@ export function AuthProvider({ children }) {
     login,
     complete2FA,
     logout,
+    changePassword,
     fetchUser,
   };
 

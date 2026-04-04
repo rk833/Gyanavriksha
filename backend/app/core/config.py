@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # Frontend URL (for email verification/reset links)
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Rate limiting (requests per client per route per window)
+    RATE_LIMIT_CALLS: int = 5
+    RATE_LIMIT_PERIOD: int = 60
+
     @property
     def SYNC_DATABASE_URL(self) -> str:
         password = quote_plus(self.POSTGRES_PASSWORD)
