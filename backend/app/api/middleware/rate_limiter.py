@@ -72,7 +72,7 @@ async def rate_limit_middleware(request: Request, call_next):
     method + route combination within the configured time window. This
     per-route granularity prevents a high-volume page (e.g. dashboard poll)
     from consuming the quota of sensitive endpoints (e.g. login).
-    """
+        """
     if settings.ENVIRONMENT == "testing" or _is_exempt(request.url.path):
         return await call_next(request)
     calls = settings.RATE_LIMIT_CALLS

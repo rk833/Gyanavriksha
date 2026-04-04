@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Rate limiting (requests per client per route per window)
-    RATE_LIMIT_CALLS: int = 5
+    RATE_LIMIT_CALLS: int = 100
     RATE_LIMIT_PERIOD: int = 60
 
     @property

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   User,
@@ -14,20 +14,33 @@ import { getDashboard, getProfile, getEnrollments } from '../../services/student
 
 export default function StudentProfile() {
   const navigate = useNavigate();
-  const [profile, setProfile] = useState(null);
-  const [dashboard, setDashboard] = useState(null);
-  const [enrollments, setEnrollments] = useState([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
-      getProfile().then((r) => setProfile(r.data)),
-      getDashboard().then((r) => setDashboard(r.data)),
-      getEnrollments().then((r) => setEnrollments(r.data.items || [])),
-    ])
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: profile, isPending: profileLoading } = useQuery({
+    queryKey: ['student', 'profile'],
+    queryFn: async () => {
+      const res = await getProfile();
+      return res.data;
+    },
+  });
+
+  const { data: dashboard, isPending: dashboardLoading } = useQuery({
+    queryKey: ['student', 'dashboard'],
+    queryFn: async () => {
+      const res = await getDashboard();
+      return res.data;
+    },
+  });
+
+  const { data: enrollmentsData, isPending: enrollmentsLoading } = useQuery({
+    queryKey: ['student', 'enrollments'],
+    queryFn: async () => {
+      const res = await getEnrollments();
+      return res.data;
+    },
+  });
+
+  const enrollments = enrollmentsData?.items || [];
+  const loading = profileLoading || dashboardLoading || enrollmentsLoading;
 
   if (loading) {
     return (

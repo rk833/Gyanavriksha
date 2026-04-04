@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Calendar,
   TrendingUp,
@@ -32,58 +33,64 @@ const GRADE_COLORS = {
 
 export default function StudentSubmissions() {
   const navigate = useNavigate();
-  const [submissions, setSubmissions] = useState([]);
-  const [subjects, setSubjects] = useState([]);
-  const [dashboard, setDashboard] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [subjectFilter, setSubjectFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [selectedSubmission, setSelectedSubmission] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState(null);
 
-  const openDetail = async (submissionId) => {
-    setDetailLoading(true);
-    setSelectedSubmission({ loading: true });
-    try {
+  const { data: subjects = [] } = useQuery({
+    queryKey: ['student', 'subjects'],
+    queryFn: async () => {
+      const res = await getSubjects();
+      return res.data || [];
+    },
+  });
+
+  const { data: dashboard } = useQuery({
+    queryKey: ['student', 'dashboard'],
+    queryFn: async () => {
+      const res = await getDashboard();
+      return res.data;
+    },
+  });
+
+  const {
+    data: submissionsData,
+    isPending: loading,
+  } = useQuery({
+    queryKey: ['student', 'submissions', { page, subjectFilter, statusFilter }],
+    queryFn: async () => {
+      const params = { page, per_page: 10 };
+      if (subjectFilter) params.subject_id = subjectFilter;
+      if (statusFilter) params.status = statusFilter;
+      const res = await getSubmissions(params);
+      return res.data;
+    },
+  });
+
+  const {
+    data: selectedSubmission,
+    isPending: detailLoading,
+  } = useQuery({
+    queryKey: ['student', 'submission', selectedSubmissionId],
+    queryFn: async () => {
       const [detailRes, feedbackRes] = await Promise.allSettled([
-        getSubmissionDetail(submissionId),
-        getSubmissionFeedback(submissionId),
+        getSubmissionDetail(selectedSubmissionId),
+        getSubmissionFeedback(selectedSubmissionId),
       ]);
       const detail = detailRes.status === 'fulfilled' ? detailRes.value.data : null;
       const feedback = feedbackRes.status === 'fulfilled' ? feedbackRes.value.data : null;
-      setSelectedSubmission({ ...detail, feedback });
-    } catch {
-      setSelectedSubmission(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
+      return { ...detail, feedback };
+    },
+    enabled: !!selectedSubmissionId,
+  });
 
-  useEffect(() => {
-    Promise.all([
-      getSubjects().then((r) => setSubjects(r.data || [])),
-      getDashboard().then((r) => setDashboard(r.data)),
-    ]).catch(() => {});
-  }, []);
+  const submissions = submissionsData?.items || [];
+  const totalPages = submissionsData?.total_pages || 0;
+  const total = submissionsData?.total || 0;
 
-  useEffect(() => {
-    setLoading(true);
-    const params = { page, per_page: 10 };
-    if (subjectFilter) params.subject_id = subjectFilter;
-    if (statusFilter) params.status = statusFilter;
-
-    getSubmissions(params)
-      .then((r) => {
-        setSubmissions(r.data.items || []);
-        setTotalPages(r.data.total_pages || 0);
-        setTotal(r.data.total || 0);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [page, subjectFilter, statusFilter]);
+  const openDetail = (submissionId) => setSelectedSubmissionId(submissionId);
+  const closeDetail = () => setSelectedSubmissionId(null);
 
   const avgScore = dashboard?.average_score;
 
@@ -245,12 +252,12 @@ export default function StudentSubmissions() {
       {/* Submission Detail Modal */}
       {selectedSubmission && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/30" onClick={() => setSelectedSubmission(null)} />
+          <div className="absolute inset-0 bg-black/30" onClick={closeDetail} />
           <div className="relative bg-white rounded-xl border border-primary-light shadow-xl w-full max-w-lg max-h-[80vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-primary-light px-5 py-4 flex items-center justify-between rounded-t-xl">
               <h3 className="font-bold text-primary-dark">Submission Details</h3>
               <button
-                onClick={() => setSelectedSubmission(null)}
+                onClick={closeDetail}
                 className="p-1 rounded-lg hover:bg-slate-100"
               >
                 <X className="w-5 h-5 text-slate-400" />

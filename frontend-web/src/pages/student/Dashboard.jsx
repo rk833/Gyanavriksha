@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   BookOpen,
@@ -22,16 +22,18 @@ function SkeletonCard({ className = '' }) {
 
 export default function StudentDashboard() {
   const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    getDashboard()
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err.response?.data?.detail || 'Failed to load dashboard'))
-      .finally(() => setLoading(false));
-  }, []);
+  const {
+    data,
+    isPending: loading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['student', 'dashboard'],
+    queryFn: async () => {
+      const res = await getDashboard();
+      return res.data;
+    },
+  });
 
   if (loading) {
     return (
@@ -56,9 +58,11 @@ export default function StudentDashboard() {
   if (error) {
     return (
       <div className="text-center py-12">
-        <p className="text-red-500 mb-4">{error}</p>
+        <p className="text-red-500 mb-4">
+          {error?.response?.data?.detail || error?.message || 'Failed to load dashboard'}
+        </p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => refetch()}
           className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors"
         >
           Retry

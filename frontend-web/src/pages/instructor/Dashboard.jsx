@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -65,32 +65,29 @@ function StatusBadge({ status }) {
 }
 
 export default function InstructorDashboard() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      try {
-        const res = await getDashboard();
-        setData(res.data);
-      } catch (err) {
-        setError(err.response?.data?.detail || 'Failed to load dashboard');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDashboard();
-  }, []);
+  const {
+    data,
+    isPending: loading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['instructor', 'dashboard'],
+    queryFn: async () => {
+      const res = await getDashboard();
+      return res.data;
+    },
+  });
 
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
         <h2 className="text-lg font-semibold text-primary-dark mb-2">Dashboard Unavailable</h2>
-        <p className="text-slate-500 text-sm mb-4">{error}</p>
+        <p className="text-slate-500 text-sm mb-4">
+          {error?.response?.data?.detail || error?.message || 'Failed to load dashboard'}
+        </p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => refetch()}
           className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition"
         >
           Try Again

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Calendar,
   Clock,
@@ -19,6 +20,7 @@ import {
   getSubjects,
   uploadSubmission,
 } from '../../services/studentService';
+import { queryClient } from '../../lib/queryClient';
 
 const STATUS_BADGE = {
   open: 'bg-green-100 text-green-700',
@@ -28,41 +30,50 @@ const STATUS_BADGE = {
 
 export default function StudentAssignments() {
   const navigate = useNavigate();
-  const [assignments, setAssignments] = useState([]);
-  const [subjects, setSubjects] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [subjectFilter, setSubjectFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
-
-  // Upload modal state
   const [uploadModal, setUploadModal] = useState(null);
   const [files, setFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
 
-  const fetchAssignments = () => {
-    setLoading(true);
-    const params = { page, per_page: 10 };
-    if (subjectFilter) params.subject_id = subjectFilter;
-    if (statusFilter !== 'all') params.status = statusFilter;
+  const { data: subjects = [] } = useQuery({
+    queryKey: ['student', 'subjects'],
+    queryFn: async () => {
+      const res = await getSubjects();
+      return res.data || [];
+    },
+  });
 
-    getAssignments(params)
-      .then((r) => {
-        setAssignments(r.data.items || []);
-        setTotalPages(r.data.total_pages || 0);
-      })
-      .catch(() => toast.error('Failed to load assignments'))
-      .finally(() => setLoading(false));
-  };
+  const {
+    data: assignmentsData,
+    isPending: loading,
+  } = useQuery({
+    queryKey: ['student', 'assignments', { page, subjectFilter, statusFilter }],
+    queryFn: async () => {
+      const params = { page, per_page: 10 };
+      if (subjectFilter) params.subject_id = subjectFilter;
+      if (statusFilter !== 'all') params.status = statusFilter;
+      const res = await getAssignments(params);
+      return res.data;
+    },
+  });
 
-  useEffect(() => {
-    getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {});
-  }, []);
+  const uploadMutation = useMutation({
+    mutationFn: ({ assignmentId, files }) => uploadSubmission(assignmentId, files),
+    onSuccess: () => {
+      toast.success('Submission uploaded successfully!');
+      setUploadModal(null);
+      setFiles([]);
+      queryClient.invalidateQueries({ queryKey: ['student', 'assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['student', 'dashboard'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || 'Upload failed');
+    },
+  });
 
-  useEffect(() => {
-    fetchAssignments();
-  }, [page, subjectFilter, statusFilter]);
+  const assignments = assignmentsData?.items || [];
+  const totalPages = assignmentsData?.total_pages || 0;
 
   const getStatus = (a) => {
     if (a.has_submitted) return 'submitted';
@@ -86,18 +97,7 @@ export default function StudentAssignments() {
       toast.error('Please select at least one image');
       return;
     }
-    setUploading(true);
-    try {
-      await uploadSubmission(uploadModal.assignment_id, files);
-      toast.success('Submission uploaded successfully!');
-      setUploadModal(null);
-      setFiles([]);
-      fetchAssignments();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Upload failed');
-    } finally {
-      setUploading(false);
-    }
+    uploadMutation.mutate({ assignmentId: uploadModal.assignment_id, files });
   };
 
   return (
@@ -238,14 +238,14 @@ export default function StudentAssignments() {
       {/* Upload modal */}
       {uploadModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !uploading && setUploadModal(null)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => !uploadMutation.isPending && setUploadModal(null)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               {/* Header */}
               <div className="flex items-center justify-between mb-1">
                 <h2 className="text-xl font-bold text-primary-dark">Submit Your Work</h2>
                 <button
-                  onClick={() => !uploading && setUploadModal(null)}
+                  onClick={() => !uploadMutation.isPending && setUploadModal(null)}
                   className="p-1 rounded-lg hover:bg-slate-100"
                 >
                   <X className="w-5 h-5 text-slate-400" />
@@ -345,17 +345,17 @@ export default function StudentAssignments() {
               <div className="flex items-center justify-between">
                 <button
                   onClick={() => { setUploadModal(null); setFiles([]); }}
-                  disabled={uploading}
+                  disabled={uploadMutation.isPending}
                   className="text-sm text-slate-500 hover:text-slate-700"
                 >
                   Cancel Submission
                 </button>
                 <button
                   onClick={handleUpload}
-                  disabled={uploading || files.length === 0}
+                  disabled={uploadMutation.isPending || files.length === 0}
                   className="bg-primary-dark text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:bg-primary transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
-                  {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  {uploadMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                   Submit Assignment
                 </button>
               </div>
