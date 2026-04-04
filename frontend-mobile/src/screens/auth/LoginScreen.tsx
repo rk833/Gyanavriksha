@@ -219,10 +219,6 @@ export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenP
               </View>
 
               <View style={styles.footer}>
-                <Text style={styles.footerText}>
-                  Don&apos;t have an account? <Text style={styles.footerLink}>Create Account</Text>
-                </Text>
-
                 <View style={styles.secureChip}>
                   <View style={styles.secureDot} />
                   <Text style={styles.secureChipText}>2FA Secured</Text>
@@ -433,11 +429,6 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 13,
     textAlign: 'center',
-  },
-  footerLink: {
-    color: '#112D4E',
-    fontWeight: '800',
-    textDecorationLine: 'underline',
   },
   secureChip: {
     flexDirection: 'row',
