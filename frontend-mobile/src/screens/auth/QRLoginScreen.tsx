@@ -11,6 +11,8 @@ import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
+const API_BASE_URL = 'http://localhost:8000';
+
 type QRLoginScreenProps = {
   navigation?: {
     navigate: (screenName: string, params?: Record<string, string>) => void;
@@ -41,9 +43,11 @@ export default function QRLoginScreen({ navigation }: QRLoginScreenProps) {
 
       try {
         let parsedUrl: URL;
+        let allowedOrigin: string;
 
         try {
           parsedUrl = new URL(data);
+          allowedOrigin = new URL(API_BASE_URL).origin;
         } catch {
           throw new Error('Scanned QR is not a valid URL.');
         }
@@ -52,8 +56,16 @@ export default function QRLoginScreen({ navigation }: QRLoginScreenProps) {
           throw new Error('Scanned QR URL must use HTTP or HTTPS.');
         }
 
+        if (parsedUrl.origin !== allowedOrigin) {
+          throw new Error('Scanned QR URL is not from the expected server.');
+        }
+
         const response = await axios.get(parsedUrl.toString());
-        const token = response.data?.token;
+        const token =
+          response.data?.token ??
+          response.data?.access_token ??
+          response.data?.jwt ??
+          response.data?.auth_token;
 
         if (typeof token !== 'string' || token.length === 0) {
           throw new Error('Token missing from QR login response.');

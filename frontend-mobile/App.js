@@ -19,6 +19,15 @@ function PlaceholderScreen({ title, subtitle }) {
   );
 }
 
+function TwoFactorPlaceholderScreen() {
+  return (
+    <PlaceholderScreen
+      title="Two-Factor Verification"
+      subtitle="Two-factor screen is not added yet. Keep this route name as TwoFactorScreen so wiring remains stable when the real screen is introduced."
+    />
+  );
+}
+
 export default function App() {
   return (
     <NavigationContainer>
@@ -38,14 +47,7 @@ export default function App() {
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="TwoFactorScreen">
-          {() => (
-            <PlaceholderScreen
-              title="Two-Factor Verification"
-              subtitle="QR login succeeded. Continue with OTP verification here."
-            />
-          )}
-        </Stack.Screen>
+        <Stack.Screen name="TwoFactorScreen" component={TwoFactorPlaceholderScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

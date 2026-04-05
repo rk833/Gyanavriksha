@@ -14,7 +14,6 @@
     "@types/react": "^19.2.14",
     "axios": "^1.13.6",
     "expo": "~54.0.0",
-    "expo-barcode-scanner": "^13.0.1",
     "expo-camera": "~17.0.0",
     "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.10",
