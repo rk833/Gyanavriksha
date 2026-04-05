@@ -14,7 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Only ignore lib/ at repo root (Python packaging); do not ignore frontend-web/src/lib/
+/lib/
 lib64/
 parts/
 sdist/

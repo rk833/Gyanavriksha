@@ -1,20 +1,20 @@
-from fastapi import FastAPI  # type: ignore
-from fastapi.middleware.cors import CORSMiddleware  # type: ignore
-from slowapi import _rate_limit_exceeded_handler  # type: ignore
-from slowapi.errors import RateLimitExceeded  # type: ignore
+"""FastAPI application factory for the Gyanavriksha backend API."""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.middleware.rate_limiter import limiter
-from app.api.routes.auth import router as auth_router
-from app.api.routes.instructors import router as instructors_router
-from app.api.routes.students import router as students_router
+from app.api.auth.presentation.router import router as auth_router
+from app.api.instructor.presentation.router import router as instructors_router
+from app.api.middleware.rate_limiter import rate_limit_middleware
+from app.api.student.presentation.router import router as students_router
 
 app = FastAPI(
-    title="Gyanavriksha Backend API",
-    description="Core API for authentication, submissions, IoT management, and real-time communication",
-    version="0.1.0",
+    title="Gyanavriksha API",
+    description="AI-powered student assessment and learning analytics platform",
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
 )
 
-# CORS — allow frontend dev server
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -26,11 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Rate limiting
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.middleware("http")(rate_limit_middleware)
 
-# Register routers
 app.include_router(auth_router)
 app.include_router(instructors_router)
 app.include_router(students_router)
@@ -38,4 +35,5 @@ app.include_router(students_router)
 
 @app.get("/health")
 async def health_check():
+    """Return a liveness probe response for container orchestrators."""
     return {"status": "healthy", "service": "backend-api"}

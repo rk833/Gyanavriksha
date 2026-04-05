@@ -32,6 +32,31 @@ jobs:
       run:
         working-directory: backend
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gyanavriksha_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gyanavriksha_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: testing
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gyanavriksha_test
+      JWT_SECRET_KEY: ci-test-jwt-secret-key-minimum-32-chars-long-ok
+      REDIS_URL: redis://localhost:6379/0
+
     # Only trigger when backend files (or workflow files) change, or on any PR
     if: |
       github.event_name == 'pull_request' ||
@@ -71,13 +96,11 @@ jobs:
           uv run flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
           uv run flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
+      - name: Apply database migrations
+        run: uv run alembic upgrade head
+
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
-        env:
-          DATABASE_URL: sqlite+aiosqlite:///./test.db
-          SECRET_KEY: test-secret-key-ci-only
-          ALGORITHM: HS256
-          ACCESS_TOKEN_EXPIRE_MINUTES: 30
 
   # FRONTEND WEB — React + Vite + Tailwind
   frontend-web:

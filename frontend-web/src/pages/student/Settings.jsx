@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { User, Shield, Monitor, Lock, Loader2, Eye, EyeOff, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getProfile, updateProfile, getEnrollments } from '../../services/studentService';
 import authService from '../../services/authService';
 import useAuth from '../../hooks/useAuth';
+import { queryClient } from '../../lib/queryClient';
 
 function Toggle({ checked, onChange, label }) {
   return (
@@ -30,12 +32,6 @@ function Toggle({ checked, onChange, label }) {
 export default function StudentSettings() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [profile, setProfile] = useState(null);
-  const [enrollments, setEnrollments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  // Form state
   const [fullName, setFullName] = useState('');
   const [twoFaEnabled, setTwoFaEnabled] = useState(false);
   const [alerts, setAlerts] = useState({
@@ -43,45 +39,82 @@ export default function StudentSettings() {
     quiz_reminders: true,
     posture_connection: false,
   });
-
-  // 2FA disable modal
   const [showDisable2FA, setShowDisable2FA] = useState(false);
   const [disableCode, setDisableCode] = useState('');
   const [disablePassword, setDisablePassword] = useState('');
-  const [disabling2FA, setDisabling2FA] = useState(false);
-
-  // Change password modal
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPasswords, setShowPasswords] = useState(false);
-  const [changingPassword, setChangingPassword] = useState(false);
+
+  const { data: profile, isPending: profileLoading } = useQuery({
+    queryKey: ['student', 'profile'],
+    queryFn: async () => {
+      const res = await getProfile();
+      return res.data;
+    },
+  });
+
+  const { data: enrollmentsData, isPending: enrollmentsLoading } = useQuery({
+    queryKey: ['student', 'enrollments'],
+    queryFn: async () => {
+      const res = await getEnrollments();
+      return res.data;
+    },
+  });
 
   useEffect(() => {
-    Promise.all([
-      getProfile().then((r) => {
-        setProfile(r.data);
-        setFullName(r.data.full_name || '');
-        setTwoFaEnabled(r.data.totp_enabled || false);
-      }),
-      getEnrollments().then((r) => setEnrollments(r.data.items || [])),
-    ])
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await updateProfile({ full_name: fullName });
-      toast.success('Settings saved successfully');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to save');
-    } finally {
-      setSaving(false);
+    if (profile) {
+      setFullName(profile.full_name || '');
+      setTwoFaEnabled(profile.totp_enabled || false);
     }
-  };
+  }, [profile]);
+
+  const enrollments = enrollmentsData?.items || [];
+  const loading = profileLoading || enrollmentsLoading;
+
+  const updateProfileMutation = useMutation({
+    mutationFn: (data) => updateProfile(data),
+    onSuccess: () => {
+      toast.success('Settings saved successfully');
+      queryClient.invalidateQueries({ queryKey: ['student', 'profile'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || 'Failed to save');
+    },
+  });
+
+  const disable2FAMutation = useMutation({
+    mutationFn: ({ code, password }) => authService.disable2FA(code, password),
+    onSuccess: () => {
+      toast.success('Two-factor authentication disabled');
+      setShowDisable2FA(false);
+      setDisableCode('');
+      setDisablePassword('');
+      setTwoFaEnabled(false);
+      queryClient.invalidateQueries({ queryKey: ['student', 'profile'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || 'Failed to disable 2FA');
+    },
+  });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: ({ current, newPass }) => authService.changePassword(current, newPass),
+    onSuccess: () => {
+      toast.success('Password changed successfully');
+      setShowChangePassword(false);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || 'Failed to change password');
+    },
+  });
+
+  const handleSave = () => updateProfileMutation.mutate({ full_name: fullName });
 
   const handleDiscard = () => {
     setFullName(profile?.full_name || '');
@@ -96,28 +129,16 @@ export default function StudentSettings() {
     }
   };
 
-  const handleDisable2FA = async (e) => {
+  const handleDisable2FA = (e) => {
     e.preventDefault();
     if (!disableCode || disableCode.length !== 6) {
       toast.error('Enter a valid 6-digit code');
       return;
     }
-    setDisabling2FA(true);
-    try {
-      await authService.disable2FA(disableCode, disablePassword);
-      setTwoFaEnabled(false);
-      setShowDisable2FA(false);
-      setDisableCode('');
-      setDisablePassword('');
-      toast.success('Two-factor authentication disabled');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to disable 2FA');
-    } finally {
-      setDisabling2FA(false);
-    }
+    disable2FAMutation.mutate({ code: disableCode, password: disablePassword });
   };
 
-  const handleChangePassword = async (e) => {
+  const handleChangePassword = (e) => {
     e.preventDefault();
     if (newPassword.length < 8) {
       toast.error('New password must be at least 8 characters');
@@ -127,19 +148,7 @@ export default function StudentSettings() {
       toast.error('Passwords do not match');
       return;
     }
-    setChangingPassword(true);
-    try {
-      await authService.changePassword(currentPassword, newPassword);
-      setShowChangePassword(false);
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      toast.success('Password changed successfully');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to change password');
-    } finally {
-      setChangingPassword(false);
-    }
+    changePasswordMutation.mutate({ current: currentPassword, newPass: newPassword });
   };
 
   if (loading) {
@@ -340,10 +349,10 @@ export default function StudentSettings() {
         </button>
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={updateProfileMutation.isPending}
           className="px-6 py-2.5 bg-primary-dark text-white rounded-lg text-sm font-medium hover:bg-primary transition-colors disabled:opacity-50 flex items-center gap-2"
         >
-          {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+          {updateProfileMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
           Save Settings
         </button>
       </div>
@@ -400,10 +409,10 @@ export default function StudentSettings() {
                 </button>
                 <button
                   type="submit"
-                  disabled={disabling2FA}
+                  disabled={disable2FAMutation.isPending}
                   className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {disabling2FA && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {disable2FAMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
                   Disable 2FA
                 </button>
               </div>
@@ -480,10 +489,10 @@ export default function StudentSettings() {
                 </button>
                 <button
                   type="submit"
-                  disabled={changingPassword}
+                  disabled={changePasswordMutation.isPending}
                   className="flex-1 px-4 py-2 bg-primary-dark text-white rounded-lg text-sm font-medium hover:bg-primary disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {changingPassword && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {changePasswordMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
                   Change Password
                 </button>
               </div>

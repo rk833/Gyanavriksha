@@ -194,4 +194,4 @@ class TestHealth:
 
     def test_app_imports(self):
         from app.main import app as test_app
-        assert test_app.title == "Gyanavriksha Backend API"
+        assert test_app.title == "Gyanavriksha API"

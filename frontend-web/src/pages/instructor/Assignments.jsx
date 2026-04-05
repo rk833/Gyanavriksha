@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   ClipboardList,
   Plus,
@@ -26,6 +27,7 @@ import {
   deleteAssignment,
   getSubjects,
 } from '../../services/instructorService';
+import { queryClient } from '../../lib/queryClient';
 
 function StatusBadge({ published }) {
   return published ? (
@@ -46,32 +48,36 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
     is_exam_mode: assignment?.is_exam_mode || false,
     topic_tags: assignment?.topic_tags?.join(', ') || '',
   });
-  const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const payload = {
-        ...form,
-        subject_id: Number(form.subject_id),
-        max_score: Number(form.max_score),
-        due_date: form.due_date ? new Date(form.due_date).toISOString() : null,
-        topic_tags: form.topic_tags ? form.topic_tags.split(',').map((t) => t.trim()).filter(Boolean) : null,
-      };
+  const saveMutation = useMutation({
+    mutationFn: async (payload) => {
       if (isEdit) {
-        await updateAssignment(assignment.assignment_id, payload);
-        toast.success('Assignment updated');
+        return updateAssignment(assignment.assignment_id, payload);
       } else {
-        await createAssignment(payload);
-        toast.success('Assignment created');
+        return createAssignment(payload);
       }
+    },
+    onSuccess: () => {
+      toast.success(isEdit ? 'Assignment updated' : 'Assignment created');
+      queryClient.invalidateQueries({ queryKey: ['instructor', 'assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['instructor', 'dashboard'] });
       onSaved();
-    } catch (err) {
+    },
+    onError: (err) => {
       toast.error(err.response?.data?.detail || 'Failed to save assignment');
-    } finally {
-      setSaving(false);
-    }
+    },
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const payload = {
+      ...form,
+      subject_id: Number(form.subject_id),
+      max_score: Number(form.max_score),
+      due_date: form.due_date ? new Date(form.due_date).toISOString() : null,
+      topic_tags: form.topic_tags ? form.topic_tags.split(',').map((t) => t.trim()).filter(Boolean) : null,
+    };
+    saveMutation.mutate(payload);
   };
 
   return (
@@ -183,10 +189,10 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saveMutation.isPending}
               className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 transition disabled:opacity-50 flex items-center gap-2"
             >
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+              {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               {isEdit ? 'Update' : 'Create'}
             </button>
           </div>
@@ -198,66 +204,83 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
 
 export default function InstructorAssignments() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [assignments, setAssignments] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [subjects, setSubjects] = useState([]);
   const [detail, setDetail] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const page = Number(searchParams.get('page')) || 1;
   const statusFilter = searchParams.get('status') || '';
   const subjectFilter = searchParams.get('subject_id') || '';
-  const searchQuery = searchParams.get('search') || '';
   const perPage = 12;
-  const totalPages = Math.ceil(total / perPage);
 
-  const fetchAssignments = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data: subjects = [] } = useQuery({
+    queryKey: ['instructor', 'subjects'],
+    queryFn: async () => {
+      const res = await getSubjects();
+      return res.data || [];
+    },
+  });
+
+  const {
+    data: assignmentsData,
+    isPending: loading,
+  } = useQuery({
+    queryKey: ['instructor', 'assignments', { page, statusFilter, subjectFilter }],
+    queryFn: async () => {
       const params = { page, per_page: perPage };
       if (statusFilter) params.status = statusFilter;
       if (subjectFilter) params.subject_id = Number(subjectFilter);
       const res = await getAssignments(params);
-      setAssignments(res.data.items || []);
-      setTotal(res.data.total || 0);
-    } catch {
-      toast.error('Failed to load assignments');
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusFilter, subjectFilter]);
+      return res.data;
+    },
+  });
 
-  useEffect(() => {
-    fetchAssignments();
-  }, [fetchAssignments]);
-
-  useEffect(() => {
-    getSubjects().then((res) => setSubjects(res.data || [])).catch(() => {});
-  }, []);
-
-  const handlePublish = async (id) => {
-    try {
-      await publishAssignment(id);
+  const publishMutation = useMutation({
+    mutationFn: (id) => publishAssignment(id),
+    onSuccess: () => {
       toast.success('Assignment published');
-      fetchAssignments();
+      queryClient.invalidateQueries({ queryKey: ['instructor', 'assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['instructor', 'dashboard'] });
       setDetail(null);
-    } catch (err) {
+    },
+    onError: (err) => {
       toast.error(err.response?.data?.detail || 'Failed to publish');
-    }
-  };
+    },
+  });
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this draft assignment?')) return;
-    try {
-      await deleteAssignment(id);
+  const deleteMutation = useMutation({
+    mutationFn: (id) => deleteAssignment(id),
+    onSuccess: () => {
       toast.success('Assignment deleted');
-      fetchAssignments();
+      queryClient.invalidateQueries({ queryKey: ['instructor', 'assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['instructor', 'dashboard'] });
       setDetail(null);
-    } catch (err) {
+    },
+    onError: (err) => {
       toast.error(err.response?.data?.detail || 'Failed to delete');
-    }
+    },
+  });
+
+  const assignments = assignmentsData?.items || [];
+  const total = assignmentsData?.total || 0;
+  const totalPages = Math.ceil(total / perPage);
+
+  const filteredAssignments = useMemo(() => {
+    if (!searchQuery.trim()) return assignments;
+    const query = searchQuery.toLowerCase();
+    return assignments.filter(a => 
+      a.title?.toLowerCase().includes(query) ||
+      a.description?.toLowerCase().includes(query) ||
+      a.topic_tags?.some(tag => tag.toLowerCase().includes(query))
+    );
+  }, [assignments, searchQuery]);
+
+  const handlePublish = (id) => publishMutation.mutate(id);
+
+  const handleDelete = (id) => {
+    if (!window.confirm('Delete this draft assignment?')) return;
+    deleteMutation.mutate(id);
   };
 
   const openDetail = async (id) => {
@@ -312,7 +335,7 @@ export default function InstructorAssignments() {
             type="text"
             placeholder="Search assignments..."
             value={searchQuery}
-            onChange={(e) => setFilter('search', e.target.value)}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
           />
         </div>
@@ -351,21 +374,38 @@ export default function InstructorAssignments() {
             </div>
           ))}
         </div>
-      ) : assignments.length === 0 ? (
+      ) : filteredAssignments.length === 0 ? (
         <div className="bg-white border border-primary-light rounded-xl p-12 text-center">
           <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-primary-dark mb-2">No Assignments Yet</h3>
-          <p className="text-slate-500 text-sm mb-4">Create your first assignment to get started.</p>
-          <button
-            onClick={() => { setEditTarget(null); setShowModal(true); }}
-            className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition"
-          >
-            <Plus className="w-4 h-4 inline mr-1" /> Create Assignment
-          </button>
+          {searchQuery ? (
+            <>
+              <h3 className="text-lg font-semibold text-primary-dark mb-2">No Results Found</h3>
+              <p className="text-slate-500 text-sm mb-4">
+                No assignments match your search "{searchQuery}". Try a different search term.
+              </p>
+              <button
+                onClick={() => setSearchQuery('')}
+                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm hover:bg-slate-200 transition"
+              >
+                Clear Search
+              </button>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-semibold text-primary-dark mb-2">No Assignments Yet</h3>
+              <p className="text-slate-500 text-sm mb-4">Create your first assignment to get started.</p>
+              <button
+                onClick={() => { setEditTarget(null); setShowModal(true); }}
+                className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition"
+              >
+                <Plus className="w-4 h-4 inline mr-1" /> Create Assignment
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {assignments.map((a) => (
+          {filteredAssignments.map((a) => (
             <div
               key={a.assignment_id}
               className="bg-white rounded-xl border border-primary-light p-5 hover:shadow-md transition cursor-pointer"
@@ -535,7 +575,7 @@ export default function InstructorAssignments() {
           assignment={editTarget}
           subjects={subjects}
           onClose={() => setShowModal(false)}
-          onSaved={() => { setShowModal(false); fetchAssignments(); }}
+          onSaved={() => setShowModal(false)}
         />
       )}
     </div>
