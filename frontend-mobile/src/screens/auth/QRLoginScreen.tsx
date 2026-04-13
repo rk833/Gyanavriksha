@@ -10,8 +10,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { API_BASE_URL } from '../../config/api';
 
-const API_BASE_URL = 'http://localhost:8000';
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type QRLoginScreenProps = {
   navigation?: {
@@ -42,42 +44,77 @@ export default function QRLoginScreen({ navigation }: QRLoginScreenProps) {
       setIsLoading(true);
 
       try {
-        let parsedUrl: URL;
-        let allowedOrigin: string;
-
-        try {
-          parsedUrl = new URL(data);
-          allowedOrigin = new URL(API_BASE_URL).origin;
-        } catch {
-          throw new Error('Scanned QR is not a valid URL.');
+        const token = await SecureStore.getItemAsync('auth_token');
+        if (!token) {
+          throw new Error('Please login with email first to use QR authentication.');
         }
 
-        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-          throw new Error('Scanned QR URL must use HTTP or HTTPS.');
+        let sessionId = data.trim();
+
+        if (!UUID_REGEX.test(sessionId)) {
+          try {
+            const parsed = new URL(data);
+            sessionId = parsed.searchParams.get('session') ?? '';
+          } catch {
+            sessionId = '';
+          }
         }
 
-        if (parsedUrl.origin !== allowedOrigin) {
-          throw new Error('Scanned QR URL is not from the expected server.');
+        if (!UUID_REGEX.test(sessionId)) {
+          throw new Error('Scanned QR is invalid or missing a session id.');
         }
 
-        const response = await axios.get(parsedUrl.toString());
-        const token =
-          response.data?.token ??
-          response.data?.access_token ??
-          response.data?.jwt ??
-          response.data?.auth_token;
+        const requestConfig = {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        };
 
-        if (typeof token !== 'string' || token.length === 0) {
-          throw new Error('Token missing from QR login response.');
+        await axios.post(
+          `${API_BASE_URL}/api/auth/qr/scan`,
+          { session_id: sessionId },
+          requestConfig
+        );
+
+        const authResponse = await axios.post(
+          `${API_BASE_URL}/api/auth/qr/authenticate`,
+          { session_id: sessionId },
+          requestConfig
+        );
+
+        const accessToken = authResponse.data?.access_token;
+        const refreshToken = authResponse.data?.refresh_token;
+
+        if (typeof accessToken !== 'string' || accessToken.length === 0) {
+          throw new Error('Access token missing from QR authentication response.');
         }
 
-        await SecureStore.setItemAsync('auth_token', token);
+        await SecureStore.setItemAsync('auth_token', accessToken);
+        if (typeof refreshToken === 'string' && refreshToken.length > 0) {
+          await SecureStore.setItemAsync('refresh_token', refreshToken);
+        }
 
         if (navigation) {
-          navigation.navigate('TwoFactorScreen', { token });
+          navigation.navigate('HomeScreen');
         }
-      } catch {
-        setScanError('Scan failed. Please try again.');
+      } catch (error) {
+        if (axios.isAxiosError(error)) {
+          if (error.response?.status === 401) {
+            setScanError('Session expired. Login with email and try again.');
+          } else if (error.response?.status === 404) {
+            setScanError('QR session not found. Please generate a new QR code.');
+          } else if (error.response?.status === 409) {
+            setScanError('QR session is invalid for authentication. Try a new QR code.');
+          } else if (error.response?.status === 410) {
+            setScanError('QR session has expired. Please generate a new QR code.');
+          } else {
+            setScanError('Scan failed. Please try again.');
+          }
+        } else if (error instanceof Error) {
+          setScanError(error.message);
+        } else {
+          setScanError('Scan failed. Please try again.');
+        }
         setHasScanned(false);
       } finally {
         setIsLoading(false);
