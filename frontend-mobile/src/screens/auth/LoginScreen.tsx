@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Controller, useForm } from 'react-hook-form';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { API_BASE_URL } from '../../config/api';
 
 type LoginFormValues = {
   email: string;
@@ -24,12 +25,11 @@ type LoginFormValues = {
 
 type LoginScreenProps = {
   navigation?: {
-    navigate: (screenName: string) => void;
+    navigate: (screenName: string, params?: Record<string, unknown>) => void;
   };
   onLoginSuccess?: (token: string) => void;
 };
 
-const API_BASE_URL = 'http://localhost:8000';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenProps) {
@@ -52,10 +52,23 @@ export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenP
     setSubmitError(null);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/login`, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
         email: email.trim(),
         password,
       });
+
+      const requiresTwoFactor = response.data?.requires_2fa === true;
+      const userId = response.data?.user_id;
+
+      if (requiresTwoFactor) {
+        if (navigation && typeof userId === 'string' && userId.length > 0) {
+          navigation.navigate('TwoFactorScreen', { user_id: userId });
+          return;
+        }
+
+        setSubmitError('Two-factor authentication is required. Please log in again.');
+        return;
+      }
 
       const token =
         response.data?.token ??
@@ -67,12 +80,34 @@ export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenP
         throw new Error('Token missing from login response.');
       }
 
+      const refreshToken = response.data?.refresh_token;
+
       await SecureStore.setItemAsync('auth_token', token);
+      if (typeof refreshToken === 'string' && refreshToken.length > 0) {
+        await SecureStore.setItemAsync('refresh_token', refreshToken);
+      }
+
       onLoginSuccess?.(token);
+      if (!onLoginSuccess && navigation) {
+        navigation.navigate('HomeScreen');
+      }
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         setSubmitError('Invalid email or password. Please try again.');
         return;
+      }
+
+      if (axios.isAxiosError(error) && error.response?.status === 423) {
+        setSubmitError('Account is temporarily locked. Please try again later.');
+        return;
+      }
+
+      if (axios.isAxiosError(error) && error.response) {
+        const detail = error.response.data?.detail;
+        if (typeof detail === 'string' && detail.length > 0) {
+          setSubmitError(detail);
+          return;
+        }
       }
 
       setSubmitError('Unable to sign in right now. Please check your connection and try again.');

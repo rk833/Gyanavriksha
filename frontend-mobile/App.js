@@ -5,6 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, Text, View } from 'react-native';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import QRLoginScreen from './src/screens/auth/QRLoginScreen';
+import TwoFactorScreen from './src/screens/auth/TwoFactorScreen';
+import HomeScreen from './src/screens/student/HomeScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -16,15 +18,6 @@ function PlaceholderScreen({ title, subtitle }) {
         <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
     </SafeAreaView>
-  );
-}
-
-function TwoFactorPlaceholderScreen() {
-  return (
-    <PlaceholderScreen
-      title="Two-Factor Verification"
-      subtitle="Two-factor screen is not added yet. Keep this route name as TwoFactorScreen so wiring remains stable when the real screen is introduced."
-    />
   );
 }
 
@@ -47,7 +40,24 @@ export default function App() {
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="TwoFactorScreen" component={TwoFactorPlaceholderScreen} />
+        <Stack.Screen name="TwoFactorScreen" component={TwoFactorScreen} />
+        <Stack.Screen name="HomeScreen" component={HomeScreen} />
+        <Stack.Screen name="SettingsScreen">
+          {() => (
+            <PlaceholderScreen
+              title="Settings"
+              subtitle="Settings screen will be implemented next."
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ChangePasswordScreen">
+          {() => (
+            <PlaceholderScreen
+              title="Change Password"
+              subtitle="Change password UI placeholder for settings navigation."
+            />
+          )}
+        </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
   );
