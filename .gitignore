@@ -253,3 +253,9 @@ uploads/
 # claude artefacts
 claude-artefacts/
 .claude
+
+# Project planning/admin artifacts
+/Admin/
+/SPRINT_GUIDES/
+/Admin_Use_Case_Diagram.png
+/Requirement_Catalogue_Gyanavriksha.docx
