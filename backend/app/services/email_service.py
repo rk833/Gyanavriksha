@@ -58,6 +58,23 @@ def send_password_reset_email(to_email: str, token: str) -> None:
     _send_email(to_email, subject, html)
 
 
+def send_welcome_email(to_email: str, full_name: str, password: str) -> None:
+    """Send a welcome email containing the user's initial credentials."""
+    subject = "Welcome to Gyanavriksha — Your Account is Ready"
+    html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2563eb;">Welcome to Gyanavriksha, {full_name}!</h2>
+        <p>An administrator has created an account for you. Use the credentials below to sign in:</p>
+        <div style="background: #f3f4f6; padding: 16px; border-radius: 6px; margin: 20px 0;">
+            <p style="margin: 4px 0;"><strong>Email:</strong> {to_email}</p>
+            <p style="margin: 4px 0;"><strong>Password:</strong> {password}</p>
+        </div>
+        <p style="color: #666; font-size: 14px;">Please change your password after your first login.</p>
+    </div>
+    """
+    _send_email(to_email, subject, html)
+
+
 def _send_email(to_email: str, subject: str, html_body: str) -> None:
     # Dev mode: log instead of sending
     if not settings.SMTP_USER or settings.ENVIRONMENT == "development":

@@ -4,11 +4,24 @@ Each function orchestrates one admin-facing operation: calls the underlying
 service layer, maps results and errors to response schemas or HTTPExceptions,
 and keeps the presentation layer free of business logic.
 """
+import uuid
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.schemas.admin import AdminDashboardResponse, SystemHealthSummary
+from app.db.models.user import User
+from app.schemas.admin import (
+    AdminDashboardResponse,
+    AdminUserCreateResponse,
+    AdminUserListResponse,
+    AdminUserResponse,
+    EnrollmentResponse,
+    RoleDistribution,
+    SystemHealthSummary,
+)
 from app.services import admin_service
+from app.services.email_service import send_welcome_email
+from app.shared.source_enum import UserRole
 
 
 def _build_stub_health() -> SystemHealthSummary:
@@ -28,7 +41,6 @@ def get_dashboard(db: Session) -> AdminDashboardResponse:
     """
     stats = admin_service.get_platform_stats(db)
     two_fa = stats["two_fa_compliance"]
-
     return AdminDashboardResponse(
         iot_nodes_active=0,
         chromadb_accuracy_pct=None,
@@ -47,10 +59,253 @@ def _raise_if_not_found(obj: object, detail: str) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
 
-def _raise_if_last_admin(db: Session, user_id: object) -> None:
+def _raise_if_last_admin(db: Session) -> None:
     """Raise HTTP 400 when an operation would remove the last active admin."""
     if admin_service.count_active_admins(db) <= 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot perform this action on the last active admin",
         )
+
+
+def _raise_if_self(actor_id: uuid.UUID, target_id: uuid.UUID) -> None:
+    """Raise HTTP 400 when an admin targets their own account."""
+    if actor_id == target_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot perform this action on your own account",
+        )
+
+
+def _user_to_schema(user: User) -> AdminUserResponse:
+    """Convert a User ORM object to an AdminUserResponse schema."""
+    return AdminUserResponse(
+        user_id=user.user_id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        grade_name=None,
+        is_active=user.is_active,
+        is_email_verified=user.is_email_verified,
+        totp_enabled=user.totp_enabled,
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
+    )
+
+
+def _build_role_distribution(db: Session) -> RoleDistribution:
+    """Return current role distribution schema from live counts."""
+    dist = admin_service.get_user_role_distribution(db)
+    return RoleDistribution(**dist)
+
+
+def list_users(
+    db: Session,
+    role: UserRole | None,
+    is_active: bool | None,
+    search: str | None,
+    grade_id: int | None,
+    page: int,
+    per_page: int,
+) -> AdminUserListResponse:
+    """Return a paginated, filtered user list with platform summary stats."""
+    users, total = admin_service.list_users(db, role, is_active, search, grade_id, page, per_page)
+    two_fa = admin_service.get_two_fa_compliance(db)
+    return AdminUserListResponse(
+        users=[_user_to_schema(u) for u in users],
+        total_count=total,
+        page=page,
+        per_page=per_page,
+        role_distribution=_build_role_distribution(db),
+        security_health_pct=two_fa["compliance_pct"],
+        pending_approvals_count=0,
+    )
+
+
+def get_user(db: Session, user_id: uuid.UUID) -> AdminUserResponse:
+    """Return full detail for a single user, raising 404 when absent."""
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    return _user_to_schema(user)
+
+
+def create_user(
+    db: Session,
+    email: str,
+    full_name: str,
+    role: UserRole,
+    raw_password: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> AdminUserCreateResponse:
+    """Create a new user, emit a welcome email, and write an audit entry."""
+    if admin_service.email_exists(db, email):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    user, password = admin_service.create_user(db, email, full_name, role, raw_password)
+    admin_service.log_audit_event(
+        db, actor_id, "USER_CREATED", f"Created user {email} (role: {role.value})", "user", str(user.user_id), ip_address,
+    )
+    db.commit()
+    send_welcome_email(email, full_name, password)
+    return AdminUserCreateResponse(**_user_to_schema(user).model_dump(), generated_password=password)
+
+
+def update_user(
+    db: Session,
+    user_id: uuid.UUID,
+    full_name: str | None,
+    is_active: bool | None,
+    profile_image_url: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> AdminUserResponse:
+    """Apply partial field updates to a user and write an audit entry."""
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    user = admin_service.update_user_fields(db, user, full_name, is_active, profile_image_url)
+    admin_service.log_audit_event(
+        db, actor_id, "USER_UPDATED", f"Updated user {user.email}", "user", str(user_id), ip_address,
+    )
+    db.commit()
+    return _user_to_schema(user)
+
+
+def suspend_user(
+    db: Session,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> AdminUserResponse:
+    """Suspend a user account, guarding against self-suspension and last-admin removal."""
+    _raise_if_self(actor_id, user_id)
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    if user.role == UserRole.ADMIN:
+        _raise_if_last_admin(db)
+    user = admin_service.set_active(db, user, False)
+    admin_service.log_audit_event(
+        db, actor_id, "ACCOUNT_SUSPENDED", f"Suspended {user.email}", "user", str(user_id), ip_address,
+    )
+    db.commit()
+    return _user_to_schema(user)
+
+
+def reactivate_user(
+    db: Session,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> AdminUserResponse:
+    """Reactivate a suspended user account."""
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    user = admin_service.set_active(db, user, True)
+    admin_service.log_audit_event(
+        db, actor_id, "ACCOUNT_REACTIVATED", f"Reactivated {user.email}", "user", str(user_id), ip_address,
+    )
+    db.commit()
+    return _user_to_schema(user)
+
+
+def delete_user(
+    db: Session,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Soft-delete a user by deactivating the account, guarding against self-deletion."""
+    _raise_if_self(actor_id, user_id)
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    if user.role == UserRole.ADMIN:
+        _raise_if_last_admin(db)
+    admin_service.set_active(db, user, False)
+    admin_service.log_audit_event(
+        db, actor_id, "ACCOUNT_DELETED", f"Deleted {user.email}", "user", str(user_id), ip_address,
+    )
+    db.commit()
+
+
+def bulk_suspend_users(
+    db: Session,
+    user_ids: list[uuid.UUID],
+    actor_id: uuid.UUID,
+) -> dict:
+    """Suspend multiple users and return operation counts."""
+    count, skipped = admin_service.bulk_suspend(db, user_ids, actor_id)
+    db.commit()
+    return {"suspended_count": count, "skipped": skipped}
+
+
+def bulk_delete_users(
+    db: Session,
+    user_ids: list[uuid.UUID],
+    actor_id: uuid.UUID,
+) -> dict:
+    """Soft-delete multiple users and return operation counts."""
+    count, skipped = admin_service.bulk_delete(db, user_ids, actor_id)
+    db.commit()
+    return {"deleted_count": count, "skipped": skipped}
+
+
+def force_reset_password(
+    db: Session,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> dict:
+    """Generate and set a new password, then email it to the user."""
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    new_password = admin_service.reset_password(db, user)
+    admin_service.log_audit_event(
+        db, actor_id, "PASSWORD_RESET", f"Force reset password for {user.email}", "user", str(user_id), ip_address,
+    )
+    db.commit()
+    send_welcome_email(user.email, user.full_name, new_password)
+    return {"message": "Password reset and emailed to user"}
+
+
+def change_role(
+    db: Session,
+    user_id: uuid.UUID,
+    new_role: UserRole,
+    subject_ids: list[int] | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> AdminUserResponse:
+    """Change a user's role with optional instructor subject assignment."""
+    user = admin_service.get_user_by_id(db, user_id)
+    _raise_if_not_found(user, "User not found")
+    if user.role == UserRole.ADMIN and new_role != UserRole.ADMIN:
+        _raise_if_last_admin(db)
+    user = admin_service.change_user_role(db, user, new_role, subject_ids, actor_id)
+    admin_service.log_audit_event(
+        db, actor_id, "ROLE_CHANGE", f"Changed {user.email} role to {new_role.value}", "user", str(user_id), ip_address,
+    )
+    db.commit()
+    return _user_to_schema(user)
+
+
+def get_pending_enrollments(db: Session) -> list[EnrollmentResponse]:
+    """Return all enrollments awaiting admin approval (is_active=False)."""
+    rows = admin_service.list_pending_enrollments(db)
+    return [EnrollmentResponse(**r) for r in rows]
+
+
+def approve_enrollment(
+    db: Session,
+    enrollment_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> EnrollmentResponse:
+    """Approve a pending enrollment by activating it."""
+    enrollment = admin_service.get_enrollment_by_id(db, enrollment_id)
+    _raise_if_not_found(enrollment, "Enrollment not found")
+    admin_service.approve_enrollment(db, enrollment)
+    admin_service.log_audit_event(
+        db, actor_id, "ENROLLMENT_APPROVED", f"Approved enrollment {enrollment_id}", "enrollment", str(enrollment_id), ip_address,
+    )
+    db.commit()
+    detail = admin_service.get_enrollment_detail(db, enrollment_id)
+    return EnrollmentResponse(**detail)
