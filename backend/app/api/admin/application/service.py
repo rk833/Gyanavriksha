@@ -15,8 +15,12 @@ from app.schemas.admin import (
     AdminUserCreateResponse,
     AdminUserListResponse,
     AdminUserResponse,
+    BulkEnrollmentResponse,
+    EnrollmentListResponse,
     EnrollmentResponse,
+    GradeResponse,
     RoleDistribution,
+    SubjectResponse,
     SystemHealthSummary,
 )
 from app.services import admin_service
@@ -285,6 +289,221 @@ def change_role(
     )
     db.commit()
     return _user_to_schema(user)
+
+
+def list_grades(db: Session) -> list[GradeResponse]:
+    """Return all grades sorted by level with subject and student counts."""
+    return [GradeResponse(**g) for g in admin_service.list_grades(db)]
+
+
+def create_grade(
+    db: Session,
+    grade_name: str,
+    grade_level: int,
+    description: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> GradeResponse:
+    """Create a new academic grade and write an audit entry."""
+    if admin_service.grade_name_exists(db, grade_name):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Grade name already exists")
+    grade = admin_service.create_grade(db, grade_name, grade_level, description)
+    admin_service.log_audit_event(db, actor_id, "GRADE_CREATED", f"Created grade {grade_name}", "grade", str(grade.grade_id), ip_address)
+    db.commit()
+    subject_count, student_count = admin_service._grade_counts(db, grade.grade_id)
+    return GradeResponse(
+        grade_id=grade.grade_id,
+        grade_name=grade.grade_name,
+        grade_level=grade.grade_level,
+        description=grade.description,
+        subject_count=subject_count,
+        student_count=student_count,
+    )
+
+
+def update_grade(
+    db: Session,
+    grade_id: int,
+    grade_name: str | None,
+    description: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> GradeResponse:
+    """Apply partial updates to a grade and write an audit entry."""
+    grade = admin_service.get_grade_by_id(db, grade_id)
+    _raise_if_not_found(grade, "Grade not found")
+    grade = admin_service.update_grade_fields(db, grade, grade_name, description)
+    admin_service.log_audit_event(db, actor_id, "GRADE_UPDATED", f"Updated grade {grade.grade_name}", "grade", str(grade_id), ip_address)
+    db.commit()
+    subject_count, student_count = admin_service._grade_counts(db, grade.grade_id)
+    return GradeResponse(
+        grade_id=grade.grade_id,
+        grade_name=grade.grade_name,
+        grade_level=grade.grade_level,
+        description=grade.description,
+        subject_count=subject_count,
+        student_count=student_count,
+    )
+
+
+def delete_grade(
+    db: Session,
+    grade_id: int,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Delete a grade, raising 400 when linked subjects or enrollments exist."""
+    error = admin_service.delete_grade_safe(db, grade_id)
+    if error == "NOT_FOUND":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grade not found")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    admin_service.log_audit_event(db, actor_id, "GRADE_DELETED", f"Deleted grade {grade_id}", "grade", str(grade_id), ip_address)
+    db.commit()
+
+
+def list_subjects(
+    db: Session,
+    grade_id: int | None,
+    search: str | None,
+) -> list[SubjectResponse]:
+    """Return subjects with instructor info and counts."""
+    return [SubjectResponse(**s) for s in admin_service.list_subjects(db, grade_id, search)]
+
+
+def create_subject(
+    db: Session,
+    name: str,
+    subject_code: str,
+    description: str | None,
+    grade_id: int,
+    instructor_id: uuid.UUID | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> SubjectResponse:
+    """Create a new subject and optionally assign an instructor."""
+    if admin_service.subject_code_exists(db, subject_code):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Subject code already exists")
+    subject = admin_service.create_subject(db, name, subject_code, description, grade_id)
+    if instructor_id:
+        admin_service.assign_instructor_to_subject(db, subject.subject_id, instructor_id, actor_id)
+    admin_service.log_audit_event(db, actor_id, "SUBJECT_CREATED", f"Created subject {name}", "subject", str(subject.subject_id), ip_address)
+    db.commit()
+    return SubjectResponse(**admin_service._subject_detail(db, subject))
+
+
+def update_subject(
+    db: Session,
+    subject_id: int,
+    name: str | None,
+    description: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> SubjectResponse:
+    """Apply partial updates to a subject."""
+    subject = admin_service.get_subject_by_id(db, subject_id)
+    _raise_if_not_found(subject, "Subject not found")
+    subject = admin_service.update_subject_fields(db, subject, name, description)
+    admin_service.log_audit_event(db, actor_id, "SUBJECT_UPDATED", f"Updated subject {subject.subject_name}", "subject", str(subject_id), ip_address)
+    db.commit()
+    return SubjectResponse(**admin_service._subject_detail(db, subject))
+
+
+def delete_subject(
+    db: Session,
+    subject_id: int,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Delete a subject, raising 400 when active enrollments exist."""
+    error = admin_service.delete_subject_safe(db, subject_id)
+    if error == "NOT_FOUND":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    admin_service.log_audit_event(db, actor_id, "SUBJECT_DELETED", f"Deleted subject {subject_id}", "subject", str(subject_id), ip_address)
+    db.commit()
+
+
+def assign_instructor(
+    db: Session,
+    subject_id: int,
+    instructor_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> SubjectResponse:
+    """Assign an instructor to a subject and write an audit entry."""
+    subject = admin_service.get_subject_by_id(db, subject_id)
+    _raise_if_not_found(subject, "Subject not found")
+    admin_service.assign_instructor_to_subject(db, subject_id, instructor_id, actor_id)
+    admin_service.log_audit_event(db, actor_id, "INSTRUCTOR_ASSIGNED", f"Assigned instructor to subject {subject_id}", "subject", str(subject_id), ip_address)
+    db.commit()
+    return SubjectResponse(**admin_service._subject_detail(db, subject))
+
+
+def list_enrollments(
+    db: Session,
+    student_id: uuid.UUID | None,
+    subject_id: int | None,
+    grade_id: int | None,
+    enrollment_status: str | None,
+    page: int,
+    per_page: int,
+) -> EnrollmentListResponse:
+    """Return a paginated, filtered enrollment list."""
+    rows, total = admin_service.list_enrollments(db, student_id, subject_id, grade_id, enrollment_status, page, per_page)
+    return EnrollmentListResponse(
+        enrollments=[EnrollmentResponse(**r) for r in rows],
+        total_count=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+def create_enrollment(
+    db: Session,
+    student_id: uuid.UUID,
+    subject_id: int,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> EnrollmentResponse:
+    """Create a single enrollment, raising 400 on duplicate."""
+    if admin_service.enrollment_exists(db, student_id, subject_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student already enrolled in this subject")
+    enrollment = admin_service.create_enrollment(db, student_id, subject_id)
+    admin_service.log_audit_event(db, actor_id, "ENROLLMENT_CREATED", f"Enrolled student {student_id} in subject {subject_id}", "enrollment", str(enrollment.enrollment_id), ip_address)
+    db.commit()
+    return EnrollmentResponse(**admin_service._enrollment_detail_row(db, enrollment))
+
+
+def bulk_enroll(
+    db: Session,
+    student_ids: list[uuid.UUID],
+    subject_id: int,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> BulkEnrollmentResponse:
+    """Bulk-enroll students, skipping duplicates."""
+    enrolled_count, skipped = admin_service.bulk_enroll(db, student_ids, subject_id)
+    admin_service.log_audit_event(db, actor_id, "ENROLLMENT_BULK", f"Bulk enrolled {enrolled_count} students in subject {subject_id}", "enrollment", str(subject_id), ip_address)
+    db.commit()
+    return BulkEnrollmentResponse(enrolled_count=enrolled_count, skipped_student_ids=skipped)
+
+
+def remove_enrollment(
+    db: Session,
+    enrollment_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Soft-delete an enrollment, raising 400 when submissions exist."""
+    error = admin_service.remove_enrollment_safe(db, enrollment_id)
+    if error == "NOT_FOUND":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment not found")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    admin_service.log_audit_event(db, actor_id, "ENROLLMENT_REMOVED", f"Removed enrollment {enrollment_id}", "enrollment", str(enrollment_id), ip_address)
+    db.commit()
 
 
 def get_pending_enrollments(db: Session) -> list[EnrollmentResponse]:

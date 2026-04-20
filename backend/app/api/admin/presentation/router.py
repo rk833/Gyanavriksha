@@ -20,9 +20,20 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserResponse,
     AdminUserUpdateRequest,
+    AssignInstructorRequest,
+    BulkEnrollmentResponse,
     BulkUserIdsRequest,
+    EnrollmentBulkCreateRequest,
+    EnrollmentCreateRequest,
+    EnrollmentListResponse,
     EnrollmentResponse,
+    GradeCreateRequest,
+    GradeResponse,
+    GradeUpdateRequest,
     RoleChangeRequest,
+    SubjectCreateRequest,
+    SubjectResponse,
+    SubjectUpdateRequest,
 )
 from app.shared.source_enum import UserRole
 
@@ -209,3 +220,154 @@ def change_role(
         actor_id=current_user.user_id,
         ip_address=_ip(request),
     )
+
+
+@router.get("/grades", response_model=list[GradeResponse])
+def list_grades(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return all grades sorted by level with subject and student counts."""
+    return service.list_grades(db)
+
+
+@router.post("/grades", response_model=GradeResponse, status_code=status.HTTP_201_CREATED)
+def create_grade(
+    body: GradeCreateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Create a new academic grade."""
+    return service.create_grade(db, body.grade_name, body.grade_level, body.description, current_user.user_id, _ip(request))
+
+
+@router.patch("/grades/{grade_id}", response_model=GradeResponse)
+def update_grade(
+    grade_id: int,
+    body: GradeUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Update a grade's name or description."""
+    return service.update_grade(db, grade_id, body.grade_name, body.description, current_user.user_id, _ip(request))
+
+
+@router.delete("/grades/{grade_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_grade(
+    grade_id: int,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Delete a grade only when no subjects or enrollments are linked."""
+    service.delete_grade(db, grade_id, current_user.user_id, _ip(request))
+
+
+@router.get("/subjects", response_model=list[SubjectResponse])
+def list_subjects(
+    grade_id: Optional[int] = None,
+    search: Optional[str] = None,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return subjects optionally filtered by grade or name search."""
+    return service.list_subjects(db, grade_id, search)
+
+
+@router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
+def create_subject(
+    body: SubjectCreateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Create a new subject with an auto-generated ChromaDB namespace."""
+    return service.create_subject(
+        db, body.name, body.subject_code, body.description, body.grade_id,
+        body.instructor_id, current_user.user_id, _ip(request),
+    )
+
+
+@router.patch("/subjects/{subject_id}", response_model=SubjectResponse)
+def update_subject(
+    subject_id: int,
+    body: SubjectUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Update a subject's name or description."""
+    return service.update_subject(db, subject_id, body.name, body.description, current_user.user_id, _ip(request))
+
+
+@router.delete("/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_subject(
+    subject_id: int,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Delete a subject only when no active enrollments exist."""
+    service.delete_subject(db, subject_id, current_user.user_id, _ip(request))
+
+
+@router.post("/subjects/{subject_id}/assign-instructor", response_model=SubjectResponse)
+def assign_instructor(
+    subject_id: int,
+    body: AssignInstructorRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Assign an instructor to a subject."""
+    return service.assign_instructor(db, subject_id, body.instructor_id, current_user.user_id, _ip(request))
+
+
+@router.get("/enrollments", response_model=EnrollmentListResponse)
+def list_enrollments(
+    student_id: Optional[uuid.UUID] = None,
+    subject_id: Optional[int] = None,
+    grade_id: Optional[int] = None,
+    enrollment_status: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return a paginated, filtered enrollment list."""
+    return service.list_enrollments(db, student_id, subject_id, grade_id, enrollment_status, page, per_page)
+
+
+@router.post("/enrollments/bulk", response_model=BulkEnrollmentResponse)
+def bulk_enroll(
+    body: EnrollmentBulkCreateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Bulk-enroll multiple students into one subject."""
+    return service.bulk_enroll(db, body.student_ids, body.subject_id, current_user.user_id, _ip(request))
+
+
+@router.post("/enrollments", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
+def create_enrollment(
+    body: EnrollmentCreateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Create a single student enrollment."""
+    return service.create_enrollment(db, body.student_id, body.subject_id, current_user.user_id, _ip(request))
+
+
+@router.delete("/enrollments/{enrollment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_enrollment(
+    enrollment_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Soft-delete an enrollment when no submissions exist."""
+    service.remove_enrollment(db, enrollment_id, current_user.user_id, _ip(request))
