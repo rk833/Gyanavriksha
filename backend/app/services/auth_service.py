@@ -98,16 +98,15 @@ def authenticate_user(db: Session, email: str, password: str) -> LoginResponse:
             user_id=user.user_id,
         )
 
-    # Generate tokens
     token_data = {
         "sub": str(user.user_id),
         "email": user.email,
         "role": user.role.value,
+        "tv": user.token_version,
     }
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
 
-    # Store refresh token hash
     _store_refresh_token(db, user.user_id, refresh_token)
 
     db.commit()
@@ -162,6 +161,7 @@ def refresh_access_token(db: Session, refresh_token_str: str) -> TokenResponse:
         "sub": str(user.user_id),
         "email": user.email,
         "role": user.role.value,
+        "tv": user.token_version,
     }
     new_access = create_access_token(token_data)
     new_refresh = create_refresh_token(token_data)
@@ -362,11 +362,11 @@ def validate_2fa(db: Session, user_id: str, code: str) -> dict:
     if not totp.verify(code):
         raise ValueError("INVALID_CODE")
 
-    # Issue tokens
     token_data = {
         "sub": str(user.user_id),
         "email": user.email,
         "role": user.role.value,
+        "tv": user.token_version,
     }
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
@@ -477,11 +477,11 @@ def authenticate_qr_session(db: Session, session_id: str, user: User) -> dict:
     if qr_session.user_id != user.user_id:
         raise ValueError("SESSION_USER_MISMATCH")
 
-    # Issue tokens for web session
     token_data = {
         "sub": str(user.user_id),
         "email": user.email,
         "role": user.role.value,
+        "tv": user.token_version,
     }
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
