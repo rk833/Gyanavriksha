@@ -537,7 +537,6 @@ def requeue_curriculum_doc(
     return service.requeue_curriculum_doc(db, doc_id, current_user.user_id, _ip(request))
 
 
-
 @router.get("/iot/devices", response_model=IoTDeviceListResponse)
 def list_iot_devices(
     status: Optional[str] = None,

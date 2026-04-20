@@ -713,10 +713,6 @@ def approve_enrollment(
     return EnrollmentResponse(**detail)
 
 
-# ---------------------------------------------------------------------------
-# IoT device use cases
-# ---------------------------------------------------------------------------
-
 _VALID_STATUSES = {"online", "offline", "syncing", "decommissioned"}
 
 

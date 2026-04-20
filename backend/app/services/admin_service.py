@@ -1133,10 +1133,6 @@ def get_export_snapshot(db: Session) -> dict:
     return {"namespaces": namespaces, "stats": stats}
 
 
-# ---------------------------------------------------------------------------
-# IoT device management
-# ---------------------------------------------------------------------------
-
 from datetime import datetime, timezone, timedelta
 
 from app.db.models.iot_device import IotDevice

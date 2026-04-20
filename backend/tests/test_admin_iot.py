@@ -85,10 +85,6 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-# ---------------------------------------------------------------------------
-# GD-121 — Device registry CRUD
-# ---------------------------------------------------------------------------
-
 def test_list_devices_requires_admin():
     student = _create_user("stu1", role="student")
     token = _login(student.email)
@@ -215,10 +211,6 @@ def test_regenerate_api_key():
     assert len(data["api_key"]) > 10
     assert str(data["device_id"]) == str(device.device_id)
 
-
-# ---------------------------------------------------------------------------
-# GD-122 — Health & telemetry
-# ---------------------------------------------------------------------------
 
 def test_get_iot_health():
     admin = _create_user("adm_health")
