@@ -439,3 +439,49 @@ class VectorStoreStatsResponse(BaseModel):
     total_pending: int
     total_failed: int
     ai_service_status: str = "stub"
+
+
+class SystemChangeEntry(BaseModel):
+    """Single major system-level change event."""
+
+    event_type: str
+    description: str
+    timestamp: datetime
+    category: str
+
+
+class SecurityEventEntry(BaseModel):
+    """Single security-related audit event."""
+
+    log_id: int
+    event_type: str
+    description: str
+    ip_address: Optional[str] = None
+    timestamp: datetime
+
+
+class RbacRoleStatus(BaseModel):
+    """JWT/RBAC role active status."""
+
+    role: str
+    active: bool
+
+
+class SecurityOverviewResponse(BaseModel):
+    """Full security dashboard payload."""
+
+    jwt_rbac_status: list[RbacRoleStatus]
+    api_rate_limit: dict
+    device_auth: dict
+    two_fa_compliance: dict
+    overall_security_score: int
+    integrity_status: dict
+
+
+class IntegrityAuditResponse(BaseModel):
+    """Result of a SHA-256 curriculum integrity audit."""
+
+    hash_check_status: str
+    hash_value: str
+    verified_documents: int
+    audit_time: str

@@ -6,7 +6,12 @@ application-layer use cases. No business logic occurs here.
 import uuid
 from typing import Optional
 
+import csv
+import io
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.admin.infrastructure.dependencies import require_role
@@ -33,10 +38,14 @@ from app.schemas.admin import (
     GradeNamespaceGroup,
     GradeResponse,
     GradeUpdateRequest,
+    AdminSettingsResponse,
+    AdminSettingsUpdateRequest,
     ApiKeyRegenerateResponse,
+    AuditLogListResponse,
     DeviceStatusUpdateRequest,
     IngestionJobListResponse,
     IngestionJobResponse,
+    IntegrityAuditResponse,
     IoTDeviceCreateRequest,
     IoTDeviceCreateResponse,
     IoTDeviceDetailResponse,
@@ -47,6 +56,7 @@ from app.schemas.admin import (
     NamespaceCreateRequest,
     ReindexRequest,
     RoleChangeRequest,
+    SecurityOverviewResponse,
     SubjectCreateRequest,
     SubjectResponse,
     SubjectUpdateRequest,
@@ -638,3 +648,105 @@ def update_device_status(
 ):
     """Manually override a device's operational status."""
     return service.override_device_status(db, device_id, body.status, current_user.user_id, _ip(request))
+
+
+@router.get("/audit-logs", response_model=AuditLogListResponse)
+def get_audit_logs(
+    event_type: Optional[str] = None,
+    user_search: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return paginated audit log entries with optional filters."""
+    return service.get_audit_logs(db, event_type, user_search, date_from, date_to, page, per_page)
+
+
+@router.get("/audit-logs/system-changes")
+def get_system_changes(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return the last 5 major system-level events for summary cards."""
+    return service.get_system_changes(db)
+
+
+@router.get("/audit-logs/export")
+def export_audit_logs(
+    event_type: Optional[str] = None,
+    user_search: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    request: Request = None,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Stream all matching audit logs as a CSV download."""
+    rows = service.get_audit_logs_for_export(
+        db, event_type, user_search, date_from, date_to, current_user.user_id, _ip(request)
+    )
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["log_id", "timestamp", "user_email", "event_type", "description", "ip_address", "status"],
+    )
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: row.get(k, "") for k in writer.fieldnames})
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
+    )
+
+
+@router.get("/security/overview", response_model=SecurityOverviewResponse)
+def get_security_overview(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return full security dashboard data including JWT/RBAC roles, 2FA, and score."""
+    return service.get_security_overview(db)
+
+
+@router.get("/security/events")
+def get_security_events(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return recent 20 security-related events."""
+    return service.get_security_events(db)
+
+
+@router.post("/security/run-audit", response_model=IntegrityAuditResponse)
+def run_integrity_audit(
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Compute SHA-256 hash over all curriculum metadata and store the result."""
+    return service.run_integrity_audit(db, current_user.user_id, _ip(request))
+
+
+@router.get("/settings", response_model=AdminSettingsResponse)
+def get_settings(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Retrieve current admin system settings."""
+    return service.get_settings(db)
+
+
+@router.patch("/settings", response_model=AdminSettingsResponse)
+def update_settings(
+    body: AdminSettingsUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Update admin system settings."""
+    return service.update_settings(db, body, current_user.user_id, _ip(request))
