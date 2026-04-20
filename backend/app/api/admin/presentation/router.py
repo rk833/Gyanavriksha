@@ -114,6 +114,7 @@ def create_user(
         raw_password=body.password,
         actor_id=current_user.user_id,
         ip_address=_ip(request),
+        grade_id=body.grade_id,
     )
 
 

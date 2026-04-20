@@ -147,8 +147,11 @@ def create_user(
     raw_password: str | None,
     actor_id: uuid.UUID,
     ip_address: str | None,
+    grade_id: int | None = None,
 ) -> AdminUserCreateResponse:
     """Create a new user, emit a welcome email, and write an audit entry."""
+    if role == UserRole.STUDENT and grade_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="grade_id is required when creating a student")
     if admin_service.email_exists(db, email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     user, password = admin_service.create_user(db, email, full_name, role, raw_password)

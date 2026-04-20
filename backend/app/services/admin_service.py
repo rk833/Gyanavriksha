@@ -1,13 +1,13 @@
 """Admin service — data access helpers for admin API use cases."""
+import ipaddress
+import os
 import secrets
 import string
 import uuid
-
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
-
-import os
 from pathlib import Path
+
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db.models.assignment import Assignment
@@ -20,6 +20,17 @@ from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.user import User
 from app.shared.source_enum import ActorRole, DocumentType, EmbeddingStatus, UserRole
+
+
+def _sanitize_ip(ip: str | None) -> str | None:
+    """Return the IP string only if it is a valid IPv4/IPv6 address, else None."""
+    if not ip:
+        return None
+    try:
+        ipaddress.ip_address(ip)
+        return ip
+    except ValueError:
+        return None
 
 
 def log_audit_event(
@@ -38,7 +49,7 @@ def log_audit_event(
         action=action,
         resource_type=resource_type,
         resource_id=resource_id,
-        ip_address=ip_address,
+        ip_address=_sanitize_ip(ip_address),
         extra_metadata={"description": description},
     )
     db.add(entry)
