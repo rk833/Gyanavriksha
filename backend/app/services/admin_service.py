@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 
 from app.core.security import hash_password
+from app.db.models.assignment import Assignment
 from app.db.models.audit_log import AuditLog
 from app.db.models.grade import Grade
 from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.subject import Subject
+from app.db.models.submission import Submission
 from app.db.models.user import User
 from app.shared.source_enum import ActorRole, UserRole
 
@@ -395,3 +397,379 @@ def approve_enrollment(db: Session, enrollment: StudentEnrollment) -> StudentEnr
     enrollment.is_active = True
     db.flush()
     return enrollment
+
+
+def _grade_counts(db: Session, grade_id: int) -> tuple[int, int]:
+    """Return (subject_count, student_count) for a grade."""
+    subject_count = (
+        db.query(func.count(Subject.subject_id))
+        .filter(Subject.grade_id == grade_id, Subject.is_active == True)
+        .scalar()
+        or 0
+    )
+    student_count = (
+        db.query(func.count(func.distinct(StudentEnrollment.student_id)))
+        .filter(StudentEnrollment.grade_id == grade_id, StudentEnrollment.is_active == True)
+        .scalar()
+        or 0
+    )
+    return subject_count, student_count
+
+
+def list_grades(db: Session) -> list[dict]:
+    """Return all active grades sorted by level, annotated with counts."""
+    grades = (
+        db.query(Grade)
+        .filter(Grade.is_active == True)
+        .order_by(Grade.grade_level)
+        .all()
+    )
+    result = []
+    for g in grades:
+        subject_count, student_count = _grade_counts(db, g.grade_id)
+        result.append({
+            "grade_id": g.grade_id,
+            "grade_name": g.grade_name,
+            "grade_level": g.grade_level,
+            "description": g.description,
+            "subject_count": subject_count,
+            "student_count": student_count,
+        })
+    return result
+
+
+def get_grade_by_id(db: Session, grade_id: int) -> Grade | None:
+    """Return a single grade record by primary key."""
+    return db.query(Grade).filter(Grade.grade_id == grade_id).first()
+
+
+def grade_name_exists(db: Session, grade_name: str) -> bool:
+    """Return True when the grade name is already registered."""
+    return db.query(Grade).filter(Grade.grade_name == grade_name).first() is not None
+
+
+def create_grade(db: Session, grade_name: str, grade_level: int, description: str | None) -> Grade:
+    """Create a new academic grade."""
+    grade = Grade(grade_name=grade_name, grade_level=grade_level, description=description)
+    db.add(grade)
+    db.flush()
+    return grade
+
+
+def update_grade_fields(
+    db: Session,
+    grade: Grade,
+    grade_name: str | None,
+    description: str | None,
+) -> Grade:
+    """Apply partial updates to a grade record."""
+    if grade_name is not None:
+        grade.grade_name = grade_name
+    if description is not None:
+        grade.description = description
+    db.flush()
+    return grade
+
+
+def delete_grade_safe(db: Session, grade_id: int) -> str | None:
+    """Delete a grade only when no subjects or enrollments are linked.
+
+    Returns an error string or None on success.
+    """
+    grade = get_grade_by_id(db, grade_id)
+    if not grade:
+        return "NOT_FOUND"
+    subject_count = (
+        db.query(func.count(Subject.subject_id))
+        .filter(Subject.grade_id == grade_id)
+        .scalar()
+        or 0
+    )
+    if subject_count > 0:
+        return "Cannot delete grade with linked subjects"
+    enrollment_count = (
+        db.query(func.count(StudentEnrollment.enrollment_id))
+        .filter(StudentEnrollment.grade_id == grade_id)
+        .scalar()
+        or 0
+    )
+    if enrollment_count > 0:
+        return "Cannot delete grade with active enrollments"
+    db.delete(grade)
+    db.flush()
+    return None
+
+
+def _subject_detail(db: Session, subject: Subject) -> dict:
+    """Build a subject detail dict with instructor name and counts."""
+    instructor_name = None
+    assignment = (
+        db.query(InstructorSubject)
+        .filter(InstructorSubject.subject_id == subject.subject_id, InstructorSubject.is_active == True)
+        .first()
+    )
+    if assignment:
+        user = db.query(User).filter(User.user_id == assignment.instructor_id).first()
+        instructor_name = user.full_name if user else None
+
+    grade = get_grade_by_id(db, subject.grade_id)
+    student_count = (
+        db.query(func.count(StudentEnrollment.enrollment_id))
+        .filter(StudentEnrollment.subject_id == subject.subject_id, StudentEnrollment.is_active == True)
+        .scalar()
+        or 0
+    )
+    assignment_count = (
+        db.query(func.count(Assignment.assignment_id))
+        .filter(Assignment.subject_id == subject.subject_id)
+        .scalar()
+        or 0
+    )
+    return {
+        "subject_id": subject.subject_id,
+        "name": subject.subject_name,
+        "subject_code": subject.subject_code,
+        "description": subject.description,
+        "grade_id": subject.grade_id,
+        "grade_name": grade.grade_name if grade else None,
+        "instructor_name": instructor_name,
+        "student_count": student_count,
+        "assignment_count": assignment_count,
+    }
+
+
+def list_subjects(
+    db: Session,
+    grade_id: int | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    """Return subjects with instructor info and counts, optionally filtered."""
+    query = db.query(Subject).filter(Subject.is_active == True)
+    if grade_id is not None:
+        query = query.filter(Subject.grade_id == grade_id)
+    if search:
+        query = query.filter(Subject.subject_name.ilike(f"%{search}%"))
+    subjects = query.order_by(Subject.subject_name).all()
+    return [_subject_detail(db, s) for s in subjects]
+
+
+def get_subject_by_id(db: Session, subject_id: int) -> Subject | None:
+    """Return a single subject record by primary key."""
+    return db.query(Subject).filter(Subject.subject_id == subject_id).first()
+
+
+def subject_code_exists(db: Session, subject_code: str) -> bool:
+    """Return True when the subject code is already registered."""
+    return db.query(Subject).filter(Subject.subject_code == subject_code).first() is not None
+
+
+def create_subject(
+    db: Session,
+    name: str,
+    subject_code: str,
+    description: str | None,
+    grade_id: int,
+) -> Subject:
+    """Create a new subject with an auto-generated ChromaDB namespace."""
+    namespace = f"grade_{grade_id}_{subject_code.lower().replace(' ', '_')}"
+    subject = Subject(
+        subject_name=name,
+        subject_code=subject_code,
+        description=description,
+        grade_id=grade_id,
+        chroma_namespace=namespace,
+    )
+    db.add(subject)
+    db.flush()
+    return subject
+
+
+def update_subject_fields(
+    db: Session,
+    subject: Subject,
+    name: str | None,
+    description: str | None,
+) -> Subject:
+    """Apply partial updates to a subject record."""
+    if name is not None:
+        subject.subject_name = name
+    if description is not None:
+        subject.description = description
+    db.flush()
+    return subject
+
+
+def delete_subject_safe(db: Session, subject_id: int) -> str | None:
+    """Delete a subject only when no active enrollments exist.
+
+    Returns an error string or None on success.
+    """
+    subject = get_subject_by_id(db, subject_id)
+    if not subject:
+        return "NOT_FOUND"
+    enrollment_count = (
+        db.query(func.count(StudentEnrollment.enrollment_id))
+        .filter(StudentEnrollment.subject_id == subject_id, StudentEnrollment.is_active == True)
+        .scalar()
+        or 0
+    )
+    if enrollment_count > 0:
+        return "Cannot delete subject with active enrollments"
+    db.delete(subject)
+    db.flush()
+    return None
+
+
+def assign_instructor_to_subject(
+    db: Session,
+    subject_id: int,
+    instructor_id: uuid.UUID,
+    assigned_by: uuid.UUID,
+) -> None:
+    """Upsert the instructor assignment for a subject."""
+    _upsert_instructor_subject(db, instructor_id, subject_id, assigned_by)
+    db.flush()
+
+
+def _enrollment_detail_row(db: Session, enrollment: StudentEnrollment) -> dict:
+    """Build an enrollment detail dict with joined names."""
+    student = db.query(User).filter(User.user_id == enrollment.student_id).first()
+    subject = get_subject_by_id(db, enrollment.subject_id)
+    grade = get_grade_by_id(db, enrollment.grade_id)
+    return {
+        "enrollment_id": enrollment.enrollment_id,
+        "student_name": student.full_name if student else "",
+        "student_email": student.email if student else "",
+        "subject_name": subject.subject_name if subject else "",
+        "grade_name": grade.grade_name if grade else "",
+        "enrolled_at": enrollment.enrolled_at,
+        "status": "active" if enrollment.is_active else "pending",
+    }
+
+
+def _apply_enrollment_filters(
+    query,
+    student_id: uuid.UUID | None,
+    subject_id: int | None,
+    grade_id: int | None,
+    status: str | None,
+) -> object:
+    """Apply optional filters to an enrollment query."""
+    if student_id is not None:
+        query = query.filter(StudentEnrollment.student_id == student_id)
+    if subject_id is not None:
+        query = query.filter(StudentEnrollment.subject_id == subject_id)
+    if grade_id is not None:
+        query = query.filter(StudentEnrollment.grade_id == grade_id)
+    if status == "active":
+        query = query.filter(StudentEnrollment.is_active == True)
+    elif status == "pending":
+        query = query.filter(StudentEnrollment.is_active == False)
+    return query
+
+
+def list_enrollments(
+    db: Session,
+    student_id: uuid.UUID | None = None,
+    subject_id: int | None = None,
+    grade_id: int | None = None,
+    status: str | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> tuple[list[dict], int]:
+    """Return a paginated, filtered list of enrollments."""
+    query = _apply_enrollment_filters(
+        db.query(StudentEnrollment), student_id, subject_id, grade_id, status
+    )
+    total = query.count()
+    rows = (
+        query.order_by(StudentEnrollment.enrolled_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    return [_enrollment_detail_row(db, e) for e in rows], total
+
+
+def enrollment_exists(db: Session, student_id: uuid.UUID, subject_id: int) -> bool:
+    """Return True when an active enrollment already exists."""
+    return (
+        db.query(StudentEnrollment)
+        .filter(
+            StudentEnrollment.student_id == student_id,
+            StudentEnrollment.subject_id == subject_id,
+            StudentEnrollment.is_active == True,
+        )
+        .first()
+        is not None
+    )
+
+
+def _get_grade_id_for_subject(db: Session, subject_id: int) -> int | None:
+    """Return the grade_id linked to a subject."""
+    subject = get_subject_by_id(db, subject_id)
+    return subject.grade_id if subject else None
+
+
+def create_enrollment(
+    db: Session,
+    student_id: uuid.UUID,
+    subject_id: int,
+) -> StudentEnrollment:
+    """Create a new active enrollment for a student in a subject."""
+    grade_id = _get_grade_id_for_subject(db, subject_id)
+    enrollment = StudentEnrollment(
+        student_id=student_id,
+        subject_id=subject_id,
+        grade_id=grade_id,
+        is_active=True,
+    )
+    db.add(enrollment)
+    db.flush()
+    return enrollment
+
+
+def bulk_enroll(
+    db: Session,
+    student_ids: list[uuid.UUID],
+    subject_id: int,
+) -> tuple[int, list[uuid.UUID]]:
+    """Enroll multiple students, skipping those already enrolled."""
+    enrolled, skipped = 0, []
+    for sid in student_ids:
+        if enrollment_exists(db, sid, subject_id):
+            skipped.append(sid)
+            continue
+        create_enrollment(db, sid, subject_id)
+        enrolled += 1
+    db.flush()
+    return enrolled, skipped
+
+
+def _has_submissions(db: Session, student_id: uuid.UUID, subject_id: int) -> bool:
+    """Return True when the student has any submission in this subject."""
+    return (
+        db.query(Submission)
+        .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
+        .filter(
+            Submission.student_id == student_id,
+            Assignment.subject_id == subject_id,
+        )
+        .first()
+        is not None
+    )
+
+
+def remove_enrollment_safe(db: Session, enrollment_id: uuid.UUID) -> str | None:
+    """Soft-delete an enrollment unless the student has active submissions.
+
+    Returns an error string or None on success.
+    """
+    enrollment = get_enrollment_by_id(db, enrollment_id)
+    if not enrollment:
+        return "NOT_FOUND"
+    if _has_submissions(db, enrollment.student_id, enrollment.subject_id):
+        return "Cannot remove enrollment with existing submissions"
+    enrollment.is_active = False
+    db.flush()
+    return None
