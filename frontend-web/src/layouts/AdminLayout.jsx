@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard,
   Cpu,
@@ -24,9 +24,8 @@ const NAV_ITEMS = [
   { to: '/admin/security', label: 'Security', icon: ShieldCheck },
   { to: '/admin/users', label: 'User Management', icon: Users },
   { to: '/admin/curriculum-ingestion', label: 'Curriculum Ingestion', icon: Upload },
+  { to: '/admin/settings', label: 'Settings', icon: Settings },
 ];
-
-const STUB_ROUTES = ['/admin/iot', '/admin/vector-store', '/admin/security', '/admin/curriculum-ingestion'];
 
 export default function AdminLayout() {
   const { user, logout } = useAuth();
@@ -56,28 +55,17 @@ export default function AdminLayout() {
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) =>
-          STUB_ROUTES.includes(to) ? (
-            <div
-              key={to}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-400 cursor-not-allowed"
-              title="Coming soon"
-            >
-              <Icon className="w-5 h-5" />
-              <span>{label}</span>
-            </div>
-          ) : (
-            <NavLink
-              key={to}
-              to={to}
-              className={navLinkClass}
-              onClick={() => setSidebarOpen(false)}
-            >
-              <Icon className="w-5 h-5" />
-              <span>{label}</span>
-            </NavLink>
-          )
-        )}
+        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={navLinkClass}
+            onClick={() => setSidebarOpen(false)}
+          >
+            <Icon className="w-5 h-5" />
+            <span>{label}</span>
+          </NavLink>
+        ))}
       </nav>
 
       <div className="px-3 py-4 border-t border-primary-light space-y-1">
@@ -122,9 +110,9 @@ export default function AdminLayout() {
             <button className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600 relative">
               <Bell className="w-5 h-5" />
             </button>
-            <button className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600">
+            <Link to="/admin/settings" className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600 inline-flex">
               <Settings className="w-5 h-5" />
-            </button>
+            </Link>
             <div className="w-8 h-8 rounded-full bg-primary-light border-2 border-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
               {user?.full_name?.charAt(0)?.toUpperCase() || 'A'}
             </div>
