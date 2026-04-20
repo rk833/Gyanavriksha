@@ -6,16 +6,20 @@ import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 
+import os
+from pathlib import Path
+
 from app.core.security import hash_password
 from app.db.models.assignment import Assignment
 from app.db.models.audit_log import AuditLog
+from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.grade import Grade
 from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.user import User
-from app.shared.source_enum import ActorRole, UserRole
+from app.shared.source_enum import ActorRole, DocumentType, EmbeddingStatus, UserRole
 
 
 def log_audit_event(
@@ -773,3 +777,346 @@ def remove_enrollment_safe(db: Session, enrollment_id: uuid.UUID) -> str | None:
     enrollment.is_active = False
     db.flush()
     return None
+
+
+CURRICULUM_UPLOAD_ROOT = Path("uploads/curriculum")
+
+_ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+_MAX_FILE_BYTES = 50 * 1024 * 1024
+
+
+def _validate_upload(filename: str, size: int) -> str | None:
+    """Return an error string for invalid file type or size, else None."""
+    ext = Path(filename).suffix.lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        return "Only PDF and DOCX files are supported"
+    if size > _MAX_FILE_BYTES:
+        return "File size exceeds 50 MB limit"
+    return None
+
+
+def _status_to_progress(status: EmbeddingStatus) -> float:
+    """Map an EmbeddingStatus to a percentage value."""
+    return {
+        EmbeddingStatus.PENDING: 0.0,
+        EmbeddingStatus.PROCESSING: 50.0,
+        EmbeddingStatus.DONE: 100.0,
+        EmbeddingStatus.FAILED: 0.0,
+    }.get(status, 0.0)
+
+
+def _doc_to_job_dict(db: Session, doc: CurriculumDocument) -> dict:
+    """Build an IngestionJobResponse-compatible dict from a CurriculumDocument."""
+    subject = get_subject_by_id(db, doc.subject_id)
+    grade = get_grade_by_id(db, subject.grade_id) if subject else None
+    grade_subject = (
+        f"{grade.grade_name} / {subject.subject_name}"
+        if grade and subject
+        else ""
+    )
+    return {
+        "job_id": doc.doc_id,
+        "filename": doc.file_name,
+        "grade_subject": grade_subject,
+        "status": doc.embedding_status.value,
+        "progress_pct": _status_to_progress(doc.embedding_status),
+        "created_at": doc.created_at,
+        "completed_at": doc.embedded_at,
+    }
+
+
+def _doc_to_detail_dict(db: Session, doc: CurriculumDocument) -> dict:
+    """Build a CurriculumDocDetailResponse-compatible dict."""
+    subject = get_subject_by_id(db, doc.subject_id)
+    grade = get_grade_by_id(db, subject.grade_id) if subject else None
+    uploader = get_user_by_id(db, doc.uploaded_by)
+    return {
+        "doc_id": doc.doc_id,
+        "file_name": doc.file_name,
+        "grade_name": grade.grade_name if grade else None,
+        "subject_name": subject.subject_name if subject else None,
+        "doc_type": doc.doc_type.value,
+        "file_size_bytes": doc.file_size_bytes,
+        "embedding_status": doc.embedding_status.value,
+        "uploaded_by_email": uploader.email if uploader else None,
+        "created_at": doc.created_at,
+        "embedded_at": doc.embedded_at,
+    }
+
+
+def upload_curriculum_file(
+    db: Session,
+    file_bytes: bytes,
+    filename: str,
+    subject_id: int,
+    uploaded_by: uuid.UUID,
+    doc_type_str: str,
+) -> CurriculumDocument:
+    """Validate and save an uploaded curriculum file, then create a DB record."""
+    error = _validate_upload(filename, len(file_bytes))
+    if error:
+        raise ValueError(error)
+
+    subject = get_subject_by_id(db, subject_id)
+    grade_id = subject.grade_id if subject else 0
+
+    doc_id = uuid.uuid4()
+    save_dir = CURRICULUM_UPLOAD_ROOT / str(grade_id) / str(subject_id) / str(doc_id)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    (save_dir / filename).write_bytes(file_bytes)
+
+    doc_type = DocumentType.CURRICULUM_PDF
+    if doc_type_str == "instructor_note":
+        doc_type = DocumentType.INSTRUCTOR_NOTE
+
+    doc = CurriculumDocument(
+        doc_id=doc_id,
+        subject_id=subject_id,
+        uploaded_by=uploaded_by,
+        file_name=filename,
+        file_path=str(save_dir / filename),
+        file_size_bytes=len(file_bytes),
+        doc_type=doc_type,
+        embedding_status=EmbeddingStatus.PENDING,
+    )
+    db.add(doc)
+    db.flush()
+    return doc
+
+
+def _apply_doc_filters(query, grade_id, subject_id, doc_type_str, status_str, search):
+    """Apply optional filters to a CurriculumDocument query."""
+    if subject_id is not None:
+        query = query.filter(CurriculumDocument.subject_id == subject_id)
+    if doc_type_str is not None:
+        try:
+            query = query.filter(CurriculumDocument.doc_type == DocumentType(doc_type_str))
+        except ValueError:
+            pass
+    if status_str is not None:
+        try:
+            query = query.filter(CurriculumDocument.embedding_status == EmbeddingStatus(status_str.upper()))
+        except ValueError:
+            pass
+    if search:
+        query = query.filter(CurriculumDocument.file_name.ilike(f"%{search}%"))
+    if grade_id is not None:
+        query = (
+            query.join(Subject, Subject.subject_id == CurriculumDocument.subject_id)
+            .filter(Subject.grade_id == grade_id)
+        )
+    return query
+
+
+def list_ingestion_jobs(
+    db: Session,
+    status: str | None = None,
+    grade_id: int | None = None,
+    subject_id: int | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> tuple[list[dict], int]:
+    """Return a paginated list of curriculum documents as ingestion jobs."""
+    query = _apply_doc_filters(
+        db.query(CurriculumDocument), grade_id, subject_id, None, status, None
+    )
+    total = query.count()
+    docs = (
+        query.order_by(CurriculumDocument.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    return [_doc_to_job_dict(db, d) for d in docs], total
+
+
+def get_curriculum_doc_by_id(db: Session, doc_id: uuid.UUID) -> CurriculumDocument | None:
+    """Return a single CurriculumDocument by primary key."""
+    return db.query(CurriculumDocument).filter(CurriculumDocument.doc_id == doc_id).first()
+
+
+def cancel_or_remove_job(db: Session, doc_id: uuid.UUID) -> str | None:
+    """Cancel a queued job or delete a completed one.
+
+    Returns an error string or None on success.
+    """
+    doc = get_curriculum_doc_by_id(db, doc_id)
+    if not doc:
+        return "NOT_FOUND"
+    if doc.embedding_status == EmbeddingStatus.PROCESSING:
+        return "Cannot cancel a job that is currently processing"
+    if doc.embedding_status == EmbeddingStatus.PENDING:
+        doc.embedding_status = EmbeddingStatus.FAILED
+    else:
+        _delete_doc_file(doc.file_path)
+        db.delete(doc)
+    db.flush()
+    return None
+
+
+def _delete_doc_file(file_path: str) -> None:
+    """Remove a document file and its parent directory if empty."""
+    try:
+        path = Path(file_path)
+        if path.exists():
+            path.unlink()
+        parent = path.parent
+        if parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError:
+        pass
+
+
+def list_curriculum_docs(
+    db: Session,
+    grade_id: int | None = None,
+    subject_id: int | None = None,
+    doc_type: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> tuple[list[dict], int]:
+    """Return a paginated curriculum document library list."""
+    query = _apply_doc_filters(
+        db.query(CurriculumDocument), grade_id, subject_id, doc_type, status, search
+    )
+    total = query.count()
+    docs = (
+        query.order_by(CurriculumDocument.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    return [_doc_to_detail_dict(db, d) for d in docs], total
+
+
+def delete_curriculum_doc(db: Session, doc_id: uuid.UUID) -> str | None:
+    """Delete a curriculum document file from disk and remove the DB record.
+
+    Returns an error string or None on success.
+    """
+    doc = get_curriculum_doc_by_id(db, doc_id)
+    if not doc:
+        return "NOT_FOUND"
+    _delete_doc_file(doc.file_path)
+    db.delete(doc)
+    db.flush()
+    return None
+
+
+def requeue_curriculum_doc(db: Session, doc_id: uuid.UUID) -> str | None:
+    """Reset a document's embedding status to PENDING for re-processing.
+
+    Returns an error string or None on success.
+    """
+    doc = get_curriculum_doc_by_id(db, doc_id)
+    if not doc:
+        return "NOT_FOUND"
+    if doc.embedding_status == EmbeddingStatus.PROCESSING:
+        return "Cannot requeue a document that is currently processing"
+    doc.embedding_status = EmbeddingStatus.PENDING
+    doc.embedded_at = None
+    db.flush()
+    return None
+
+
+def get_namespaces_from_db(db: Session) -> list[dict]:
+    """Build a grade-grouped namespace tree from curriculum documents."""
+    grades = (
+        db.query(Grade).filter(Grade.is_active == True).order_by(Grade.grade_level).all()
+    )
+    result = []
+    for grade in grades:
+        subjects = (
+            db.query(Subject)
+            .filter(Subject.grade_id == grade.grade_id, Subject.is_active == True)
+            .all()
+        )
+        namespaces = []
+        for subj in subjects:
+            done_docs = (
+                db.query(CurriculumDocument)
+                .filter(
+                    CurriculumDocument.subject_id == subj.subject_id,
+                    CurriculumDocument.embedding_status == EmbeddingStatus.DONE,
+                )
+                .all()
+            )
+            if not done_docs:
+                continue
+            last_updated = max((d.embedded_at for d in done_docs if d.embedded_at), default=None)
+            namespaces.append({
+                "name": subj.chroma_namespace,
+                "subject_name": subj.subject_name,
+                "chunk_count": 0,
+                "doc_count": len(done_docs),
+                "last_updated": last_updated,
+            })
+        result.append({
+            "grade_name": grade.grade_name,
+            "grade_level": grade.grade_level,
+            "namespaces": namespaces,
+        })
+    return result
+
+
+def get_vector_store_stats(db: Session) -> dict:
+    """Return DB-derived vector store statistics."""
+    total = db.query(func.count(CurriculumDocument.doc_id)).scalar() or 0
+    done = (
+        db.query(func.count(CurriculumDocument.doc_id))
+        .filter(CurriculumDocument.embedding_status == EmbeddingStatus.DONE)
+        .scalar()
+        or 0
+    )
+    pending = (
+        db.query(func.count(CurriculumDocument.doc_id))
+        .filter(CurriculumDocument.embedding_status == EmbeddingStatus.PENDING)
+        .scalar()
+        or 0
+    )
+    failed = (
+        db.query(func.count(CurriculumDocument.doc_id))
+        .filter(CurriculumDocument.embedding_status == EmbeddingStatus.FAILED)
+        .scalar()
+        or 0
+    )
+    return {
+        "total_documents": total,
+        "total_done": done,
+        "total_pending": pending,
+        "total_failed": failed,
+        "ai_service_status": "stub",
+    }
+
+
+def reindex_documents(
+    db: Session,
+    grade_id: int | None,
+    subject_id: int | None,
+) -> int:
+    """Reset matching documents to PENDING for re-embedding. Returns count updated."""
+    query = db.query(CurriculumDocument).filter(
+        CurriculumDocument.embedding_status != EmbeddingStatus.PROCESSING
+    )
+    if subject_id is not None:
+        query = query.filter(CurriculumDocument.subject_id == subject_id)
+    elif grade_id is not None:
+        query = (
+            query.join(Subject, Subject.subject_id == CurriculumDocument.subject_id)
+            .filter(Subject.grade_id == grade_id)
+        )
+    docs = query.all()
+    for doc in docs:
+        doc.embedding_status = EmbeddingStatus.PENDING
+        doc.embedded_at = None
+    db.flush()
+    return len(docs)
+
+
+def get_export_snapshot(db: Session) -> dict:
+    """Return a JSON-serialisable metadata snapshot of all namespaces and doc counts."""
+    namespaces = get_namespaces_from_db(db)
+    stats = get_vector_store_stats(db)
+    return {"namespaces": namespaces, "stats": stats}
