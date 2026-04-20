@@ -1,21 +1,55 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
-  BarChart, Bar, XAxis, Tooltip, ResponsiveContainer,
-} from 'recharts';
-import {
   ShieldCheck, Key, ExternalLink, AlertTriangle, Info, RefreshCw,
-  ScrollText, CheckCircle2, Loader2, Users,
+  ScrollText, CheckCircle2, Loader2, Users, Activity,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getSecurityOverview, getSecurityEvents, runIntegrityAudit } from '../../services/adminService';
 
-const RATE_DATA = [
-  { t: '00', v: 1200 }, { t: '03', v: 800 }, { t: '06', v: 950 },
-  { t: '09', v: 2100 }, { t: '12', v: 2400 }, { t: '15', v: 1800 },
-  { t: '18', v: 2200 }, { t: '21', v: 1500 },
-];
+const SEVERITY_BY_EVENT = {
+  LOGIN_FAILED: 'warning',
+  ACCOUNT_LOCKED: 'warning',
+  FORCE_PASSWORD_RESET: 'critical',
+  IOT_KEY_REGENERATED: 'critical',
+  IOT_DEVICE_DECOMMISSIONED: 'critical',
+  ROLE_CHANGE: 'info',
+  AUDIT_LOG_EXPORTED: 'info',
+};
+
+function timeAgo(timestamp) {
+  if (!timestamp) return '—';
+  const mins = Math.floor((Date.now() - new Date(timestamp).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function buildRbacRoles(overview) {
+  if (!overview?.jwt_rbac_status) return [];
+  return overview.jwt_rbac_status.map((r) => ({
+    role: r.role,
+    active: r.active ?? true,
+    user_count: r.user_count ?? null,
+  }));
+}
+
+function buildEvents(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  return list.slice(0, 5).map((e) => ({
+    action: e.event_type ?? '—',
+    details: e.description
+      ? e.description
+      : e.ip_address
+        ? `IP: ${e.ip_address}`
+        : '—',
+    severity: SEVERITY_BY_EVENT[e.event_type] ?? 'info',
+    time_ago: timeAgo(e.timestamp),
+  }));
+}
 
 function CircularScore({ score }) {
   const radius = 40;
@@ -48,47 +82,67 @@ function JwtRbacCard({ roles }) {
           ACTIVE PROTOCOL
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        {roles.map((r) => (
-          <div key={r.role} className="flex items-center gap-2 text-sm text-slate-600">
-            <CheckCircle2 className={`w-4 h-4 shrink-0 ${r.active ? 'text-green-500' : 'text-slate-300'}`} />
-            <span>{r.role}</span>
-          </div>
-        ))}
-      </div>
+      {roles.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-2">No active roles found</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          {roles.map((r) => (
+            <div key={r.role} className="flex items-center gap-2 text-sm text-slate-600">
+              <CheckCircle2 className={`w-4 h-4 shrink-0 ${r.active ? 'text-green-500' : 'text-slate-300'}`} />
+              <span className="flex-1">{r.role}</span>
+              {r.user_count != null && (
+                <span className="text-xs text-slate-400 font-medium">{r.user_count}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function RateLimitCard({ overview }) {
-  const threshold = overview?.api_rate_limit?.threshold ?? 2500;
+  const threshold = overview?.api_rate_limit?.threshold_per_min ?? 0;
+  const usagePct = overview?.api_rate_limit?.current_usage_pct;
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">API Rate Limiting</p>
       <p className="text-3xl font-bold text-primary-dark">
-        {threshold.toLocaleString()} <span className="text-sm font-normal text-slate-400">req/min</span>
+        {threshold.toLocaleString()} <span className="text-sm font-normal text-slate-400">req/min max</span>
       </p>
-      <p className="text-xs text-slate-400 mb-3">Current global threshold</p>
-      <ResponsiveContainer width="100%" height={80}>
-        <BarChart data={RATE_DATA} barSize={14}>
-          <XAxis dataKey="t" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-          <Tooltip formatter={(v) => [`${v} req`, 'Usage']} />
-          <Bar dataKey="v" radius={[3, 3, 0, 0]} fill="#3F72AF" />
-        </BarChart>
-      </ResponsiveContainer>
+      <p className="text-xs text-slate-400 mb-3">Configured global threshold</p>
+      {usagePct != null ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>Current load</span>
+            <span className="font-semibold text-primary-dark">{usagePct}%</span>
+          </div>
+          <div className="w-full bg-slate-100 rounded-full h-2.5">
+            <div
+              className={`h-2.5 rounded-full transition-all ${usagePct > 80 ? 'bg-red-500' : usagePct > 60 ? 'bg-amber-400' : 'bg-primary'}`}
+              style={{ width: `${Math.min(usagePct, 100)}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-400 flex items-center gap-1">
+          <Activity className="w-3 h-3" /> Live usage monitoring not configured
+        </p>
+      )}
     </div>
   );
 }
 
 function DeviceAuthCard({ overview }) {
   const navigate = useNavigate();
-  const activeKeys = overview?.device_auth?.active_api_keys ?? 0;
+  const activeKeys = overview?.device_auth?.active_api_keys_count ?? 0;
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Device Auth</p>
       <div className="flex items-center gap-2 mb-4">
+        <Key className="w-5 h-5 text-primary" />
         <p className="text-2xl font-bold text-primary-dark">
-          ACTIVE API KEYS: <span className="text-primary">{activeKeys}</span>
+          {activeKeys} <span className="text-sm font-normal text-slate-400">active API keys</span>
         </p>
         <ExternalLink className="w-4 h-4 text-primary" />
       </div>
@@ -125,12 +179,19 @@ function EventRow({ event, dark }) {
   );
 }
 
-function RecentEventsCard({ events }) {
+function RecentEventsCard({ events, loading }) {
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <p className="font-semibold text-primary-dark mb-3">Recent Security Events</p>
+      {loading && (
+        <div className="flex justify-center py-4">
+          <Loader2 className="w-5 h-5 text-primary animate-spin" />
+        </div>
+      )}
+      {!loading && events.length === 0 && (
+        <p className="text-sm text-slate-400 text-center py-4">No security events on record</p>
+      )}
       <div className="space-y-2">
-        {events.length === 0 && <p className="text-sm text-slate-400 text-center py-4">No recent events</p>}
         {events.map((ev, i) => (
           <EventRow key={i} event={ev} dark={i % 2 === 1} />
         ))}
@@ -139,9 +200,9 @@ function RecentEventsCard({ events }) {
   );
 }
 
-function IntegrityCard({ overview, auditResult, onRunAudit, running }) {
-  const hashStatus = auditResult?.hash_check_status ?? overview?.integrity_status?.last_status ?? 'Unknown';
-  const auditTime = auditResult?.audit_time ?? overview?.integrity_status?.last_audit_time ?? '—';
+function IntegrityCard({ overview, auditResult, onRunAudit, running, onViewLogs }) {
+  const hashStatus = auditResult?.hash_check_status ?? overview?.integrity_status?.hash_check_status ?? 'No audit run yet';
+  const auditTime = auditResult?.audit_time ?? overview?.integrity_status?.audit_time ?? '—';
   return (
     <div className="bg-primary-dark text-white rounded-xl p-5">
       <div className="flex items-center gap-2 mb-4">
@@ -161,7 +222,9 @@ function IntegrityCard({ overview, auditResult, onRunAudit, running }) {
         </div>
         <div>
           <p className="text-xs text-primary-light uppercase tracking-wider mb-1">Last Audit Time</p>
-          <p className="font-medium text-white text-sm">{typeof auditTime === 'string' ? auditTime : new Date(auditTime).toLocaleString()}</p>
+          <p className="font-medium text-white text-sm">
+            {typeof auditTime === 'string' ? auditTime : new Date(auditTime).toLocaleString()}
+          </p>
         </div>
       </div>
       <div className="flex gap-2">
@@ -173,7 +236,10 @@ function IntegrityCard({ overview, auditResult, onRunAudit, running }) {
           {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           Run Audit Now
         </button>
-        <button className="flex-1 bg-white/10 border border-white/20 text-white text-sm font-semibold rounded-lg py-2 flex items-center justify-center gap-1.5 hover:bg-white/20 transition-colors">
+        <button
+          onClick={onViewLogs}
+          className="flex-1 bg-white/10 border border-white/20 text-white text-sm font-semibold rounded-lg py-2 flex items-center justify-center gap-1.5 hover:bg-white/20 transition-colors"
+        >
           <ScrollText className="w-4 h-4" /> Logs
         </button>
       </div>
@@ -210,52 +276,28 @@ function TwoFACard({ overview }) {
 }
 
 function ScoreCard({ score }) {
+  const level = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Needs Attention';
+  const description = score >= 80
+    ? 'System integrity is within optimal range.'
+    : score >= 60
+      ? 'Some security configurations need review.'
+      : 'Multiple security issues require immediate attention.';
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Overall Security Score</p>
       <div className="flex items-center gap-4">
         <CircularScore score={score} />
         <div>
-          <p className="font-bold text-primary-dark">Excellence Level</p>
-          <p className="text-xs text-slate-500 mt-1">System integrity is within optimal range, 3 minor configuration updates available.</p>
+          <p className="font-bold text-primary-dark">{level}</p>
+          <p className="text-xs text-slate-500 mt-1">{description}</p>
         </div>
       </div>
     </div>
   );
 }
 
-function buildRbacRoles(overview) {
-  const defaults = [
-    { role: 'Super Admin', active: true },
-    { role: 'IoT Controller', active: true },
-    { role: 'Database Auditor', active: true },
-    { role: 'Vector Analyst', active: true },
-    { role: 'User Manager', active: true },
-    { role: 'Guest Viewer', active: false },
-  ];
-  if (!overview?.jwt_rbac_status?.length) return defaults;
-  return overview.jwt_rbac_status.map((r) => ({ role: r.role, active: r.active ?? true }));
-}
-
-function buildEvents(raw) {
-  if (!raw?.events?.length) {
-    return [
-      { action: 'Brute-force attempt detected', details: 'IP: 192.168.1.105 • Kathmandu, NP', severity: 'warning', time_ago: '2m ago' },
-      { action: 'API key rotation initiated', details: 'Admin user triggered rotation', severity: 'critical', time_ago: '15m ago' },
-      { action: 'Unusual IoT packet volume', details: 'Sensor: Node-R4-Gate', severity: 'info', time_ago: '1h ago' },
-      { action: 'Admin login attempt', details: 'External Network / Rejected', severity: 'critical', time_ago: '2h ago' },
-      { action: 'System Backup integrity check', details: 'Result: Success (Hash verified)', severity: 'success', time_ago: '5h ago' },
-    ];
-  }
-  return raw.events.slice(0, 5).map((e) => ({
-    action: e.action ?? e.event_type,
-    details: e.details ?? e.extra_metadata ?? '',
-    severity: e.severity ?? 'info',
-    time_ago: e.time_ago ?? '—',
-  }));
-}
-
 export default function SecurityIntegrity() {
+  const navigate = useNavigate();
   const [auditResult, setAuditResult] = useState(null);
 
   const { data: overview } = useQuery({
@@ -263,7 +305,7 @@ export default function SecurityIntegrity() {
     queryFn: async () => (await getSecurityOverview()).data,
   });
 
-  const { data: eventsData } = useQuery({
+  const { data: eventsRaw, isLoading: eventsLoading } = useQuery({
     queryKey: ['admin', 'security-events'],
     queryFn: async () => (await getSecurityEvents()).data,
   });
@@ -278,8 +320,8 @@ export default function SecurityIntegrity() {
   });
 
   const rbacRoles = buildRbacRoles(overview);
-  const events = buildEvents(eventsData);
-  const score = overview?.overall_security_score ?? 90;
+  const events = buildEvents(eventsRaw);
+  const score = overview?.overall_security_score ?? 0;
 
   return (
     <div>
@@ -295,7 +337,7 @@ export default function SecurityIntegrity() {
             <RateLimitCard overview={overview} />
             <DeviceAuthCard overview={overview} />
           </div>
-          <RecentEventsCard events={events} />
+          <RecentEventsCard events={events} loading={eventsLoading} />
         </div>
 
         <div className="space-y-4">
@@ -304,6 +346,7 @@ export default function SecurityIntegrity() {
             auditResult={auditResult}
             onRunAudit={() => auditMutation.mutate()}
             running={auditMutation.isPending}
+            onViewLogs={() => navigate('/admin/audit-logs')}
           />
           <TwoFACard overview={overview} />
           <ScoreCard score={score} />

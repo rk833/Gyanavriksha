@@ -330,7 +330,6 @@ class SystemHealthSummary(BaseModel):
     """System resource health snapshot."""
 
     node_uptime_pct: float
-    memory_load_pct: float
     live_monitoring_active: bool = True
 
 
@@ -356,7 +355,10 @@ class AdminSettingsResponse(BaseModel):
     gemini_key_hint: Optional[str] = None
     mqtt_broker_host: Optional[str] = None
     maintenance_mode: bool
-    backup_last_success: Optional[datetime] = None
+    backup_last_success: Optional[str] = None
+    notification_prefs: Optional[dict] = None
+    appearance_prefs: Optional[dict] = None
+    webhook_url: Optional[str] = None
 
 
 class AdminSettingsUpdateRequest(BaseModel):
@@ -369,6 +371,10 @@ class AdminSettingsUpdateRequest(BaseModel):
     mqtt_broker_host: Optional[str] = None
     mqtt_broker_credentials: Optional[str] = None
     maintenance_mode: Optional[bool] = None
+    backup_last_success: Optional[str] = None
+    notification_prefs: Optional[dict] = None
+    appearance_prefs: Optional[dict] = None
+    webhook_url: Optional[str] = None
 
 
 class CurriculumDocDetailResponse(BaseModel):
@@ -438,6 +444,10 @@ class VectorStoreStatsResponse(BaseModel):
     total_done: int
     total_pending: int
     total_failed: int
+    total_namespaces: int = 0
+    total_chunks: int = 0
+    embedding_success_rate: float = 0.0
+    last_indexed_at: Optional[datetime] = None
     ai_service_status: str = "stub"
 
 

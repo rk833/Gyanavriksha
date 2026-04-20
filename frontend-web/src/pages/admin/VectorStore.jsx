@@ -1,22 +1,26 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import {
   Database, Folder, FolderOpen, FileText, ChevronRight, ChevronDown,
-  Plus, Download, CheckCircle2, Loader2,
+  Plus, Download, CheckCircle2, Loader2, Clock, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   getNamespaces, getVectorStats, createNamespace, reindexStore, getExportSnapshot, getGrades, getSubjects,
 } from '../../services/adminService';
 
-const FIDELITY_DATA = [
-  { slot: 'W1', v: 91 }, { slot: 'W2', v: 93 }, { slot: 'W3', v: 90 },
-  { slot: 'W4', v: 95 }, { slot: 'W5', v: 94 }, { slot: 'W6', v: 97 },
-  { slot: 'W7', v: 98 }, { slot: 'W8', v: 99.2 },
-];
+function formatTimeAgo(isoString) {
+  if (!isoString) return 'Never';
+  const mins = Math.floor((Date.now() - new Date(isoString).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
 function StatCard({ label, value, sub, dark }) {
   if (dark) {
@@ -34,17 +38,20 @@ function StatCard({ label, value, sub, dark }) {
     <div className="bg-white rounded-xl border border-primary-light p-5 shadow-sm">
       <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">{label}</p>
       <p className="text-3xl font-bold text-primary-dark mt-1">{value}</p>
-      {sub && <p className="text-xs text-green-500 font-medium mt-1 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />{sub}</p>}
+      {sub && (
+        <p className="text-xs text-green-500 font-medium mt-1 flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />{sub}
+        </p>
+      )}
     </div>
   );
 }
 
-function GradeFolder({ grade, defaultOpen }) {
-  const [open, setOpen] = useState(defaultOpen ?? true);
+function GradeFolder({ grade, open, onToggle }) {
   return (
     <div>
       <button
-        onClick={() => setOpen(!open)}
+        onClick={onToggle}
         className="flex items-center gap-2 w-full py-2 px-3 rounded-lg hover:bg-slate-50 text-sm font-semibold text-slate-700"
       >
         {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
@@ -72,7 +79,20 @@ function GradeFolder({ grade, defaultOpen }) {
   );
 }
 
-function NamespaceExplorer({ grades, onExpandAll }) {
+function NamespaceExplorer({ grades }) {
+  const [expandedSet, setExpandedSet] = useState(() => new Set(grades.slice(0, 1).map(g => g.grade_level)));
+
+  const toggle = (level) => setExpandedSet((s) => {
+    const next = new Set(s);
+    if (next.has(level)) next.delete(level);
+    else next.add(level);
+    return next;
+  });
+
+  const expandAll = () => setExpandedSet(new Set(grades.map(g => g.grade_level)));
+  const collapseAll = () => setExpandedSet(new Set());
+  const allExpanded = grades.length > 0 && expandedSet.size === grades.length;
+
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm">
       <div className="flex items-center justify-between px-5 py-4 border-b border-primary-light">
@@ -80,13 +100,21 @@ function NamespaceExplorer({ grades, onExpandAll }) {
           <Database className="w-4 h-4" />
           Namespace Explorer
         </div>
-        <button onClick={onExpandAll} className="text-xs font-semibold text-primary uppercase tracking-wider hover:underline">
-          Expand All
+        <button
+          onClick={allExpanded ? collapseAll : expandAll}
+          className="text-xs font-semibold text-primary uppercase tracking-wider hover:underline"
+        >
+          {allExpanded ? 'Collapse All' : 'Expand All'}
         </button>
       </div>
       <div className="p-4 space-y-1 max-h-96 overflow-y-auto">
-        {grades.map((g, i) => (
-          <GradeFolder key={g.grade_level} grade={g} defaultOpen={i === 0} />
+        {grades.map((g) => (
+          <GradeFolder
+            key={g.grade_level}
+            grade={g}
+            open={expandedSet.has(g.grade_level)}
+            onToggle={() => toggle(g.grade_level)}
+          />
         ))}
         {grades.length === 0 && <p className="text-sm text-slate-400 text-center py-8">No namespaces found</p>}
       </div>
@@ -94,29 +122,93 @@ function NamespaceExplorer({ grades, onExpandAll }) {
   );
 }
 
-function FidelityChart() {
+function EmbeddingStatusChart({ stats }) {
+  const chartData = [
+    { label: 'Done', value: stats?.total_done ?? 0, fill: '#3F72AF' },
+    { label: 'Pending', value: stats?.total_pending ?? 0, fill: '#F6C90E' },
+    { label: 'Failed', value: stats?.total_failed ?? 0, fill: '#EF4444' },
+  ].filter((d) => d.value > 0);
+
+  const total = stats?.total_documents ?? 0;
+  const successPct = total > 0 ? Math.round(((stats?.total_done ?? 0) / total) * 100) : 0;
+
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <div className="flex items-center justify-between mb-4">
-        <p className="font-semibold text-primary-dark">Vector Fidelity</p>
-        <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">+0.4%</span>
+        <p className="font-semibold text-primary-dark">Embedding Status</p>
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${successPct >= 80 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+          {successPct}% complete
+        </span>
       </div>
-      <ResponsiveContainer width="100%" height={160}>
-        <BarChart data={FIDELITY_DATA} barSize={20}>
-          <XAxis dataKey="slot" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-          <YAxis domain={[85, 100]} hide />
-          <Tooltip formatter={(v) => [`${v}%`, 'Fidelity']} />
-          <Bar dataKey="v" radius={[4, 4, 0, 0]}
-            fill="#DBE2EF"
-            label={false}
-          />
-        </BarChart>
-      </ResponsiveContainer>
+      {chartData.length === 0 ? (
+        <div className="h-40 flex items-center justify-center text-slate-400 text-sm">
+          No documents ingested yet
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={140}>
+          <BarChart data={chartData} barSize={36}>
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis hide />
+            <Tooltip formatter={(v) => [v, 'Documents']} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {chartData.map((d, i) => (
+                <Cell key={i} fill={d.fill} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+      <div className="flex items-center gap-4 mt-2 flex-wrap">
+        <span className="flex items-center gap-1 text-xs text-slate-500">
+          <span className="w-2.5 h-2.5 rounded-sm bg-primary inline-block" /> Done: {stats?.total_done ?? 0}
+        </span>
+        <span className="flex items-center gap-1 text-xs text-slate-500">
+          <span className="w-2.5 h-2.5 rounded-sm bg-yellow-400 inline-block" /> Pending: {stats?.total_pending ?? 0}
+        </span>
+        <span className="flex items-center gap-1 text-xs text-slate-500">
+          <span className="w-2.5 h-2.5 rounded-sm bg-red-400 inline-block" /> Failed: {stats?.total_failed ?? 0}
+        </span>
+      </div>
     </div>
   );
 }
 
-function QuickOps({ onCreateNamespace, onExport, reindexing, onReindex }) {
+function ReindexConfirmModal({ onConfirm, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-800">Re-index Entire Store?</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              This will reset <strong>all documents</strong> to <span className="font-semibold text-amber-600">PENDING</span> and re-queue them for embedding.
+              The <em>Last Indexed</em> stat will show <strong>Never</strong> until the pipeline finishes re-embedding.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { onConfirm(); onClose(); }}
+            className="flex-1 bg-primary-dark text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary"
+          >
+            Yes, Re-index
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickOps({ onCreateNamespace, onExport, reindexing, onReindex, onShowReindexConfirm }) {
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Quick Operations</p>
@@ -128,12 +220,12 @@ function QuickOps({ onCreateNamespace, onExport, reindexing, onReindex }) {
           <Plus className="w-4 h-4" /> Create New Namespace
         </button>
         <button
-          onClick={onReindex}
+          onClick={onShowReindexConfirm}
           disabled={reindexing}
           className="w-full border border-primary text-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-primary-light transition-colors disabled:opacity-50"
         >
           {reindexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-          Re-index Store
+          {reindexing ? 'Re-indexing…' : 'Re-index Store'}
         </button>
         <button
           onClick={onExport}
@@ -154,7 +246,7 @@ function CreateNamespaceModal({ grades, onClose, onCreated }) {
 
   const { data: subjects = [] } = useQuery({
     queryKey: ['admin', 'subjects', gradeSel],
-    queryFn: async () => (await getSubjects({ grade_id: gradeSel })).data?.subjects ?? [],
+    queryFn: async () => (await getSubjects({ grade_id: gradeSel })).data ?? [],
     enabled: !!gradeSel,
   });
 
@@ -232,6 +324,7 @@ function CreateNamespaceModal({ grades, onClose, onCreated }) {
 
 export default function VectorStore() {
   const [showCreate, setShowCreate] = useState(false);
+  const [showReindexConfirm, setShowReindexConfirm] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: namespacesData = [], isLoading } = useQuery({
@@ -246,14 +339,16 @@ export default function VectorStore() {
 
   const { data: grades = [] } = useQuery({
     queryKey: ['admin', 'grades'],
-    queryFn: async () => (await getGrades()).data?.grades ?? [],
+    queryFn: async () => (await getGrades()).data ?? [],
   });
 
   const reindexMutation = useMutation({
     mutationFn: () => reindexStore(),
-    onSuccess: () => {
-      toast.success('Re-index triggered');
-      queryClient.invalidateQueries(['admin', 'namespaces']);
+    onSuccess: (res) => {
+      const count = res?.data?.requeued_count ?? 0;
+      toast.success(`Re-index triggered — ${count} document${count !== 1 ? 's' : ''} queued for re-embedding`);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'namespaces'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'vector-stats'] });
     },
     onError: () => toast.error('Re-index failed'),
   });
@@ -275,39 +370,56 @@ export default function VectorStore() {
 
   const handleCreated = () => {
     setShowCreate(false);
-    queryClient.invalidateQueries(['admin', 'namespaces']);
-    queryClient.invalidateQueries(['admin', 'vector-stats']);
+    queryClient.invalidateQueries({ queryKey: ['admin', 'namespaces'] });
+    queryClient.invalidateQueries({ queryKey: ['admin', 'vector-stats'] });
   };
 
-  const totalChunks = stats?.total_chunks ?? 0;
-  const chunkDisplay = totalChunks >= 1000 ? `${(totalChunks / 1000).toFixed(0)}k` : totalChunks;
+  const totalDocs = stats?.total_documents ?? 0;
+  const totalNamespaces = stats?.total_namespaces ?? 0;
+  const successRate = stats?.embedding_success_rate != null
+    ? `${Math.round(stats.embedding_success_rate * 100)}%`
+    : '—';
+  const hasPending = (stats?.total_pending ?? 0) > 0;
+  const lastIndexed = stats?.last_indexed_at
+    ? formatTimeAgo(stats.last_indexed_at)
+    : hasPending ? 'Pending…' : 'Never';
+  const lastIndexedSub = !stats?.last_indexed_at && hasPending
+    ? `${stats.total_pending} doc${stats.total_pending !== 1 ? 's' : ''} queued`
+    : stats?.last_indexed_at ? 'Live connection' : undefined;
+  const chunkDisplay = totalDocs >= 1000 ? `${(totalDocs / 1000).toFixed(1)}k` : String(totalDocs);
+  const successSub = stats?.total_done != null ? `${stats.total_done} docs embedded` : undefined;
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-primary-dark">Vector Store</h1>
-        <p className="text-sm text-slate-500 mt-0.5">ChromaDB namespace management and embedding fidelity</p>
+        <p className="text-sm text-slate-500 mt-0.5">ChromaDB namespace management and embedding status</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Active Nodes" value={stats?.total_namespaces ?? 0} />
-        <StatCard label="Document Splinters" value={chunkDisplay} />
-        <StatCard label="Last Connection" value="22 Min Ago" sub="Live Connection" />
-        <StatCard label="Vector Accuracy" value="99.2%" dark />
+        <StatCard label="Active Namespaces" value={totalNamespaces} />
+        <StatCard label="Total Documents" value={chunkDisplay} />
+        <StatCard
+          label="Last Indexed"
+          value={lastIndexed}
+          sub={lastIndexedSub}
+        />
+        <StatCard label="Embedding Success" value={successRate} sub={successSub} dark />
       </div>
 
       {isLoading ? (
         <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <NamespaceExplorer grades={namespacesData} onExpandAll={() => {}} />
+          <NamespaceExplorer grades={namespacesData} />
           <div className="space-y-4">
-            <FidelityChart />
+            <EmbeddingStatusChart stats={stats} />
             <QuickOps
               onCreateNamespace={() => setShowCreate(true)}
               onExport={handleExport}
               onReindex={() => reindexMutation.mutate()}
               reindexing={reindexMutation.isPending}
+              onShowReindexConfirm={() => setShowReindexConfirm(true)}
             />
           </div>
         </div>
@@ -318,6 +430,13 @@ export default function VectorStore() {
           grades={grades}
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
+        />
+      )}
+
+      {showReindexConfirm && (
+        <ReindexConfirmModal
+          onConfirm={() => reindexMutation.mutate()}
+          onClose={() => setShowReindexConfirm(false)}
         />
       )}
     </div>

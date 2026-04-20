@@ -3,10 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cpu, MapPin, Copy, ChevronRight, ChevronLeft, MoreVertical,
   Plus, RefreshCw, Shield, Activity, Loader2, AlertCircle, X,
+  Eye, Pencil, Wifi, WifiOff, RotateCcw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  listIotDevices, registerDevice, getIotHealth, decommissionDevice, regenerateDeviceKey,
+  listIotDevices, registerDevice, getIotHealth, getIotDevice, updateIotDevice,
+  decommissionDevice, regenerateDeviceKey, updateDeviceStatus,
 } from '../../services/adminService';
 
 const DEVICE_TYPE_BADGE = {
@@ -37,13 +39,12 @@ function StatusBadge({ status }) {
   );
 }
 
-function MaskedKey({ apiKeyHash }) {
-  const tail = (apiKeyHash ?? '').slice(-4);
-  const masked = `••••••••••••${tail}`;
+function MaskedKey({ apiKeyHint }) {
+  const masked = apiKeyHint ?? '••••••••••••????';
 
   const copyKey = () => {
-    navigator.clipboard.writeText(apiKeyHash ?? '');
-    toast.success('Copied to clipboard');
+    toast.success('Key hint copied');
+    navigator.clipboard.writeText(masked);
   };
 
   return (
@@ -56,7 +57,7 @@ function MaskedKey({ apiKeyHash }) {
   );
 }
 
-function ActionsMenu({ device, onDecommission, onRegenerate }) {
+function ActionsMenu({ device, onDecommission, onRegenerate, onViewDetail, onEdit }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -65,13 +66,26 @@ function ActionsMenu({ device, onDecommission, onRegenerate }) {
         <MoreVertical className="w-4 h-4 text-slate-500" />
       </button>
       {open && (
-        <div className="absolute right-0 top-7 z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-44 py-1">
+        <div className="absolute right-0 top-7 z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-48 py-1">
+          <button
+            onClick={() => { setOpen(false); onViewDetail(device); }}
+            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+          >
+            <Eye className="w-4 h-4" /> View Details
+          </button>
+          <button
+            onClick={() => { setOpen(false); onEdit(device); }}
+            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+          >
+            <Pencil className="w-4 h-4" /> Edit
+          </button>
           <button
             onClick={() => { setOpen(false); onRegenerate(device); }}
             className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
           >
             <RefreshCw className="w-4 h-4" /> Regenerate Key
           </button>
+          <div className="border-t border-slate-100 my-1" />
           <button
             onClick={() => { setOpen(false); onDecommission(device); }}
             className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 flex items-center gap-2 text-red-600"
@@ -80,6 +94,197 @@ function ActionsMenu({ device, onDecommission, onRegenerate }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function EditDeviceModal({ device, onClose, onSuccess }) {
+  const [form, setForm] = useState({ location: device.location ?? '', description: device.description ?? '' });
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await updateIotDevice(device.device_id, form);
+      toast.success('Device updated');
+      onSuccess();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail ?? 'Failed to update device');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-primary-dark">Edit Device</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-xs text-slate-500 mb-4">Node: <span className="font-mono font-semibold text-primary-dark">{device.node_id}</span></p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
+            <input
+              value={form.location}
+              onChange={(e) => set('location', e.target.value)}
+              placeholder="e.g. Room 402"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Description</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => set('description', e.target.value)}
+              rows={2}
+              placeholder="Optional notes..."
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving} className="flex-1 bg-primary-dark text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary disabled:opacity-50 flex items-center justify-center gap-2">
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function DeviceDetailModal({ deviceId, onClose }) {
+  const queryClient = useQueryClient();
+  const [statusChanging, setStatusChanging] = useState(false);
+
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ['admin', 'iot-device-detail', deviceId],
+    queryFn: async () => (await getIotDevice(deviceId)).data,
+  });
+
+  const handleStatusChange = async (newStatus) => {
+    setStatusChanging(true);
+    try {
+      await updateDeviceStatus(deviceId, { status: newStatus });
+      toast.success(`Status set to ${newStatus}`);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'iot-devices'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'iot-device-detail', deviceId] });
+    } catch {
+      toast.error('Failed to update status');
+    } finally {
+      setStatusChanging(false);
+    }
+  };
+
+  const telemetry = detail?.recent_telemetry ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40">
+      <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full sm:max-w-2xl mx-0 sm:mx-4 max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-bold text-primary-dark">{detail?.node_id ?? 'Device Detail'}</h2>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+
+        {isLoading ? (
+          <div className="flex-1 flex items-center justify-center py-20">
+            <Loader2 className="w-6 h-6 text-primary animate-spin" />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <div className="p-6 grid grid-cols-2 gap-4 text-sm border-b border-slate-100">
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Type</p>
+                <p className="font-medium text-primary-dark">{detail?.device_type ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Location</p>
+                <p className="font-medium text-primary-dark">{detail?.location ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">MAC Address</p>
+                <p className="font-mono text-slate-600">{detail?.device_mac ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Firmware</p>
+                <p className="text-slate-600">{detail?.firmware_version ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Last Seen</p>
+                <p className="text-slate-600">{detail?.last_seen_at ? new Date(detail.last_seen_at).toLocaleString() : 'Never'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Status</p>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={detail?.status} />
+                  <div className="flex gap-1">
+                    {['online', 'offline', 'syncing'].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleStatusChange(s)}
+                        disabled={statusChanging || detail?.status === s}
+                        className="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:border-primary hover:text-primary disabled:opacity-40 transition-colors"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {detail?.description && (
+              <div className="px-6 py-3 border-b border-slate-100">
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Description</p>
+                <p className="text-sm text-slate-600">{detail.description}</p>
+              </div>
+            )}
+
+            <div className="px-6 py-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Activity className="w-4 h-4 text-primary" />
+                <h3 className="font-semibold text-primary-dark text-sm">Recent Telemetry</h3>
+                <span className="text-xs text-slate-400">({telemetry.length} entries)</span>
+              </div>
+              {telemetry.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-sm">No telemetry data available</div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-slate-100">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100">
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Timestamp</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Temperature</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Humidity</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Raw Data</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {telemetry.map((t, i) => (
+                        <tr key={i} className="hover:bg-slate-50/50">
+                          <td className="px-3 py-2 text-slate-500">{t.logged_at ? new Date(t.logged_at).toLocaleString() : '—'}</td>
+                          <td className="px-3 py-2 font-mono text-primary-dark">{t.temperature_c != null ? `${t.temperature_c}°C` : '—'}</td>
+                          <td className="px-3 py-2 font-mono text-slate-600">{t.humidity_pct != null ? `${t.humidity_pct}%` : '—'}</td>
+                          <td className="px-3 py-2 text-slate-400 max-w-xs truncate">{t.raw_payload ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -230,6 +435,8 @@ export default function DeviceManagement() {
   const [showRegister, setShowRegister] = useState(false);
   const [newApiKey, setNewApiKey] = useState(null);
   const [confirmDevice, setConfirmDevice] = useState(null);
+  const [detailDevice, setDetailDevice] = useState(null);
+  const [editDevice, setEditDevice] = useState(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -246,7 +453,7 @@ export default function DeviceManagement() {
     mutationFn: (id) => decommissionDevice(id),
     onSuccess: () => {
       toast.success('Device decommissioned');
-      queryClient.invalidateQueries(['admin', 'iot-devices']);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'iot-devices'] });
       setConfirmDevice(null);
     },
     onError: () => toast.error('Failed to decommission'),
@@ -257,7 +464,7 @@ export default function DeviceManagement() {
     onSuccess: (res) => {
       const key = res.data?.api_key;
       if (key) setNewApiKey({ key, nodeId: res.data?.node_id ?? 'Device' });
-      queryClient.invalidateQueries(['admin', 'iot-devices']);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'iot-devices'] });
     },
     onError: () => toast.error('Key regeneration failed'),
   });
@@ -265,14 +472,14 @@ export default function DeviceManagement() {
   const handleRegistered = (data) => {
     setShowRegister(false);
     if (data?.api_key) setNewApiKey({ key: data.api_key, nodeId: data.node_id ?? 'New Device' });
-    queryClient.invalidateQueries(['admin', 'iot-devices']);
+    queryClient.invalidateQueries({ queryKey: ['admin', 'iot-devices'] });
   };
 
   const devices = data?.devices ?? [];
-  const total = data?.total ?? 0;
+  const total = data?.total_count ?? 0;
   const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
-  const activeNodes = health?.active_devices ?? 0;
-  const offlineNodes = health?.offline_devices ?? 0;
+  const activeNodes = health?.active_device_count ?? data?.active_nodes ?? 0;
+  const offlineNodes = health?.offline_device_count ?? 0;
 
   return (
     <div>
@@ -338,7 +545,7 @@ export default function DeviceManagement() {
                   <MapPin className="w-3.5 h-3.5 shrink-0" />
                   {d.location ?? '—'}
                 </td>
-                <td className="px-4 py-3"><MaskedKey apiKeyHash={d.api_key_hash ?? ''} /></td>
+                <td className="px-4 py-3"><MaskedKey apiKeyHint={d.api_key_hint ?? ''} /></td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                 <td className="px-4 py-3 text-slate-400 text-xs">{d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Never'}</td>
                 <td className="px-4 py-3">
@@ -346,6 +553,8 @@ export default function DeviceManagement() {
                     device={d}
                     onDecommission={setConfirmDevice}
                     onRegenerate={(dev) => regenMutation.mutate(dev.device_id)}
+                    onViewDetail={(dev) => setDetailDevice(dev.device_id)}
+                    onEdit={setEditDevice}
                   />
                 </td>
               </tr>
@@ -375,9 +584,9 @@ export default function DeviceManagement() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <HealthCard label="Health Check" value={`${health?.health_score ?? 98.2}%`} sub="Stable uptime this week" icon={Shield} />
-        <HealthCard label="Data Throughput" value="1.2 GB/s" sub="Real-time aggregate stream" icon={Activity} />
-        <HealthCard label="Network Security" value="TLS 1.3" sub="AES-256 Encrypted channel" icon={Shield} />
+        <HealthCard label="Health Check" value={`${health?.health_check_pct ?? 98.2}%`} sub={health?.uptime_status ?? 'Stable uptime this week'} icon={Shield} />
+        <HealthCard label="Data Throughput" value={`${health?.data_throughput_gbps ?? 1.2} GB/s`} sub="Real-time aggregate stream" icon={Activity} />
+        <HealthCard label="Network Security" value={health?.network_security_protocol ?? 'TLS 1.3'} sub="AES-256 Encrypted channel" icon={Shield} />
       </div>
 
       {showRegister && <RegisterDeviceModal onClose={() => setShowRegister(false)} onRegistered={handleRegistered} />}
@@ -387,6 +596,24 @@ export default function DeviceManagement() {
           apiKey={newApiKey.key}
           nodeId={newApiKey.nodeId}
           onClose={() => setNewApiKey(null)}
+        />
+      )}
+
+      {editDevice && (
+        <EditDeviceModal
+          device={editDevice}
+          onClose={() => setEditDevice(null)}
+          onSuccess={() => {
+            setEditDevice(null);
+            queryClient.invalidateQueries({ queryKey: ['admin', 'iot-devices'] });
+          }}
+        />
+      )}
+
+      {detailDevice && (
+        <DeviceDetailModal
+          deviceId={detailDevice}
+          onClose={() => setDetailDevice(null)}
         />
       )}
 

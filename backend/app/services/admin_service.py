@@ -89,11 +89,11 @@ def get_two_fa_compliance(db: Session) -> dict:
         .scalar()
         or 0
     )
-    compliance_pct = round((protected / total) * 100, 1) if total > 0 else 0.0
+    compliance_percentage = round((protected / total) * 100, 1) if total > 0 else 0.0
     return {
-        "protected_users": protected,
+        "two_fa_enabled_count": protected,
         "total_users": total,
-        "compliance_pct": compliance_pct,
+        "compliance_percentage": compliance_percentage,
     }
 
 
@@ -405,6 +405,16 @@ def get_enrollment_detail(db: Session, enrollment_id: uuid.UUID) -> dict | None:
         "enrolled_at": row.enrolled_at,
         "status": "active" if row.is_active else "pending",
     }
+
+
+def count_pending_enrollments(db: Session) -> int:
+    """Return the number of enrollments awaiting approval."""
+    return (
+        db.query(func.count(StudentEnrollment.enrollment_id))
+        .filter(StudentEnrollment.is_active == False)
+        .scalar()
+        or 0
+    )
 
 
 def approve_enrollment(db: Session, enrollment: StudentEnrollment) -> StudentEnrollment:
@@ -1093,11 +1103,27 @@ def get_vector_store_stats(db: Session) -> dict:
         .scalar()
         or 0
     )
+    namespace_count = (
+        db.query(func.count(Subject.subject_id))
+        .filter(Subject.chroma_namespace.isnot(None))
+        .scalar()
+        or 0
+    )
+    last_indexed = (
+        db.query(func.max(CurriculumDocument.embedded_at))
+        .filter(CurriculumDocument.embedding_status == EmbeddingStatus.DONE)
+        .scalar()
+    )
+    success_rate = round(done / total, 4) if total > 0 else 0.0
     return {
         "total_documents": total,
         "total_done": done,
         "total_pending": pending,
         "total_failed": failed,
+        "total_namespaces": namespace_count,
+        "total_chunks": done,
+        "embedding_success_rate": success_rate,
+        "last_indexed_at": last_indexed,
         "ai_service_status": "stub",
     }
 
@@ -1532,10 +1558,24 @@ def _set_setting(db: Session, key: str, value: object) -> None:
 
 def _compute_security_score(two_fa: dict, last_audit: dict | None) -> int:
     """Derive overall security score (0-100) from 2FA coverage and integrity audit."""
-    score = int(two_fa["compliance_pct"] * 0.4)
+    score = int(two_fa["compliance_percentage"] * 0.4)
     score += 30 if (last_audit and last_audit.get("hash_check_status") == "Valid & Synchronized") else 15
     score += 30
     return min(100, score)
+
+
+def _build_rbac_status(db: Session) -> list[dict]:
+    """Return active user roles with counts derived from the users table."""
+    role_counts = (
+        db.query(User.role, func.count(User.user_id))
+        .filter(User.is_active == True)
+        .group_by(User.role)
+        .all()
+    )
+    return [
+        {"role": role.value.title(), "active": True, "user_count": count}
+        for role, count in role_counts
+    ]
 
 
 def get_security_overview(db: Session) -> dict:
@@ -1543,16 +1583,10 @@ def get_security_overview(db: Session) -> dict:
     two_fa = get_two_fa_compliance(db)
     iot_key_count = db.query(IotDevice).filter(IotDevice.status != "decommissioned").count()
     last_audit = _get_setting(db, "last_integrity_audit")
+    threshold = int(_get_setting(db, "rate_limit_threshold") or 2500)
     return {
-        "jwt_rbac_status": [
-            {"role": "Super Admin", "active": True},
-            {"role": "IoT Controller", "active": True},
-            {"role": "Database Auditor", "active": True},
-            {"role": "Vector Analyst", "active": True},
-            {"role": "User Manager", "active": True},
-            {"role": "Guest Viewer", "active": False},
-        ],
-        "api_rate_limit": {"threshold_per_min": 2500, "current_usage_pct": 34},
+        "jwt_rbac_status": _build_rbac_status(db),
+        "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": None},
         "device_auth": {"active_api_keys_count": iot_key_count},
         "two_fa_compliance": two_fa,
         "overall_security_score": _compute_security_score(two_fa, last_audit),
@@ -1627,17 +1661,17 @@ def get_full_dashboard(db: Session) -> dict:
     two_fa = get_two_fa_compliance(db)
     last_audit = _get_setting(db, "last_integrity_audit")
     doc_count = db.query(CurriculumDocument).count()
+    vector_stats = get_vector_store_stats(db)
     return {
         "iot_nodes_active": iot_online,
-        "chromadb_accuracy_pct": 99.2,
-        "two_fa_compliance_pct": two_fa["compliance_pct"],
+        "chromadb_accuracy_pct": round(vector_stats["embedding_success_rate"] * 100, 1),
+        "two_fa_compliance_pct": two_fa["compliance_percentage"],
         "iot_registry_preview": _build_iot_preview(db),
         "integrity_status": "Integrity Optimal" if last_audit else "No Audit Run",
         "integrity_verified_count": doc_count,
         "quick_user_access": _build_quick_user_access(db),
         "system_health": {
             "node_uptime_pct": health["health_check_pct"],
-            "memory_load_pct": 64,
             "live_monitoring_active": True,
         },
     }
@@ -1648,14 +1682,20 @@ def get_admin_settings(db: Session) -> dict:
     def _get(key: str, default: object) -> object:
         return _get_setting(db, key) or default
 
+    raw_notif = _get_setting(db, "notification_prefs")
+    raw_appearance = _get_setting(db, "appearance_prefs")
+
     return {
         "ocr_engine": _get("ocr_engine", "tesseract_5_optimized"),
         "rag_chunk_size": int(_get("rag_chunk_size", 512)),
         "google_vision_key_hint": "••••1234" if _get_setting(db, "google_vision_api_key") else None,
-        "gemini_key_hint": None,
+        "gemini_key_hint": "••••5678" if _get_setting(db, "gemini_api_key") else None,
         "mqtt_broker_host": _get_setting(db, "mqtt_broker_host"),
         "maintenance_mode": _get_setting(db, "maintenance_mode") in (True, "true"),
-        "backup_last_success": None,
+        "backup_last_success": _get_setting(db, "backup_last_success"),
+        "notification_prefs": raw_notif if isinstance(raw_notif, dict) else None,
+        "appearance_prefs": raw_appearance if isinstance(raw_appearance, dict) else None,
+        "webhook_url": _get_setting(db, "webhook_url"),
     }
 
 

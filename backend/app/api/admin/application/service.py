@@ -120,14 +120,15 @@ def list_users(
     """Return a paginated, filtered user list with platform summary stats."""
     users, total = admin_service.list_users(db, role, is_active, search, grade_id, page, per_page)
     two_fa = admin_service.get_two_fa_compliance(db)
+    pending_count = admin_service.count_pending_enrollments(db)
     return AdminUserListResponse(
         users=[_user_to_schema(u) for u in users],
         total_count=total,
         page=page,
         per_page=per_page,
         role_distribution=_build_role_distribution(db),
-        security_health_pct=two_fa["compliance_pct"],
-        pending_approvals_count=0,
+        security_health_pct=two_fa["compliance_percentage"],
+        pending_approvals_count=pending_count,
     )
 
 

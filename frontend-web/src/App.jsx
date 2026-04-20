@@ -49,6 +49,7 @@ import AdminDeviceManagement from './pages/admin/DeviceManagement';
 import AdminSecurityIntegrity from './pages/admin/SecurityIntegrity';
 import AdminCurriculumUpload from './pages/admin/CurriculumUpload';
 import AdminSettings from './pages/admin/AdminSettings';
+import AdminAcademicManagement from './pages/admin/AcademicManagement';
 
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
@@ -131,6 +132,7 @@ function App() {
             <Route path="dashboard" element={<AdminDashboard />} />
             <Route path="users" element={<AdminUserManagement />} />
             <Route path="audit-logs" element={<AdminAuditLogs />} />
+            <Route path="academic" element={<AdminAcademicManagement />} />
             <Route path="vector-store" element={<AdminVectorStore />} />
             <Route path="iot" element={<AdminDeviceManagement />} />
             <Route path="security" element={<AdminSecurityIntegrity />} />

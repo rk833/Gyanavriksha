@@ -2,11 +2,12 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, CloudUpload, FileText, Folder, FolderOpen, ChevronRight,
-  CheckCircle2, RefreshCw, X, Loader2, Activity,
+  CheckCircle2, RefreshCw, X, Loader2, Activity, Library, Trash2, RotateCcw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   uploadCurriculum, getIngestionJobs, getNamespaces, getGrades, getSubjects, cancelIngestionJob,
+  getCurriculumDocs, deleteCurriculumDoc, requeueCurriculumDoc,
 } from '../../services/adminService';
 
 const STATUS_STYLE = {
@@ -104,7 +105,7 @@ function DropZone({ onFileSelect, selectedFile, onClear }) {
 function NamespaceSelector({ grades, gradeId, setGradeId, subjectId, setSubjectId }) {
   const { data: subjects = [] } = useQuery({
     queryKey: ['admin', 'subjects', gradeId],
-    queryFn: async () => (await getSubjects({ grade_id: gradeId })).data?.subjects ?? [],
+    queryFn: async () => (await getSubjects({ grade_id: gradeId })).data ?? [],
     enabled: !!gradeId,
   });
 
@@ -172,49 +173,130 @@ function JobStatusBadge({ status }) {
   return <span className={`text-xs font-semibold px-2 py-0.5 rounded ${cls} uppercase`}>{status}</span>;
 }
 
-function JobsTable({ jobs, onCancel, refetching, onRefetch }) {
+function JobsTable({ jobs, onCancel, onRequeue, onDelete, refetching, onRefetch }) {
+  const [statusFilter, setStatusFilter] = useState('');
+  const [confirmDeleteJob, setConfirmDeleteJob] = useState(null);
+
+  const filtered = statusFilter ? jobs.filter((j) => j.status === statusFilter) : jobs;
+
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-primary-light">
-        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Active Ingestion Jobs</p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Ingestion Jobs</p>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          >
+            <option value="">All Statuses</option>
+            <option value="queued">Queued</option>
+            <option value="processing">Processing</option>
+            <option value="complete">Complete</option>
+            <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
         <button onClick={onRefetch} className="flex items-center gap-1 text-xs text-primary font-semibold hover:underline">
           <RefreshCw className={`w-3 h-3 ${refetching ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-slate-100 bg-slate-50">
-            {['Filename', 'Grade / Subject', 'Status', 'Timestamp', 'Action'].map((h) => (
-              <th key={h} className="text-left text-xs font-semibold text-slate-400 uppercase tracking-wider px-4 py-2">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-50">
-          {jobs.length === 0 && (
-            <tr><td colSpan={5} className="text-center py-8 text-slate-400 text-sm">No ingestion jobs</td></tr>
-          )}
-          {jobs.map((j) => (
-            <tr key={j.job_id} className="hover:bg-slate-50/60">
-              <td className="px-4 py-2.5 flex items-center gap-2 font-medium text-slate-700">
-                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                <span className="truncate max-w-[140px]">{j.filename}</span>
-              </td>
-              <td className="px-4 py-2.5 text-xs text-slate-500">
-                {j.grade_name ?? '—'} {j.subject_name ? `/ ${j.subject_name}` : ''}
-              </td>
-              <td className="px-4 py-2.5"><JobStatusBadge status={j.status} /></td>
-              <td className="px-4 py-2.5 text-xs text-slate-400">{j.created_at ? new Date(j.created_at).toLocaleString() : '—'}</td>
-              <td className="px-4 py-2.5">
-                {['queued', 'processing'].includes(j.status) && (
-                  <button onClick={() => onCancel(j.job_id)} className="text-red-400 hover:text-red-600">
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </td>
+
+      <div className="bg-primary-light/20 px-4 py-2 border-b border-primary-light/40 text-xs text-slate-500 flex items-center gap-1.5">
+        <RefreshCw className="w-3 h-3 text-primary" />
+        Status transitions (queued → processing → complete) are handled automatically by the backend pipeline.
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 bg-slate-50">
+              {['Filename', 'Grade / Subject', 'Status', 'Timestamp', 'Actions'].map((h) => (
+                <th key={h} className="text-left text-xs font-semibold text-slate-400 uppercase tracking-wider px-4 py-2">{h}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} className="text-center py-8 text-slate-400 text-sm">No matching jobs</td></tr>
+            )}
+            {filtered.map((j) => (
+              <tr key={j.job_id} className="hover:bg-slate-50/60">
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span className="font-medium text-slate-700 truncate max-w-[160px]">{j.filename}</span>
+                  </div>
+                  {j.status === 'processing' && (
+                    <div className="mt-1 h-1 w-full max-w-[160px] ml-6 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-400 rounded-full animate-pulse" style={{ width: `${j.progress ?? 50}%` }} />
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-xs text-slate-500">{j.grade_subject ?? '—'}</td>
+                <td className="px-4 py-2.5"><JobStatusBadge status={j.status} /></td>
+                <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">
+                  {j.created_at ? new Date(j.created_at).toLocaleString() : '—'}
+                </td>
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {['queued', 'processing'].includes(j.status) && (
+                      <button
+                        onClick={() => onCancel(j.job_id)}
+                        className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg transition-colors"
+                      >
+                        <X className="w-3 h-3" /> Cancel
+                      </button>
+                    )}
+                    {['failed', 'cancelled'].includes(j.status) && (
+                      <button
+                        onClick={() => onRequeue(j.job_id)}
+                        className="flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary-dark bg-primary-light/50 hover:bg-primary-light px-2.5 py-1 rounded-lg transition-colors"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Requeue
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setConfirmDeleteJob(j)}
+                      className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-red-500 hover:bg-red-50 px-2.5 py-1 rounded-lg transition-colors"
+                      title="Delete this job record"
+                    >
+                      <Trash2 className="w-3 h-3" /> Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {confirmDeleteJob && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-start gap-3 mb-4">
+              <Trash2 className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <h2 className="font-bold text-primary-dark">Delete Job Record</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Delete <span className="font-semibold">{confirmDeleteJob.filename}</span>? This removes the file record and its vector embeddings permanently.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDeleteJob(null)} className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                onClick={() => { onDelete(confirmDeleteJob.job_id); setConfirmDeleteJob(null); }}
+                className="flex-1 bg-red-600 text-white rounded-lg py-2 text-sm font-semibold hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -289,6 +371,169 @@ function PipelineActivityLog({ jobs }) {
   );
 }
 
+const DOC_STATUS_STYLE = {
+  complete: 'bg-green-100 text-green-700',
+  processing: 'bg-blue-100 text-blue-700',
+  queued: 'bg-yellow-100 text-yellow-700',
+  failed: 'bg-red-100 text-red-700',
+  cancelled: 'bg-slate-100 text-slate-500',
+};
+
+function DocumentLibrary() {
+  const queryClient = useQueryClient();
+  const [gradeFilter, setGradeFilter] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const { data: grades = [] } = useQuery({
+    queryKey: ['admin', 'grades'],
+    queryFn: async () => (await getGrades()).data ?? [],
+  });
+
+  const { data: docsData, isLoading } = useQuery({
+    queryKey: ['admin', 'curriculum-docs', gradeFilter],
+    queryFn: async () => {
+      const params = { per_page: 50 };
+      if (gradeFilter) params.grade_id = gradeFilter;
+      return (await getCurriculumDocs(params)).data;
+    },
+  });
+
+  const docs = docsData?.documents ?? [];
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => deleteCurriculumDoc(id),
+    onSuccess: () => {
+      toast.success('Document deleted');
+      setConfirmDelete(null);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'curriculum-docs'] });
+    },
+    onError: () => toast.error('Failed to delete document'),
+  });
+
+  const requeueMutation = useMutation({
+    mutationFn: (id) => requeueCurriculumDoc(id),
+    onSuccess: () => {
+      toast.success('Document re-queued for embedding');
+      queryClient.invalidateQueries({ queryKey: ['admin', 'curriculum-docs'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'ingestion-jobs'] });
+    },
+    onError: () => toast.error('Failed to requeue document'),
+  });
+
+  return (
+    <div className="mt-8">
+      <div className="bg-white rounded-xl border border-primary-light shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-primary-light">
+          <div className="flex items-center gap-2 font-semibold text-primary-dark">
+            <Library className="w-4 h-4 text-primary" />
+            Document Library
+            {docs.length > 0 && <span className="text-xs font-normal text-slate-400">({docs.length})</span>}
+          </div>
+          <select
+            value={gradeFilter}
+            onChange={(e) => setGradeFilter(e.target.value)}
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          >
+            <option value="">All Grades</option>
+            {grades.map((g) => <option key={g.grade_id} value={g.grade_id}>{g.grade_name}</option>)}
+          </select>
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 text-primary animate-spin" /></div>
+        ) : docs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+            <Library className="w-8 h-8 mb-2 opacity-30" />
+            <p className="text-sm">No curriculum documents yet</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50">
+                  {['File Name', 'Grade / Subject', 'Type', 'Status', 'Uploaded', 'Actions'].map((h) => (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {docs.map((d) => (
+                  <tr key={d.doc_id} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="font-medium text-primary-dark text-xs truncate max-w-xs">{d.file_name ?? d.doc_id}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{d.grade_subject ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{d.doc_type ?? '—'}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${DOC_STATUS_STYLE[d.embedding_status] ?? 'bg-slate-100 text-slate-600'}`}>
+                        {d.embedding_status ?? '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-400 text-xs">
+                      {d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => requeueMutation.mutate(d.doc_id)}
+                          disabled={requeueMutation.isPending}
+                          className="flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary-dark bg-primary-light/50 hover:bg-primary-light px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          <RotateCcw className="w-3 h-3" /> Requeue
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(d)}
+                          className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+            <div className="flex items-start gap-3 mb-4">
+              <Trash2 className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <h2 className="font-bold text-primary-dark">Delete Document</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Delete <span className="font-semibold">{confirmDelete.file_name}</span>? This removes the file and its vector embeddings.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDelete(null)} className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteMutation.mutate(confirmDelete.doc_id)}
+                disabled={deleteMutation.isPending}
+                className="flex-1 bg-red-600 text-white rounded-lg py-2 text-sm font-semibold hover:bg-red-700 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {deleteMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CurriculumUpload() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [gradeId, setGradeId] = useState('');
@@ -299,7 +544,7 @@ export default function CurriculumUpload() {
 
   const { data: grades = [] } = useQuery({
     queryKey: ['admin', 'grades'],
-    queryFn: async () => (await getGrades()).data?.grades ?? [],
+    queryFn: async () => (await getGrades()).data ?? [],
   });
 
   const { data: namespaces = [], isFetching: nsLoading } = useQuery({
@@ -322,7 +567,7 @@ export default function CurriculumUpload() {
       setSubjectId('');
       setActiveStep(1);
       refetchJobs();
-      queryClient.invalidateQueries(['admin', 'namespaces']);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'namespaces'] });
     },
     onError: (err) => toast.error(err?.response?.data?.detail ?? 'Upload failed'),
   });
@@ -331,6 +576,18 @@ export default function CurriculumUpload() {
     mutationFn: (id) => cancelIngestionJob(id),
     onSuccess: () => { toast.success('Job cancelled'); refetchJobs(); },
     onError: () => toast.error('Cancel failed'),
+  });
+
+  const requeueJobMutation = useMutation({
+    mutationFn: (id) => requeueCurriculumDoc(id),
+    onSuccess: () => { toast.success('Job re-queued for embedding'); refetchJobs(); },
+    onError: () => toast.error('Re-queue failed'),
+  });
+
+  const deleteJobMutation = useMutation({
+    mutationFn: (id) => deleteCurriculumDoc(id),
+    onSuccess: () => { toast.success('Job record deleted'); refetchJobs(); },
+    onError: () => toast.error('Delete failed'),
   });
 
   const handleFileSelect = (file) => {
@@ -395,6 +652,8 @@ export default function CurriculumUpload() {
           <JobsTable
             jobs={jobs}
             onCancel={(id) => cancelMutation.mutate(id)}
+            onRequeue={(id) => requeueJobMutation.mutate(id)}
+            onDelete={(id) => deleteJobMutation.mutate(id)}
             refetching={jobsFetching}
             onRefetch={refetchJobs}
           />
@@ -415,6 +674,8 @@ export default function CurriculumUpload() {
           <PipelineActivityLog jobs={jobs} />
         </div>
       </div>
+
+      <DocumentLibrary />
     </div>
   );
 }

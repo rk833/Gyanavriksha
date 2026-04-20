@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   Users,
   Upload,
-  HelpCircle,
+  BookOpen,
   LogOut,
   Menu,
   Bell,
@@ -18,12 +18,13 @@ import useAuth from '../hooks/useAuth';
 
 const NAV_ITEMS = [
   { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/admin/users', label: 'User Management', icon: Users },
+  { to: '/admin/academic', label: 'Academic Management', icon: BookOpen },
   { to: '/admin/iot', label: 'IoT Management', icon: Cpu },
   { to: '/admin/vector-store', label: 'Vector Store', icon: Database },
-  { to: '/admin/audit-logs', label: 'User Logs', icon: ScrollText },
-  { to: '/admin/security', label: 'Security', icon: ShieldCheck },
-  { to: '/admin/users', label: 'User Management', icon: Users },
   { to: '/admin/curriculum-ingestion', label: 'Curriculum Ingestion', icon: Upload },
+  { to: '/admin/audit-logs', label: 'Audit Logs', icon: ScrollText },
+  { to: '/admin/security', label: 'Security', icon: ShieldCheck },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
