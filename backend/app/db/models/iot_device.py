@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import UUID, INET, MACADDR
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
 
 from app.db.base import Base
 
@@ -27,3 +27,8 @@ class IotDevice(Base):
         default=datetime.utcnow,
         server_default="now()",
     )
+    node_id = Column(String(100), unique=True, nullable=True)
+    device_type = Column(String(50), nullable=True)
+    location = Column(String(150), nullable=True)
+    status = Column(String(30), nullable=False, default="offline", server_default="offline")
+    description = Column(Text, nullable=True)

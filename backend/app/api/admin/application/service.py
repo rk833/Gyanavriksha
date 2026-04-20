@@ -15,6 +15,7 @@ from app.schemas.admin import (
     AdminUserCreateResponse,
     AdminUserListResponse,
     AdminUserResponse,
+    ApiKeyRegenerateResponse,
     BulkEnrollmentResponse,
     CurriculumDocDetailResponse,
     CurriculumDocListResponse,
@@ -24,6 +25,11 @@ from app.schemas.admin import (
     GradeResponse,
     IngestionJobListResponse,
     IngestionJobResponse,
+    IoTDeviceCreateResponse,
+    IoTDeviceDetailResponse,
+    IoTDeviceListResponse,
+    IoTDeviceResponse,
+    IoTHealthResponse,
     RoleDistribution,
     SubjectResponse,
     SystemHealthSummary,
@@ -705,3 +711,129 @@ def approve_enrollment(
     db.commit()
     detail = admin_service.get_enrollment_detail(db, enrollment_id)
     return EnrollmentResponse(**detail)
+
+
+_VALID_STATUSES = {"online", "offline", "syncing", "decommissioned"}
+
+
+def list_iot_devices(
+    db: Session,
+    status: str | None,
+    device_type: str | None,
+    location: str | None,
+    page: int,
+    per_page: int,
+) -> IoTDeviceListResponse:
+    """Return a paginated IoT device list with summary counts."""
+    result = admin_service.list_iot_devices(db, status, device_type, location, page, per_page)
+    return IoTDeviceListResponse(**result)
+
+
+def register_iot_device(
+    db: Session,
+    node_id: str,
+    device_type: str,
+    location: str,
+    description: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> IoTDeviceCreateResponse:
+    """Register a new IoT device and return its one-time plain-text API key."""
+    if admin_service.node_id_exists(db, node_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A device with this node_id already exists")
+    device, plain_key = admin_service.register_iot_device(db, node_id, device_type, location, description, actor_id, ip_address)
+    db.commit()
+    return IoTDeviceCreateResponse(**admin_service._device_to_response_dict(device), api_key=plain_key)
+
+
+def get_iot_device(db: Session, device_id: uuid.UUID) -> IoTDeviceDetailResponse:
+    """Return device detail with the last 10 telemetry entries."""
+    device = admin_service.get_iot_device_by_id(db, device_id)
+    _raise_if_not_found(device, "Device not found")
+    telemetry = admin_service.get_device_telemetry(db, device_id, 10)
+    return IoTDeviceDetailResponse(
+        **admin_service._device_to_response_dict(device),
+        recent_telemetry=telemetry,
+    )
+
+
+def update_iot_device(
+    db: Session,
+    device_id: uuid.UUID,
+    location: str | None,
+    description: str | None,
+) -> IoTDeviceResponse:
+    """Update a device's location and/or description."""
+    device = admin_service.get_iot_device_by_id(db, device_id)
+    _raise_if_not_found(device, "Device not found")
+    if device.status == "decommissioned":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot update a decommissioned device")
+    admin_service.update_iot_device_fields(db, device, location, description)
+    db.commit()
+    return IoTDeviceResponse(**admin_service._device_to_response_dict(device))
+
+
+def decommission_iot_device(
+    db: Session,
+    device_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Soft-delete a device by marking it as decommissioned."""
+    device = admin_service.get_iot_device_by_id(db, device_id)
+    _raise_if_not_found(device, "Device not found")
+    admin_service.decommission_device(db, device, actor_id, ip_address)
+    db.commit()
+
+
+def regenerate_device_api_key(
+    db: Session,
+    device_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> ApiKeyRegenerateResponse:
+    """Invalidate the current API key and issue a new one."""
+    device = admin_service.get_iot_device_by_id(db, device_id)
+    _raise_if_not_found(device, "Device not found")
+    if device.status == "decommissioned":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot regenerate key for a decommissioned device")
+    plain_key = admin_service.regenerate_device_key(db, device, actor_id, ip_address)
+    db.commit()
+    return ApiKeyRegenerateResponse(
+        device_id=device.device_id,
+        node_id=device.node_id or str(device.device_id)[:8],
+        api_key=plain_key,
+    )
+
+
+def get_iot_health(db: Session) -> IoTHealthResponse:
+    """Return overall IoT network health KPIs."""
+    data = admin_service.get_iot_network_health(db)
+    return IoTHealthResponse(**data)
+
+
+def get_device_telemetry(db: Session, device_id: uuid.UUID, limit: int) -> list[dict]:
+    """Return recent telemetry entries for a specific device."""
+    device = admin_service.get_iot_device_by_id(db, device_id)
+    _raise_if_not_found(device, "Device not found")
+    return admin_service.get_device_telemetry(db, device_id, limit)
+
+
+def override_device_status(
+    db: Session,
+    device_id: uuid.UUID,
+    new_status: str,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> IoTDeviceResponse:
+    """Manually override a device's operational status."""
+    if new_status not in _VALID_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"status must be one of {sorted(_VALID_STATUSES)}",
+        )
+    device = admin_service.get_iot_device_by_id(db, device_id)
+    _raise_if_not_found(device, "Device not found")
+    admin_service.update_iot_device_status(db, device, new_status, actor_id, ip_address)
+    db.commit()
+    return IoTDeviceResponse(**admin_service._device_to_response_dict(device))

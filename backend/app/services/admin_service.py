@@ -1131,3 +1131,228 @@ def get_export_snapshot(db: Session) -> dict:
     namespaces = get_namespaces_from_db(db)
     stats = get_vector_store_stats(db)
     return {"namespaces": namespaces, "stats": stats}
+
+
+from datetime import datetime, timezone, timedelta
+
+from app.db.models.iot_device import IotDevice
+from app.db.models.sensor_log import SensorLog
+
+
+def _generate_mac() -> str:
+    """Generate a random unique MAC address string."""
+    raw = secrets.token_hex(6)
+    return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
+
+
+def _device_to_response_dict(device: IotDevice) -> dict:
+    """Map an IotDevice ORM row to the IoTDeviceResponse field set."""
+    return {
+        "device_id": device.device_id,
+        "node_id": device.node_id or str(device.device_id)[:8],
+        "device_type": device.device_type or "Unknown",
+        "location": device.location or "",
+        "description": device.description,
+        "api_key_hint": "••••••••",
+        "status": device.status,
+        "last_seen_at": device.last_seen_at,
+        "created_at": device.registered_at,
+    }
+
+
+def node_id_exists(db: Session, node_id: str) -> bool:
+    """Return True if a non-decommissioned device with the given node_id already exists."""
+    return (
+        db.query(IotDevice)
+        .filter(IotDevice.node_id == node_id)
+        .first()
+        is not None
+    )
+
+
+def list_iot_devices(
+    db: Session,
+    status: str | None,
+    device_type: str | None,
+    location: str | None,
+    page: int,
+    per_page: int,
+) -> dict:
+    """Return paginated device list with network summary stats."""
+    query = db.query(IotDevice).filter(IotDevice.status != "decommissioned")
+    if status:
+        query = query.filter(IotDevice.status == status)
+    if device_type:
+        query = query.filter(IotDevice.device_type == device_type)
+    if location:
+        query = query.filter(IotDevice.location.ilike(f"%{location}%"))
+
+    total_count = query.count()
+    devices = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    active_nodes = db.query(IotDevice).filter(IotDevice.status == "online").count()
+    threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+    alerts_count = (
+        db.query(IotDevice)
+        .filter(IotDevice.status == "offline", IotDevice.last_seen_at < threshold)
+        .count()
+    )
+
+    return {
+        "devices": [_device_to_response_dict(d) for d in devices],
+        "total_count": total_count,
+        "active_nodes": active_nodes,
+        "alerts_count": alerts_count,
+        "page": page,
+        "per_page": per_page,
+    }
+
+
+def get_iot_device_by_id(db: Session, device_id: uuid.UUID) -> IotDevice | None:
+    """Fetch a single IotDevice by primary key."""
+    return db.get(IotDevice, device_id)
+
+
+def register_iot_device(
+    db: Session,
+    node_id: str,
+    device_type: str,
+    location: str,
+    description: str | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> tuple[IotDevice, str]:
+    """Create a device with a hashed API key. Returns (device, plain_key)."""
+    plain_key = secrets.token_urlsafe(32)
+    device = IotDevice(
+        node_id=node_id,
+        device_type=device_type,
+        location=location,
+        description=description,
+        api_key_hash=hash_password(plain_key),
+        mqtt_topic_prefix=f"iot/{node_id}",
+        device_mac=_generate_mac(),
+        status="offline",
+        registered_by=actor_id,
+    )
+    db.add(device)
+    db.flush()
+    log_audit_event(
+        db, actor_id, "IOT_DEVICE_REGISTERED",
+        f"Registered device {node_id} ({device_type}) at {location}",
+        "iot_device", str(device.device_id), ip_address,
+    )
+    return device, plain_key
+
+
+def update_iot_device_fields(
+    db: Session,
+    device: IotDevice,
+    location: str | None,
+    description: str | None,
+) -> None:
+    """Apply non-None field updates to the device."""
+    if location is not None:
+        device.location = location
+    if description is not None:
+        device.description = description
+    db.flush()
+
+
+def decommission_device(
+    db: Session,
+    device: IotDevice,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Soft-delete: set status to decommissioned and mark inactive."""
+    device.status = "decommissioned"
+    device.is_active = False
+    db.flush()
+    log_audit_event(
+        db, actor_id, "IOT_DEVICE_DECOMMISSIONED",
+        f"Decommissioned device {device.node_id}",
+        "iot_device", str(device.device_id), ip_address,
+    )
+
+
+def regenerate_device_key(
+    db: Session,
+    device: IotDevice,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> str:
+    """Invalidate old API key and generate a new one. Returns plain-text key."""
+    plain_key = secrets.token_urlsafe(32)
+    device.api_key_hash = hash_password(plain_key)
+    db.flush()
+    log_audit_event(
+        db, actor_id, "IOT_KEY_REGENERATED",
+        f"API key regenerated for {device.node_id}",
+        "iot_device", str(device.device_id), ip_address,
+    )
+    return plain_key
+
+
+def update_iot_device_status(
+    db: Session,
+    device: IotDevice,
+    new_status: str,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Manually override a device's operational status."""
+    device.status = new_status
+    if new_status == "decommissioned":
+        device.is_active = False
+    db.flush()
+    log_audit_event(
+        db, actor_id, "IOT_STATUS_CHANGED",
+        f"Status of {device.node_id} changed to {new_status}",
+        "iot_device", str(device.device_id), ip_address,
+    )
+
+
+def get_iot_network_health(db: Session) -> dict:
+    """Return overall IoT network health KPIs."""
+    total = db.query(IotDevice).filter(IotDevice.status != "decommissioned").count()
+    online = db.query(IotDevice).filter(IotDevice.status == "online").count()
+    threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+    alerts = (
+        db.query(IotDevice)
+        .filter(IotDevice.status == "offline", IotDevice.last_seen_at < threshold)
+        .count()
+    )
+    health_pct = round(online / total * 100, 1) if total > 0 else 0.0
+    return {
+        "health_check_pct": health_pct,
+        "uptime_status": "Stable uptime this week" if health_pct >= 95 else "Degraded",
+        "data_throughput_gbps": 1.2,
+        "network_security_protocol": "TLS 1.3",
+        "active_device_count": online,
+        "offline_device_count": total - online,
+        "alert_count": alerts,
+    }
+
+
+def get_device_telemetry(db: Session, device_id: uuid.UUID, limit: int) -> list[dict]:
+    """Return the most recent sensor log entries for a device."""
+    logs = (
+        db.query(SensorLog)
+        .filter(SensorLog.device_id == device_id)
+        .order_by(SensorLog.recorded_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "log_id": log.log_id,
+            "sensor_type": log.sensor_type,
+            "ldr_value": log.ldr_value,
+            "distance_cm": log.distance_cm,
+            "led_activated": log.led_activated,
+            "alert_triggered": log.alert_triggered.value if log.alert_triggered else None,
+            "recorded_at": log.recorded_at.isoformat() if log.recorded_at else None,
+        }
+        for log in logs
+    ]

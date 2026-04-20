@@ -33,8 +33,17 @@ from app.schemas.admin import (
     GradeNamespaceGroup,
     GradeResponse,
     GradeUpdateRequest,
+    ApiKeyRegenerateResponse,
+    DeviceStatusUpdateRequest,
     IngestionJobListResponse,
     IngestionJobResponse,
+    IoTDeviceCreateRequest,
+    IoTDeviceCreateResponse,
+    IoTDeviceDetailResponse,
+    IoTDeviceListResponse,
+    IoTDeviceResponse,
+    IoTDeviceUpdateRequest,
+    IoTHealthResponse,
     NamespaceCreateRequest,
     ReindexRequest,
     RoleChangeRequest,
@@ -526,3 +535,106 @@ def requeue_curriculum_doc(
 ):
     """Re-queue a failed or completed document for re-embedding."""
     return service.requeue_curriculum_doc(db, doc_id, current_user.user_id, _ip(request))
+
+
+@router.get("/iot/devices", response_model=IoTDeviceListResponse)
+def list_iot_devices(
+    status: Optional[str] = None,
+    device_type: Optional[str] = None,
+    location: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """List all IoT devices with optional filters and a network summary."""
+    return service.list_iot_devices(db, status, device_type, location, page, per_page)
+
+
+@router.post("/iot/devices", response_model=IoTDeviceCreateResponse, status_code=status.HTTP_201_CREATED)
+def register_device(
+    body: IoTDeviceCreateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Register a new device. The plain API key is shown only once in the response."""
+    return service.register_iot_device(
+        db, body.node_id, body.device_type, body.location, body.description,
+        current_user.user_id, _ip(request),
+    )
+
+
+@router.get("/iot/health", response_model=IoTHealthResponse)
+def get_iot_health(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return overall IoT network health KPIs."""
+    return service.get_iot_health(db)
+
+
+@router.get("/iot/devices/{device_id}", response_model=IoTDeviceDetailResponse)
+def get_iot_device(
+    device_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return device detail with the last 10 telemetry entries."""
+    return service.get_iot_device(db, device_id)
+
+
+@router.patch("/iot/devices/{device_id}", response_model=IoTDeviceResponse)
+def update_iot_device(
+    device_id: uuid.UUID,
+    body: IoTDeviceUpdateRequest,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Update a device's location or description."""
+    return service.update_iot_device(db, device_id, body.location, body.description)
+
+
+@router.delete("/iot/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+def decommission_device(
+    device_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Soft-delete a device by setting its status to decommissioned."""
+    service.decommission_iot_device(db, device_id, current_user.user_id, _ip(request))
+
+
+@router.post("/iot/devices/{device_id}/regenerate-key", response_model=ApiKeyRegenerateResponse)
+def regenerate_api_key(
+    device_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Invalidate the old API key and return the new plain-text key (shown once)."""
+    return service.regenerate_device_api_key(db, device_id, current_user.user_id, _ip(request))
+
+
+@router.get("/iot/devices/{device_id}/telemetry")
+def get_device_telemetry(
+    device_id: uuid.UUID,
+    limit: int = 50,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return the last N telemetry entries for a specific device."""
+    return service.get_device_telemetry(db, device_id, limit)
+
+
+@router.patch("/iot/devices/{device_id}/status", response_model=IoTDeviceResponse)
+def update_device_status(
+    device_id: uuid.UUID,
+    body: DeviceStatusUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Manually override a device's operational status."""
+    return service.override_device_status(db, device_id, body.status, current_user.user_id, _ip(request))
