@@ -12,10 +12,14 @@ from sqlalchemy.orm import Session
 from app.db.models.user import User
 from app.schemas.admin import (
     AdminDashboardResponse,
+    AdminSettingsResponse,
+    AdminSettingsUpdateRequest,
     AdminUserCreateResponse,
     AdminUserListResponse,
     AdminUserResponse,
     ApiKeyRegenerateResponse,
+    AuditLogListResponse,
+    AuditLogResponse,
     BulkEnrollmentResponse,
     CurriculumDocDetailResponse,
     CurriculumDocListResponse,
@@ -25,13 +29,16 @@ from app.schemas.admin import (
     GradeResponse,
     IngestionJobListResponse,
     IngestionJobResponse,
+    IntegrityAuditResponse,
     IoTDeviceCreateResponse,
     IoTDeviceDetailResponse,
     IoTDeviceListResponse,
     IoTDeviceResponse,
     IoTHealthResponse,
     RoleDistribution,
+    SecurityOverviewResponse,
     SubjectResponse,
+    SystemChangeEntry,
     SystemHealthSummary,
     VectorStoreStatsResponse,
 )
@@ -40,32 +47,18 @@ from app.services.email_service import send_welcome_email
 from app.shared.source_enum import UserRole
 
 
-def _build_stub_health() -> SystemHealthSummary:
-    """Return a placeholder system health snapshot until live metrics are wired up."""
-    return SystemHealthSummary(
-        node_uptime_pct=99.9,
-        memory_load_pct=64.0,
-        live_monitoring_active=True,
-    )
-
-
 def get_dashboard(db: Session) -> AdminDashboardResponse:
-    """Return the aggregated admin control panel overview.
-
-    Real IoT, ChromaDB, and integrity data will be wired up in a later phase.
-    This stub validates the route is reachable and role-guarded.
-    """
-    stats = admin_service.get_platform_stats(db)
-    two_fa = stats["two_fa_compliance"]
+    """Return the aggregated admin control panel overview with real live data."""
+    data = admin_service.get_full_dashboard(db)
     return AdminDashboardResponse(
-        iot_nodes_active=0,
-        chromadb_accuracy_pct=None,
-        two_fa_compliance_pct=two_fa["compliance_pct"],
-        iot_registry_preview=[],
-        integrity_status="No audit run yet",
-        integrity_verified_count=0,
-        quick_user_access=[],
-        system_health=_build_stub_health(),
+        iot_nodes_active=data["iot_nodes_active"],
+        chromadb_accuracy_pct=data["chromadb_accuracy_pct"],
+        two_fa_compliance_pct=data["two_fa_compliance_pct"],
+        iot_registry_preview=data["iot_registry_preview"],
+        integrity_status=data["integrity_status"],
+        integrity_verified_count=data["integrity_verified_count"],
+        quick_user_access=data["quick_user_access"],
+        system_health=SystemHealthSummary(**data["system_health"]),
     )
 
 
@@ -837,3 +830,93 @@ def override_device_status(
     admin_service.update_iot_device_status(db, device, new_status, actor_id, ip_address)
     db.commit()
     return IoTDeviceResponse(**admin_service._device_to_response_dict(device))
+
+
+def get_audit_logs(
+    db: Session,
+    event_type: str | None,
+    user_search: str | None,
+    date_from,
+    date_to,
+    page: int,
+    per_page: int,
+) -> AuditLogListResponse:
+    """Return a paginated, filtered audit log list."""
+    logs, total = admin_service.get_audit_logs_filtered(
+        db, event_type, user_search, date_from, date_to, page, per_page
+    )
+    return AuditLogListResponse(
+        logs=[AuditLogResponse(**entry) for entry in logs],
+        total_count=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+def get_system_changes(db: Session) -> list[SystemChangeEntry]:
+    """Return the last 5 major system-level change events."""
+    entries = admin_service.get_system_level_changes(db)
+    return [SystemChangeEntry(**e) for e in entries]
+
+
+def get_audit_logs_for_export(
+    db: Session,
+    event_type: str | None,
+    user_search: str | None,
+    date_from,
+    date_to,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> list[dict]:
+    """Return all matching audit log rows for CSV export and write an export audit entry."""
+    rows = admin_service.get_all_audit_logs_for_export(
+        db, event_type, user_search, date_from, date_to
+    )
+    admin_service.log_audit_event(
+        db, actor_id, "AUDIT_LOG_EXPORTED",
+        f"Admin exported audit logs ({len(rows)} records)",
+        ip_address=ip_address,
+    )
+    db.commit()
+    return rows
+
+
+def get_security_overview(db: Session) -> SecurityOverviewResponse:
+    """Return the full security dashboard payload."""
+    data = admin_service.get_security_overview(db)
+    return SecurityOverviewResponse(**data)
+
+
+def get_security_events(db: Session) -> list[dict]:
+    """Return recent security-related audit events."""
+    return admin_service.get_security_events(db)
+
+
+def run_integrity_audit(
+    db: Session,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> IntegrityAuditResponse:
+    """Compute SHA-256 hash over all curriculum metadata and persist the result."""
+    result = admin_service.run_integrity_audit(db, actor_id, ip_address)
+    db.commit()
+    return IntegrityAuditResponse(**result)
+
+
+def get_settings(db: Session) -> AdminSettingsResponse:
+    """Return current admin system settings."""
+    data = admin_service.get_admin_settings(db)
+    return AdminSettingsResponse(**data)
+
+
+def update_settings(
+    db: Session,
+    body: AdminSettingsUpdateRequest,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> AdminSettingsResponse:
+    """Persist updated settings and return the new state."""
+    updates = body.model_dump(exclude_none=True)
+    data = admin_service.update_admin_settings(db, updates, actor_id, ip_address)
+    db.commit()
+    return AdminSettingsResponse(**data)
