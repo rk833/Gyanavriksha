@@ -296,6 +296,12 @@ class IoTHealthResponse(BaseModel):
     alert_count: int
 
 
+class IoTDeviceDetailResponse(IoTDeviceResponse):
+    """Device detail response extended with recent telemetry entries."""
+
+    recent_telemetry: list[dict]
+
+
 class AuditLogResponse(BaseModel):
     """Single audit log entry."""
 
