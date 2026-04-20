@@ -363,3 +363,73 @@ class AdminSettingsUpdateRequest(BaseModel):
     mqtt_broker_host: Optional[str] = None
     mqtt_broker_credentials: Optional[str] = None
     maintenance_mode: Optional[bool] = None
+
+
+class CurriculumDocDetailResponse(BaseModel):
+    """Full curriculum document detail including ingestion status."""
+
+    doc_id: uuid.UUID
+    file_name: str
+    grade_name: Optional[str] = None
+    subject_name: Optional[str] = None
+    doc_type: str
+    file_size_bytes: Optional[int] = None
+    embedding_status: str
+    uploaded_by_email: Optional[str] = None
+    created_at: datetime
+    embedded_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class CurriculumDocListResponse(BaseModel):
+    """Paginated curriculum document library response."""
+
+    documents: list[CurriculumDocDetailResponse]
+    total_count: int
+    page: int
+    per_page: int
+
+
+class NamespaceInfo(BaseModel):
+    """Single ChromaDB namespace entry."""
+
+    name: str
+    subject_name: str
+    chunk_count: int = 0
+    doc_count: int = 0
+    last_updated: Optional[datetime] = None
+
+
+class GradeNamespaceGroup(BaseModel):
+    """Namespaces grouped by academic grade."""
+
+    grade_name: str
+    grade_level: int
+    namespaces: list[NamespaceInfo] = []
+
+
+class NamespaceCreateRequest(BaseModel):
+    """Request body for creating a ChromaDB namespace record."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    grade_id: int
+    subject_id: int
+
+
+class ReindexRequest(BaseModel):
+    """Request body for re-queuing documents for embedding."""
+
+    namespace_name: Optional[str] = None
+    grade_id: Optional[int] = None
+    subject_id: Optional[int] = None
+
+
+class VectorStoreStatsResponse(BaseModel):
+    """Overall vector store statistics summary."""
+
+    total_documents: int
+    total_done: int
+    total_pending: int
+    total_failed: int
+    ai_service_status: str = "stub"

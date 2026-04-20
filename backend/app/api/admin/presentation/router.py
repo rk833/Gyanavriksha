@@ -6,7 +6,7 @@ application-layer use cases. No business logic occurs here.
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.admin.infrastructure.dependencies import require_role
@@ -23,17 +23,25 @@ from app.schemas.admin import (
     AssignInstructorRequest,
     BulkEnrollmentResponse,
     BulkUserIdsRequest,
+    CurriculumDocDetailResponse,
+    CurriculumDocListResponse,
     EnrollmentBulkCreateRequest,
     EnrollmentCreateRequest,
     EnrollmentListResponse,
     EnrollmentResponse,
     GradeCreateRequest,
+    GradeNamespaceGroup,
     GradeResponse,
     GradeUpdateRequest,
+    IngestionJobListResponse,
+    IngestionJobResponse,
+    NamespaceCreateRequest,
+    ReindexRequest,
     RoleChangeRequest,
     SubjectCreateRequest,
     SubjectResponse,
     SubjectUpdateRequest,
+    VectorStoreStatsResponse,
 )
 from app.shared.source_enum import UserRole
 
@@ -106,6 +114,7 @@ def create_user(
         raw_password=body.password,
         actor_id=current_user.user_id,
         ip_address=_ip(request),
+        grade_id=body.grade_id,
     )
 
 
@@ -371,3 +380,149 @@ def remove_enrollment(
 ):
     """Soft-delete an enrollment when no submissions exist."""
     service.remove_enrollment(db, enrollment_id, current_user.user_id, _ip(request))
+
+
+@router.post("/ingestion/upload", response_model=IngestionJobResponse, status_code=status.HTTP_201_CREATED)
+async def upload_curriculum(
+    request: Request,
+    file: UploadFile = File(...),
+    subject_id: int = Form(...),
+    doc_type: str = Form(default="curriculum_pdf"),
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Upload a curriculum PDF or DOCX and queue it for embedding."""
+    file_bytes = await file.read()
+    return service.upload_curriculum(db, file_bytes, file.filename, subject_id, current_user.user_id, doc_type, _ip(request))
+
+
+@router.get("/ingestion/jobs", response_model=IngestionJobListResponse)
+def list_ingestion_jobs(
+    job_status: Optional[str] = None,
+    grade_id: Optional[int] = None,
+    subject_id: Optional[int] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return a paginated list of curriculum ingestion jobs."""
+    return service.list_ingestion_jobs(db, job_status, grade_id, subject_id, page, per_page)
+
+
+@router.get("/ingestion/jobs/{job_id}", response_model=IngestionJobResponse)
+def get_ingestion_job(
+    job_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return a single ingestion job by ID."""
+    return service.get_ingestion_job(db, job_id)
+
+
+@router.delete("/ingestion/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_ingestion_job(
+    job_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Cancel a queued ingestion job or remove a completed one."""
+    service.cancel_ingestion_job(db, job_id, current_user.user_id, _ip(request))
+
+
+@router.get("/vector-store/namespaces", response_model=list[GradeNamespaceGroup])
+def get_vector_namespaces(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return ChromaDB namespaces grouped by grade."""
+    return service.get_vector_namespaces(db)
+
+
+@router.get("/vector-store/stats", response_model=VectorStoreStatsResponse)
+def get_vector_stats(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return overall vector store statistics."""
+    return service.get_vector_stats(db)
+
+
+@router.post("/vector-store/namespaces", status_code=status.HTTP_201_CREATED)
+def create_namespace(
+    body: NamespaceCreateRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Register a ChromaDB namespace for a subject."""
+    return service.create_namespace(db, body.grade_id, body.subject_id, current_user.user_id, _ip(request))
+
+
+@router.post("/vector-store/reindex")
+def reindex_namespace(
+    body: ReindexRequest,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Re-queue documents for re-embedding."""
+    return service.reindex_documents(db, body.grade_id, body.subject_id, current_user.user_id, _ip(request))
+
+
+@router.get("/vector-store/export-snapshot")
+def export_snapshot(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return a JSON metadata snapshot of all namespaces and document counts."""
+    return service.get_export_snapshot(db)
+
+
+@router.get("/curriculum", response_model=CurriculumDocListResponse)
+def list_curriculum_docs(
+    grade_id: Optional[int] = None,
+    subject_id: Optional[int] = None,
+    doc_type: Optional[str] = None,
+    doc_status: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return a paginated curriculum document library."""
+    return service.list_curriculum_docs(db, grade_id, subject_id, doc_type, doc_status, search, page, per_page)
+
+
+@router.get("/curriculum/{doc_id}", response_model=CurriculumDocDetailResponse)
+def get_curriculum_doc(
+    doc_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return full detail for a single curriculum document."""
+    return service.get_curriculum_doc(db, doc_id)
+
+
+@router.delete("/curriculum/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_curriculum_doc(
+    doc_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Delete a curriculum document from disk and database."""
+    service.delete_curriculum_doc(db, doc_id, current_user.user_id, _ip(request))
+
+
+@router.post("/curriculum/{doc_id}/requeue", response_model=IngestionJobResponse)
+def requeue_curriculum_doc(
+    doc_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Re-queue a failed or completed document for re-embedding."""
+    return service.requeue_curriculum_doc(db, doc_id, current_user.user_id, _ip(request))

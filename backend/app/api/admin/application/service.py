@@ -16,12 +16,18 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserResponse,
     BulkEnrollmentResponse,
+    CurriculumDocDetailResponse,
+    CurriculumDocListResponse,
     EnrollmentListResponse,
     EnrollmentResponse,
+    GradeNamespaceGroup,
     GradeResponse,
+    IngestionJobListResponse,
+    IngestionJobResponse,
     RoleDistribution,
     SubjectResponse,
     SystemHealthSummary,
+    VectorStoreStatsResponse,
 )
 from app.services import admin_service
 from app.services.email_service import send_welcome_email
@@ -141,8 +147,11 @@ def create_user(
     raw_password: str | None,
     actor_id: uuid.UUID,
     ip_address: str | None,
+    grade_id: int | None = None,
 ) -> AdminUserCreateResponse:
     """Create a new user, emit a welcome email, and write an audit entry."""
+    if role == UserRole.STUDENT and grade_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="grade_id is required when creating a student")
     if admin_service.email_exists(db, email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     user, password = admin_service.create_user(db, email, full_name, role, raw_password)
@@ -504,6 +513,174 @@ def remove_enrollment(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
     admin_service.log_audit_event(db, actor_id, "ENROLLMENT_REMOVED", f"Removed enrollment {enrollment_id}", "enrollment", str(enrollment_id), ip_address)
     db.commit()
+
+
+def upload_curriculum(
+    db: Session,
+    file_bytes: bytes,
+    filename: str,
+    subject_id: int,
+    actor_id: uuid.UUID,
+    doc_type_str: str,
+    ip_address: str | None,
+) -> IngestionJobResponse:
+    """Validate, save, and register a curriculum file upload."""
+    try:
+        doc = admin_service.upload_curriculum_file(db, file_bytes, filename, subject_id, actor_id, doc_type_str)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    admin_service.log_audit_event(
+        db, actor_id, "CURRICULUM_UPLOAD", f"Uploaded '{filename}' for subject {subject_id}", "curriculum_document", str(doc.doc_id), ip_address,
+    )
+    db.commit()
+    return IngestionJobResponse(**admin_service._doc_to_job_dict(db, doc))
+
+
+def list_ingestion_jobs(
+    db: Session,
+    job_status: str | None,
+    grade_id: int | None,
+    subject_id: int | None,
+    page: int,
+    per_page: int,
+) -> IngestionJobListResponse:
+    """Return a paginated list of ingestion jobs."""
+    rows, total = admin_service.list_ingestion_jobs(db, job_status, grade_id, subject_id, page, per_page)
+    return IngestionJobListResponse(
+        jobs=[IngestionJobResponse(**r) for r in rows],
+        total_count=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+def get_ingestion_job(db: Session, doc_id: uuid.UUID) -> IngestionJobResponse:
+    """Return a single ingestion job by document ID."""
+    doc = admin_service.get_curriculum_doc_by_id(db, doc_id)
+    _raise_if_not_found(doc, "Ingestion job not found")
+    return IngestionJobResponse(**admin_service._doc_to_job_dict(db, doc))
+
+
+def cancel_ingestion_job(
+    db: Session,
+    doc_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Cancel or remove an ingestion job."""
+    error = admin_service.cancel_or_remove_job(db, doc_id)
+    if error == "NOT_FOUND":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    admin_service.log_audit_event(db, actor_id, "JOB_CANCELLED", f"Cancelled job {doc_id}", "curriculum_document", str(doc_id), ip_address)
+    db.commit()
+
+
+def get_vector_namespaces(db: Session) -> list[GradeNamespaceGroup]:
+    """Return ChromaDB namespaces grouped by grade."""
+    groups = admin_service.get_namespaces_from_db(db)
+    return [GradeNamespaceGroup(**g) for g in groups]
+
+
+def get_vector_stats(db: Session) -> VectorStoreStatsResponse:
+    """Return vector store statistics."""
+    return VectorStoreStatsResponse(**admin_service.get_vector_store_stats(db))
+
+
+def create_namespace(
+    db: Session,
+    grade_id: int,
+    subject_id: int,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> dict:
+    """Register a namespace for a subject (ChromaDB creation deferred to Sprint 6)."""
+    subject = admin_service.get_subject_by_id(db, subject_id)
+    _raise_if_not_found(subject, "Subject not found")
+    admin_service.log_audit_event(db, actor_id, "NAMESPACE_CREATED", f"Namespace registered for subject {subject_id}", "subject", str(subject_id), ip_address)
+    db.commit()
+    return {"namespace": subject.chroma_namespace, "subject_id": subject_id, "grade_id": grade_id}
+
+
+def reindex_documents(
+    db: Session,
+    grade_id: int | None,
+    subject_id: int | None,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> dict:
+    """Reset documents to PENDING for re-embedding."""
+    count = admin_service.reindex_documents(db, grade_id, subject_id)
+    admin_service.log_audit_event(db, actor_id, "REINDEX_TRIGGERED", f"Reindex triggered for {count} documents", "curriculum_document", None, ip_address)
+    db.commit()
+    return {"requeued_count": count}
+
+
+def get_export_snapshot(db: Session) -> dict:
+    """Return a JSON metadata snapshot of all namespaces and document counts."""
+    return admin_service.get_export_snapshot(db)
+
+
+def list_curriculum_docs(
+    db: Session,
+    grade_id: int | None,
+    subject_id: int | None,
+    doc_type: str | None,
+    doc_status: str | None,
+    search: str | None,
+    page: int,
+    per_page: int,
+) -> CurriculumDocListResponse:
+    """Return a paginated curriculum document library list."""
+    rows, total = admin_service.list_curriculum_docs(db, grade_id, subject_id, doc_type, doc_status, search, page, per_page)
+    return CurriculumDocListResponse(
+        documents=[CurriculumDocDetailResponse(**r) for r in rows],
+        total_count=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+def get_curriculum_doc(db: Session, doc_id: uuid.UUID) -> CurriculumDocDetailResponse:
+    """Return full detail for a single curriculum document."""
+    doc = admin_service.get_curriculum_doc_by_id(db, doc_id)
+    _raise_if_not_found(doc, "Document not found")
+    return CurriculumDocDetailResponse(**admin_service._doc_to_detail_dict(db, doc))
+
+
+def delete_curriculum_doc(
+    db: Session,
+    doc_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> None:
+    """Delete a curriculum document from disk and database."""
+    error = admin_service.delete_curriculum_doc(db, doc_id)
+    if error == "NOT_FOUND":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    admin_service.log_audit_event(db, actor_id, "CURRICULUM_DELETED", f"Deleted curriculum document {doc_id}", "curriculum_document", str(doc_id), ip_address)
+    db.commit()
+
+
+def requeue_curriculum_doc(
+    db: Session,
+    doc_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> IngestionJobResponse:
+    """Re-queue a document for re-embedding."""
+    error = admin_service.requeue_curriculum_doc(db, doc_id)
+    if error == "NOT_FOUND":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+    admin_service.log_audit_event(db, actor_id, "CURRICULUM_REQUEUED", f"Requeued document {doc_id}", "curriculum_document", str(doc_id), ip_address)
+    db.commit()
+    doc = admin_service.get_curriculum_doc_by_id(db, doc_id)
+    return IngestionJobResponse(**admin_service._doc_to_job_dict(db, doc))
 
 
 def get_pending_enrollments(db: Session) -> list[EnrollmentResponse]:
