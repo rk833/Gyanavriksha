@@ -1,8 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import axios from 'axios';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { API_BASE_URL } from '../../config/api';
@@ -15,7 +14,6 @@ type UploadNavigation = {
 type UploadRoute = {
   params?: {
     imageUri?: string;
-    imageUris?: string[];
     assignmentId?: string;
   };
 };
@@ -27,71 +25,167 @@ type UploadScreenProps = {
 
 export default function UploadScreen({ navigation, route }: UploadScreenProps) {
   const imageUri = route?.params?.imageUri ?? '';
-  const imageUris = route?.params?.imageUris?.length ? route.params.imageUris : imageUri ? [imageUri] : [];
-  const previewUri = imageUris[0] ?? '';
   const assignmentId = route?.params?.assignmentId ?? '';
-  const [isUploading, setIsUploading] = useState(false);
-  const [statusText, setStatusText] = useState(imageUris.length ? `Ready to upload ${imageUris.length} image(s)` : 'Ready to upload');
 
-  const canUpload = useMemo(() => Boolean(imageUris.length && assignmentId && !isUploading), [assignmentId, imageUris.length, isUploading]);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const [processedUri, setProcessedUri] = useState<string>('');
+  const [isPreparingImage, setIsPreparingImage] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  const canUpload = useMemo(
+    () => Boolean(!isPreparingImage && processedUri && assignmentId && !isUploading),
+    [assignmentId, isPreparingImage, isUploading, processedUri]
+  );
+
+  useEffect(() => {
+    let isActive = true;
+
+    const getImageDimensions = (uri: string): Promise<{ width: number; height: number }> =>
+      new Promise((resolve, reject) => {
+        Image.getSize(
+          uri,
+          (width, height) => resolve({ width, height }),
+          (error) => reject(error)
+        );
+      });
+
+    const prepareImage = async () => {
+      if (!imageUri) {
+        setErrorText('Upload failed');
+        setIsPreparingImage(false);
+        return;
+      }
+
+      setIsPreparingImage(true);
+      setErrorText(null);
+
+      try {
+        const { width, height } = await getImageDimensions(imageUri);
+        const maxEdge = Math.max(width, height);
+        const scale = maxEdge > 1200 ? 1200 / maxEdge : 1;
+
+        const resizeAction =
+          scale < 1
+            ? [{ resize: { width: Math.round(width * scale), height: Math.round(height * scale) } }]
+            : [];
+
+        const result = await ImageManipulator.manipulateAsync(imageUri, resizeAction, {
+          compress: 0.7,
+          format: ImageManipulator.SaveFormat.JPEG,
+        });
+
+        if (!isActive) {
+          return;
+        }
+
+        setProcessedUri(result.uri);
+      } catch {
+        if (!isActive) {
+          return;
+        }
+
+        setErrorText('Upload failed');
+      } finally {
+        if (isActive) {
+          setIsPreparingImage(false);
+        }
+      }
+    };
+
+    void prepareImage();
+
+    return () => {
+      isActive = false;
+      xhrRef.current?.abort();
+    };
+  }, [imageUri]);
 
   const uploadSubmission = async () => {
     if (!assignmentId) {
-      Alert.alert('Missing assignment', 'Assignment ID is required to upload this submission.');
+      setErrorText('Upload failed');
       return;
     }
 
-    if (!imageUris.length) {
-      Alert.alert('Missing image', 'No captured image is available for upload.');
+    if (!processedUri) {
+      setErrorText('Upload failed');
       return;
     }
-
-    setIsUploading(true);
-    setStatusText('Uploading...');
 
     try {
       const accessToken = await SecureStore.getItemAsync('access_token');
       const authToken = accessToken ?? (await SecureStore.getItemAsync('auth_token'));
 
       if (!authToken) {
-        throw new Error('You are not authenticated. Please log in again.');
+        setErrorText('Upload failed');
+        return;
       }
 
+      setIsUploading(true);
+      setErrorText(null);
+      setUploadProgress(0);
+
       const formData = new FormData();
-      imageUris.forEach((uri, index) => {
-        formData.append('files', {
-          uri,
-          name: `submission-${Date.now()}-${index + 1}.jpg`,
-          type: 'image/jpeg',
-        } as unknown as Blob);
-      });
+      formData.append('files[0]', {
+        uri: processedUri,
+        name: `submission-${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      } as unknown as Blob);
 
-      await axios.post(`${API_BASE_URL}/api/students/submissions`, formData, {
-        params: { assignment_id: assignmentId },
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const uploadUrl = `${API_BASE_URL}/api/students/submissions?assignment_id=${encodeURIComponent(assignmentId)}`;
 
-      setStatusText('Upload successful');
-      Alert.alert('Submitted', 'Your submission has been uploaded successfully. You can submit again.', [
-        {
-          text: 'Submit Another',
-          onPress: () => navigation.navigate('AssignmentPickerScreen'),
-        },
-        {
-          text: 'Go Home',
-          onPress: () => navigation.navigate('Home'),
-        },
-      ]);
-    } catch (error) {
-      const fallbackMessage = 'Upload failed. Please try again.';
-      const message = axios.isAxiosError(error)
-        ? (error.response?.data as { detail?: string } | undefined)?.detail ?? error.message ?? fallbackMessage
-        : fallbackMessage;
-      setStatusText('Upload failed');
-      Alert.alert('Upload failed', message);
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhrRef.current = xhr;
+
+        xhr.open('POST', uploadUrl);
+        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) {
+            return;
+          }
+
+          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          setUploadProgress(percent);
+        };
+
+        xhr.onload = () => {
+          if (xhr.status !== 201) {
+            reject(new Error('Upload failed'));
+            return;
+          }
+
+          try {
+            const payload = JSON.parse(xhr.responseText) as { submission_id?: string };
+            const submissionId = payload?.submission_id;
+
+            if (!submissionId) {
+              reject(new Error('Upload failed'));
+              return;
+            }
+
+            setUploadProgress(100);
+            navigation.navigate('SubmissionProgressScreen', { submissionId });
+            resolve();
+          } catch {
+            reject(new Error('Upload failed'));
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error('Upload failed'));
+        };
+
+        xhr.onabort = () => {
+          reject(new Error('Upload failed'));
+        };
+
+        xhr.send(formData);
+      });
+    } catch {
+      setErrorText('Upload failed');
     } finally {
       setIsUploading(false);
     }
@@ -99,24 +193,47 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} activeOpacity={0.85} onPress={() => (navigation.goBack ? navigation.goBack() : navigation.navigate('Home'))}>
-          <MaterialIcons name="arrow-back" size={20} color="#123A5F" />
-        </TouchableOpacity>
-        <Text style={styles.title}>Upload Assignment</Text>
-        <View style={styles.placeholder} />
-      </View>
-
       <View style={styles.content}>
-        {previewUri ? <Image source={{ uri: previewUri }} style={styles.preview} /> : <View style={styles.previewFallback}><MaterialIcons name="image" size={34} color="#94A3B8" /></View>}
-        <View style={styles.card}>
-          <Text style={styles.label}>Submission</Text>
-          <Text style={styles.valueSecondary}>Images: {imageUris.length}</Text>
-          <Text style={styles.helper}>{statusText}</Text>
-          <TouchableOpacity style={[styles.uploadButton, !canUpload ? styles.uploadButtonDisabled : null]} activeOpacity={0.85} onPress={() => void uploadSubmission()} disabled={!canUpload}>
-            {isUploading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.uploadButtonText}>Upload Submission</Text>}
-          </TouchableOpacity>
+        <Text style={styles.title}>Upload Assignment</Text>
+
+        <View style={styles.thumbnailWrap}>
+          {processedUri ? <Image source={{ uri: processedUri }} style={styles.thumbnail} /> : <View style={styles.thumbnailFallback} />}
         </View>
+
+        {isPreparingImage ? (
+          <View style={styles.statusRow}>
+            <ActivityIndicator color="#123A5F" />
+            <Text style={styles.statusText}>Preparing image...</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${uploadProgress}%` }]} />
+        </View>
+
+        <Text style={styles.progressText}>{uploadProgress}%</Text>
+
+        {errorText ? <Text style={styles.errorText}>Upload failed</Text> : null}
+
+        <TouchableOpacity
+          style={[styles.primaryButton, !canUpload ? styles.buttonDisabled : null]}
+          activeOpacity={0.85}
+          onPress={() => {
+            void uploadSubmission();
+          }}
+          disabled={!canUpload}
+        >
+          {isUploading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryButtonText}>{errorText ? 'Retry' : 'Upload'}</Text>}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('CameraScreen')}
+          disabled={isUploading}
+        >
+          <Text style={styles.secondaryButtonText}>Cancel</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -127,92 +244,99 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F3F1EB',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  title: {
-    color: '#123A5F',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  placeholder: {
-    width: 40,
-    height: 40,
-  },
   content: {
     flex: 1,
     padding: 16,
-    gap: 16,
-  },
-  preview: {
-    width: '100%',
-    height: 360,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  previewFallback: {
-    width: '100%',
-    height: 360,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
     justifyContent: 'center',
+    gap: 14,
   },
-  card: {
-    backgroundColor: '#FFFFFF',
+  title: {
+    color: '#123A5F',
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  thumbnailWrap: {
     borderRadius: 20,
-    padding: 16,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+  },
+  thumbnail: {
+    width: '100%',
+    height: 280,
+    backgroundColor: '#FFFFFF',
+  },
+  thumbnailFallback: {
+    width: '100%',
+    height: 280,
+    backgroundColor: '#FFFFFF',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
   },
-  label: {
-    color: '#64748B',
-    fontSize: 11,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  valueSecondary: {
+  statusText: {
     color: '#334155',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  progressTrack: {
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#123A5F',
+  },
+  progressText: {
+    color: '#334155',
+    textAlign: 'center',
     fontSize: 13,
     fontWeight: '700',
   },
-  helper: {
-    color: '#64748B',
-    fontSize: 13,
-    lineHeight: 19,
+  errorText: {
+    color: '#B91C1C',
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '700',
   },
-  uploadButton: {
-    marginTop: 8,
+  primaryButton: {
     backgroundColor: '#123A5F',
     borderRadius: 12,
-    paddingVertical: 12,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 46,
   },
-  uploadButtonDisabled: {
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  secondaryButton: {
+    borderRadius: 12,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  secondaryButtonText: {
+    color: '#123A5F',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  buttonDisabled: {
     opacity: 0.6,
   },
-  uploadButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
+  helperText: {
+    color: '#64748B',
+    fontSize: 13,
+    textAlign: 'center',
   },
 });
