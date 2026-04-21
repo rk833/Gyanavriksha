@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { BottomTabBarProps, createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
@@ -80,6 +80,84 @@ function PlaceholderScreen({ title }: { title: string }) {
     <View style={[styles.placeholderContainer, { backgroundColor: theme.colors.screen }]}>
       <Text style={[styles.placeholderTitle, { color: theme.colors.text }]}>{title}</Text>
       <Text style={[styles.placeholderSubtitle, { color: theme.colors.muted }]}>This page will be implemented next.</Text>
+    </View>
+  );
+}
+
+function GlobalBottomTabBar({ state, navigation }: BottomTabBarProps) {
+  const { theme } = useAppTheme();
+
+  const tabItems = [
+    { key: 'Home', icon: 'home', label: 'Home', capture: false },
+    { key: 'History', icon: 'quiz', label: 'Quizzes', capture: false },
+    { key: 'Submit', icon: 'photo-camera', label: 'Capture', capture: true },
+    { key: 'Chat', icon: 'chat-bubble-outline', label: 'Chat', capture: false },
+    { key: 'Profile', icon: 'person', label: 'Profile', capture: false },
+  ] as const;
+
+  return (
+    <View
+      style={[
+        styles.bottomBar,
+        {
+          backgroundColor: theme.colors.surface,
+          borderTopColor: theme.colors.headerBorder,
+          shadowColor: theme.colors.shadow,
+        },
+      ]}
+    >
+      {tabItems.map((item) => {
+        const routeIndex = state.routes.findIndex((route) => route.name === item.key);
+        const isFocused = routeIndex >= 0 && state.index === routeIndex;
+
+        if (item.capture) {
+          return (
+            <TouchableOpacity
+              key={item.key}
+              style={styles.captureTab}
+              activeOpacity={0.85}
+              onPress={() => {
+                navigation.navigate(item.key as never);
+              }}
+            >
+              <View style={[styles.captureButton, { backgroundColor: theme.colors.primary, shadowColor: theme.colors.shadow }]}>
+                <MaterialIcons name="photo-camera" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[styles.captureLabel, { color: theme.colors.muted }]}>{item.label}</Text>
+            </TouchableOpacity>
+          );
+        }
+
+        return (
+          <TouchableOpacity
+            key={item.key}
+            style={styles.tabItem}
+            activeOpacity={0.85}
+            onPress={() => {
+              const event = navigation.emit({
+                type: 'tabPress',
+                target: state.routes[routeIndex]?.key,
+                canPreventDefault: true,
+              });
+
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(item.key as never);
+              }
+            }}
+          >
+            <MaterialIcons name={item.icon as keyof typeof MaterialIcons.glyphMap} size={24} color={isFocused ? theme.colors.primary : theme.colors.inactive} />
+            <Text
+              style={[
+                styles.tabLabel,
+                isFocused ? styles.tabLabelActive : { color: theme.colors.muted },
+                isFocused ? { color: theme.colors.primary } : null,
+              ]}
+            >
+              {item.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
@@ -180,6 +258,7 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
   return (
     <>
     <Tab.Navigator
+        tabBar={(props) => <GlobalBottomTabBar {...props} />}
         screenOptions={({ route, navigation }) => ({
           headerShown: route.name !== 'Profile',
           headerStyle: {
@@ -212,16 +291,6 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
               ) : null}
             </TouchableOpacity>
           ),
-          tabBarActiveTintColor: theme.colors.primary,
-          tabBarInactiveTintColor: theme.colors.inactive,
-          tabBarStyle:
-            route.name === 'Profile'
-              ? { display: 'none' }
-              : {
-                  backgroundColor: theme.colors.surface,
-                  borderTopColor: theme.colors.headerBorder,
-                  shadowColor: theme.colors.shadow,
-                },
           tabBarIcon: ({ color, size }) => {
             const iconSize = size ?? 22;
 
@@ -577,6 +646,62 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     paddingVertical: 28,
+  },
+  bottomBar: {
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'flex-end',
+    paddingTop: 8,
+    paddingBottom: 26,
+    paddingHorizontal: 8,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 4,
+  },
+  tabItem: {
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  tabLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  tabLabelActive: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  captureTab: {
+    alignItems: 'center',
+    marginTop: -20,
+    paddingHorizontal: 8,
+  },
+  captureButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  captureLabel: {
+    marginTop: 4,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   loaderWrap: {
     flex: 1,

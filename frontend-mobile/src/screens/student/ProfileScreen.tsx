@@ -180,40 +180,6 @@ function Shell({
           </View>
 
           <View style={styles.contentArea}>{children}</View>
-
-          <View
-            style={[
-              styles.bottomBar,
-              {
-                backgroundColor: theme.colors.surface,
-                borderTopColor: theme.colors.headerBorder,
-                shadowColor: theme.colors.shadow,
-              },
-            ]}
-          >
-            <TouchableOpacity style={styles.tabItem} activeOpacity={0.85} onPress={() => goToTab('Home')}>
-              <MaterialIcons name="home" size={24} color={theme.colors.inactive} />
-              <Text style={[styles.tabLabel, { color: theme.colors.muted }]}>Home</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.tabItem} activeOpacity={0.85} onPress={() => goToTab('History')}>
-              <MaterialIcons name="quiz" size={24} color={theme.colors.inactive} />
-              <Text style={[styles.tabLabel, { color: theme.colors.muted }]}>Quizzes</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.captureTab} activeOpacity={0.85} onPress={() => goToTab('Submit')}>
-              <View style={[styles.captureButton, { backgroundColor: theme.colors.primary, shadowColor: theme.colors.shadow }]}>
-                <MaterialIcons name="photo-camera" size={26} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.captureLabel, { color: theme.colors.muted }]}>Capture</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.tabItem} activeOpacity={0.85} onPress={() => goToTab('Chat')}>
-              <MaterialIcons name="chat-bubble-outline" size={24} color={theme.colors.inactive} />
-              <Text style={[styles.tabLabel, { color: theme.colors.muted }]}>Chat</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.tabItem} activeOpacity={0.85}>
-              <MaterialIcons name="person" size={24} color={theme.colors.primary} />
-              <Text style={[styles.tabLabelActive, { color: theme.colors.primary }]}>Profile</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -986,11 +952,11 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 140,
+    paddingBottom: 28,
   },
   pageContent: {
     padding: 16,
-    paddingBottom: 140,
+    paddingBottom: 28,
   },
   sectionLabel: {
     fontSize: 11,
