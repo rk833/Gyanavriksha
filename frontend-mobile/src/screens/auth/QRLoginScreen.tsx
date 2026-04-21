@@ -20,9 +20,10 @@ type QRLoginScreenProps = {
     navigate: (screenName: string, params?: Record<string, string>) => void;
     goBack?: () => void;
   };
+  onLoginSuccess?: (token: string) => void;
 };
 
-export default function QRLoginScreen({ navigation }: QRLoginScreenProps) {
+export default function QRLoginScreen({ navigation, onLoginSuccess }: QRLoginScreenProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [isLoading, setIsLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -95,6 +96,7 @@ export default function QRLoginScreen({ navigation }: QRLoginScreenProps) {
           await SecureStore.setItemAsync('refresh_token', refreshToken);
         }
 
+        onLoginSuccess?.(accessToken);
         if (navigation) {
           navigation.navigate('HomeScreen');
         }

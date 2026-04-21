@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
-  Image,
   Modal,
   Pressable,
   RefreshControl,
@@ -57,6 +56,11 @@ type DashboardScreenProps = {
   navigation?: {
     navigate: (screenName: string, params?: Record<string, unknown>) => void;
     getState?: () => { routeNames?: string[] };
+  };
+  route?: {
+    params?: {
+      openNotificationsAt?: number;
+    };
   };
 };
 
@@ -145,7 +149,7 @@ function SkeletonBlock({
   return <Animated.View style={[styles.skeleton, { width, height, borderRadius: radius, opacity: pulse }]} />;
 }
 
-export default function DashboardScreen({ navigation }: DashboardScreenProps) {
+export default function DashboardScreen({ navigation, route }: DashboardScreenProps) {
   const { get } = useApi();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -272,6 +276,14 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     };
   }, [loadDashboard, loadDeskVitals]);
 
+  useEffect(() => {
+    if (!route?.params?.openNotificationsAt) {
+      return;
+    }
+
+    void openNotifications();
+  }, [openNotifications, route?.params?.openNotificationsAt]);
+
   const recentSubmissions = useMemo(
     () => dashboard?.recent_submissions.slice(0, MAX_RECENT_SUBMISSIONS) ?? [],
     [dashboard?.recent_submissions]
@@ -289,27 +301,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.topBar}>
-        <View style={styles.brandRow}>
-          <Image source={require('../../../assets/logo-icon.png')} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.brandText}>Gyanavriksha</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.notificationIconButton}
-          activeOpacity={0.85}
-          onPress={() => {
-            void openNotifications();
-          }}
-        >
-          <MaterialIcons name="notifications-none" size={20} color="#123A5F" />
-          {(dashboard?.notifications_unread_count ?? 0) > 0 ? (
-            <View style={styles.notificationCountDot}>
-              <Text style={styles.notificationCountText}>{dashboard?.notifications_unread_count ?? 0}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
-      </View>
-
       <ScrollView
         style={styles.flex}
         contentContainerStyle={styles.scrollContent}
@@ -460,57 +451,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         <View style={styles.footerSpace} />
       </ScrollView>
 
-      <View style={styles.fabWrap}>
-        <TouchableOpacity style={styles.fabButton} activeOpacity={0.9}>
-          <MaterialIcons name="smart-toy" size={22} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.tabItem}
-          activeOpacity={0.85}
-          onPress={() => goToPlaceholder('HomeScreen', 'Home')}
-        >
-          <MaterialIcons name="home" size={20} color="#123A5F" />
-          <Text style={styles.tabLabelActive}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.tabItem}
-          activeOpacity={0.85}
-          onPress={() => goToPlaceholder('QuizzesScreen', 'Quizzes')}
-        >
-          <MaterialIcons name="quiz" size={18} color="#64748B" />
-          <Text style={styles.tabLabel}>Quizzes</Text>
-        </TouchableOpacity>
-        <View style={styles.captureTab}>
-          <TouchableOpacity
-            style={styles.captureButton}
-            activeOpacity={0.85}
-            onPress={() => goToPlaceholder('CaptureScreen', 'Capture')}
-          >
-            <MaterialIcons name="photo-camera" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={styles.captureLabel}>Capture</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.tabItem}
-          activeOpacity={0.85}
-          onPress={() => goToPlaceholder('ChatScreen', 'Chat')}
-        >
-          <MaterialIcons name="chat-bubble-outline" size={18} color="#64748B" />
-          <Text style={styles.tabLabel}>Chat</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.tabItem}
-          activeOpacity={0.85}
-          onPress={() => goToPlaceholder('ProfileScreen', 'Profile')}
-        >
-          <MaterialIcons name="person-outline" size={18} color="#64748B" />
-          <Text style={styles.tabLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
-
       <Modal
         visible={isNotificationsVisible}
         transparent
@@ -579,61 +519,10 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  topBar: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E6E1D8',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    zIndex: 20,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  logo: {
-    width: 32,
-    height: 32,
-  },
-  brandText: {
-    color: '#123A5F',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  notificationIconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F3F1EB',
-    position: 'relative',
-  },
-  notificationCountDot: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 4,
-    backgroundColor: '#B91C1C',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notificationCountText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
   scrollContent: {
     paddingHorizontal: 18,
     paddingTop: 14,
-    paddingBottom: 150,
+    paddingBottom: 28,
     gap: 14,
   },
   greetingRow: {
@@ -906,80 +795,6 @@ const styles = StyleSheet.create({
   },
   footerSpace: {
     height: 10,
-  },
-  fabWrap: {
-    position: 'absolute',
-    right: 16,
-    bottom: 94,
-    zIndex: 40,
-  },
-  fabButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#123A5F',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#123A5F',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
-  bottomBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E6E1D8',
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'flex-end',
-    paddingTop: 8,
-    paddingBottom: 26,
-    paddingHorizontal: 6,
-  },
-  tabItem: {
-    alignItems: 'center',
-    gap: 2,
-  },
-  tabLabelActive: {
-    color: '#123A5F',
-    fontSize: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontWeight: '700',
-  },
-  tabLabel: {
-    color: '#64748B',
-    fontSize: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontWeight: '700',
-  },
-  captureTab: {
-    alignItems: 'center',
-    marginTop: -20,
-  },
-  captureButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    borderWidth: 4,
-    borderColor: '#FFFFFF',
-    backgroundColor: '#123A5F',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  captureLabel: {
-    marginTop: 4,
-    color: '#64748B',
-    fontSize: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontWeight: '700',
   },
   modalBackdrop: {
     flex: 1,
