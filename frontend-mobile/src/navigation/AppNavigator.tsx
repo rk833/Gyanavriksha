@@ -12,8 +12,12 @@ import { useAppTheme } from '../context/ThemeContext';
 import LoginScreen from '../screens/auth/LoginScreen';
 import TwoFactorScreen from '../screens/auth/TwoFactorScreen';
 import QRLoginScreen from '../screens/auth/QRLoginScreen';
+import AssignmentPickerScreen from '../screens/student/AssignmentPickerScreen';
+import CameraScreen from '../screens/student/CameraScreen';
 import DashboardScreen from '../screens/student/DashboardScreen';
 import ProfileStack from '../screens/student/ProfileScreen';
+import SubmissionDetailsScreen from '../screens/student/SubmissionDetailsScreen';
+import UploadScreen from '../screens/student/UploadScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
@@ -86,6 +90,11 @@ function PlaceholderScreen({ title }: { title: string }) {
 
 function GlobalBottomTabBar({ state, navigation }: BottomTabBarProps) {
   const { theme } = useAppTheme();
+
+  const focusedRouteName = state.routes[state.index]?.name;
+  if (focusedRouteName === 'CameraScreen' || focusedRouteName === 'UploadScreen' || focusedRouteName === 'SubmissionDetailsScreen') {
+    return null;
+  }
 
   const tabItems = [
     { key: 'Home', icon: 'home', label: 'Home', capture: false },
@@ -260,7 +269,7 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
     <Tab.Navigator
         tabBar={(props) => <GlobalBottomTabBar {...props} />}
         screenOptions={({ route, navigation }) => ({
-          headerShown: route.name !== 'Profile',
+          headerShown: route.name !== 'Profile' && route.name !== 'CameraScreen' && route.name !== 'UploadScreen' && route.name !== 'SubmissionDetailsScreen',
           headerStyle: {
             backgroundColor: theme.colors.surface,
             borderBottomWidth: 1,
@@ -324,7 +333,7 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
           {(props) => <DashboardScreen {...props} />}
         </Tab.Screen>
         <Tab.Screen name="Submit" options={{ title: 'Submit' }}>
-          {() => <PlaceholderScreen title="CameraScreen" />}
+          {(props) => <AssignmentPickerScreen {...props} />}
         </Tab.Screen>
         <Tab.Screen name="Chat" options={{ title: 'Chat' }}>
           {() => <PlaceholderScreen title="ChatbotScreen" />}
@@ -334,6 +343,24 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
         </Tab.Screen>
         <Tab.Screen name="Profile" options={{ title: 'Profile' }}>
           {() => <ProfileStack onLogout={onLogout} onOpenHomeNotifications={openNotifications} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="CameraScreen"
+          options={{ title: 'CameraScreen' }}
+        >
+          {(props) => <CameraScreen {...props} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="SubmissionDetailsScreen"
+          options={{ title: 'SubmissionDetailsScreen' }}
+        >
+          {(props) => <SubmissionDetailsScreen {...props} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="UploadScreen"
+          options={{ title: 'UploadScreen' }}
+        >
+          {(props) => <UploadScreen {...props} />}
         </Tab.Screen>
       </Tab.Navigator>
 
