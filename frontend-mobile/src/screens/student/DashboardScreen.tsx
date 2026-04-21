@@ -2,8 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
-  Modal,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -56,11 +54,6 @@ type DashboardScreenProps = {
   navigation?: {
     navigate: (screenName: string, params?: Record<string, unknown>) => void;
     getState?: () => { routeNames?: string[] };
-  };
-  route?: {
-    params?: {
-      openNotificationsAt?: number;
-    };
   };
 };
 
@@ -149,16 +142,12 @@ function SkeletonBlock({
   return <Animated.View style={[styles.skeleton, { width, height, borderRadius: radius, opacity: pulse }]} />;
 }
 
-export default function DashboardScreen({ navigation, route }: DashboardScreenProps) {
+export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const { get } = useApi();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isNotificationsVisible, setIsNotificationsVisible] = useState(false);
-  const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
-  const [notificationsError, setNotificationsError] = useState<string | null>(null);
-  const [unreadNotifications, setUnreadNotifications] = useState<NotificationItem[]>([]);
   const [deskVitals, setDeskVitals] = useState<DeskVitals>({ lightLux: 450, postureStatus: 'Optimal' });
 
   const loadDashboard = useCallback(async () => {
@@ -209,38 +198,6 @@ export default function DashboardScreen({ navigation, route }: DashboardScreenPr
     }
   }, [loadDashboard, loadDeskVitals]);
 
-  const loadUnreadNotifications = useCallback(async () => {
-    setNotificationsError(null);
-    setIsNotificationsLoading(true);
-
-    try {
-      const response = await get<PaginatedNotificationsResponse>(
-        '/api/students/notifications?read=false&page=1&per_page=20'
-      );
-      setUnreadNotifications(response.items ?? []);
-    } catch (error) {
-      let message = 'Unable to load unread notifications right now.';
-
-      if (axios.isAxiosError(error)) {
-        const detail = error.response?.data?.detail;
-        if (typeof detail === 'string' && detail.trim().length > 0) {
-          message = detail;
-        }
-      } else if (error instanceof Error && error.message.trim().length > 0) {
-        message = error.message;
-      }
-
-      setNotificationsError(message);
-    } finally {
-      setIsNotificationsLoading(false);
-    }
-  }, [get]);
-
-  const openNotifications = useCallback(async () => {
-    setIsNotificationsVisible(true);
-    await loadUnreadNotifications();
-  }, [loadUnreadNotifications]);
-
   const goToPlaceholder = useCallback(
     (screenName: string, label: string) => {
       if (!navigation) {
@@ -275,14 +232,6 @@ export default function DashboardScreen({ navigation, route }: DashboardScreenPr
       active = false;
     };
   }, [loadDashboard, loadDeskVitals]);
-
-  useEffect(() => {
-    if (!route?.params?.openNotificationsAt) {
-      return;
-    }
-
-    void openNotifications();
-  }, [openNotifications, route?.params?.openNotificationsAt]);
 
   const recentSubmissions = useMemo(
     () => dashboard?.recent_submissions.slice(0, MAX_RECENT_SUBMISSIONS) ?? [],
@@ -451,62 +400,6 @@ export default function DashboardScreen({ navigation, route }: DashboardScreenPr
         <View style={styles.footerSpace} />
       </ScrollView>
 
-      <Modal
-        visible={isNotificationsVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setIsNotificationsVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.modalDismissArea} onPress={() => setIsNotificationsVisible(false)} />
-
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Unread Notifications</Text>
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={() => setIsNotificationsVisible(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.modalCloseText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-
-            {isNotificationsLoading ? (
-              <View style={styles.skeletonList}>
-                <SkeletonBlock width="100%" height={78} radius={14} />
-                <SkeletonBlock width="100%" height={78} radius={14} />
-                <SkeletonBlock width="100%" height={78} radius={14} />
-              </View>
-            ) : notificationsError ? (
-              <View style={styles.notificationsErrorCard}>
-                <Text style={styles.notificationsErrorText}>{notificationsError}</Text>
-                <TouchableOpacity
-                  style={styles.notificationsRetryButton}
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    void loadUnreadNotifications();
-                  }}
-                >
-                  <Text style={styles.notificationsRetryButtonText}>Retry</Text>
-                </TouchableOpacity>
-              </View>
-            ) : unreadNotifications.length > 0 ? (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.notificationsList}>
-                {unreadNotifications.map((notification) => (
-                  <View key={notification.notification_id} style={styles.notificationItem}>
-                    <Text style={styles.notificationTitle}>{notification.title}</Text>
-                    <Text style={styles.notificationBody}>{notification.body}</Text>
-                    <Text style={styles.notificationDate}>{formatDateLabel(notification.created_at)}</Text>
-                  </View>
-                ))}
-              </ScrollView>
-            ) : (
-              <Text style={styles.emptyState}>No unread notifications.</Text>
-            )}
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
