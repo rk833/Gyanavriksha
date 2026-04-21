@@ -71,6 +71,7 @@ export default function TwoFactorScreen({ navigation, route }: TwoFactorScreenPr
         code,
       });
 
+      await SecureStore.setItemAsync('access_token', response.data.access_token);
       await SecureStore.setItemAsync('auth_token', response.data.access_token);
       await SecureStore.setItemAsync('refresh_token', response.data.refresh_token);
 
