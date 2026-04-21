@@ -82,6 +82,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenP
 
       const refreshToken = response.data?.refresh_token;
 
+      await SecureStore.setItemAsync('access_token', token);
       await SecureStore.setItemAsync('auth_token', token);
       if (typeof refreshToken === 'string' && refreshToken.length > 0) {
         await SecureStore.setItemAsync('refresh_token', refreshToken);

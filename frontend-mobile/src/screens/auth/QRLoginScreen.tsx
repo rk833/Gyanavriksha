@@ -89,6 +89,7 @@ export default function QRLoginScreen({ navigation }: QRLoginScreenProps) {
           throw new Error('Access token missing from QR authentication response.');
         }
 
+        await SecureStore.setItemAsync('access_token', accessToken);
         await SecureStore.setItemAsync('auth_token', accessToken);
         if (typeof refreshToken === 'string' && refreshToken.length > 0) {
           await SecureStore.setItemAsync('refresh_token', refreshToken);
