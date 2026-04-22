@@ -39,6 +39,12 @@ import InstructorNotifications from './pages/instructor/Notifications';
 import InstructorProfile from './pages/instructor/Profile';
 import InstructorStudentReview from './pages/instructor/StudentReview';
 
+// Admin Pages
+import AdminLayout from './layouts/AdminLayout';
+import AdminDashboard from './pages/admin/Dashboard';
+import AdminUserManagement from './pages/admin/UserManagement';
+import AdminAuditLogs from './pages/admin/AuditLogs';
+
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
 
@@ -107,8 +113,20 @@ function App() {
             <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
 
-          {/* Admin Routes — coming in Sprint 5 */}
-          {/* <Route path="/admin" element={...}> */}
+          {/* Admin Routes */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<AdminDashboard />} />
+            <Route path="users" element={<AdminUserManagement />} />
+            <Route path="audit-logs" element={<AdminAuditLogs />} />
+          </Route>
         </Routes>
       </AuthProvider>
     </Router>
