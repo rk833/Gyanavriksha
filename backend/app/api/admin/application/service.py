@@ -6,7 +6,7 @@ and keeps the presentation layer free of business logic.
 """
 import uuid
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.models.user import User
@@ -21,6 +21,8 @@ from app.schemas.admin import (
     AuditLogListResponse,
     AuditLogResponse,
     BulkEnrollmentResponse,
+    BulkImportResponse,
+    BulkImportRow,
     CurriculumDocDetailResponse,
     CurriculumDocListResponse,
     EnrollmentListResponse,
@@ -86,14 +88,18 @@ def _raise_if_self(actor_id: uuid.UUID, target_id: uuid.UUID) -> None:
         )
 
 
-def _user_to_schema(user: User) -> AdminUserResponse:
+def _user_to_schema(user: User, db: Session) -> AdminUserResponse:
     """Convert a User ORM object to an AdminUserResponse schema."""
+    grade_name = None
+    if user.grade_id is not None:
+        grade = admin_service.get_grade_by_id(db, user.grade_id)
+        grade_name = grade.grade_name if grade else None
     return AdminUserResponse(
         user_id=user.user_id,
         email=user.email,
         full_name=user.full_name,
         role=user.role,
-        grade_name=None,
+        grade_name=grade_name,
         is_active=user.is_active,
         is_email_verified=user.is_email_verified,
         totp_enabled=user.totp_enabled,
@@ -120,14 +126,15 @@ def list_users(
     """Return a paginated, filtered user list with platform summary stats."""
     users, total = admin_service.list_users(db, role, is_active, search, grade_id, page, per_page)
     two_fa = admin_service.get_two_fa_compliance(db)
+    pending_count = admin_service.count_pending_enrollments(db)
     return AdminUserListResponse(
-        users=[_user_to_schema(u) for u in users],
+        users=[_user_to_schema(u, db) for u in users],
         total_count=total,
         page=page,
         per_page=per_page,
         role_distribution=_build_role_distribution(db),
-        security_health_pct=two_fa["compliance_pct"],
-        pending_approvals_count=0,
+        security_health_pct=two_fa["compliance_percentage"],
+        pending_approvals_count=pending_count,
     )
 
 
@@ -135,7 +142,7 @@ def get_user(db: Session, user_id: uuid.UUID) -> AdminUserResponse:
     """Return full detail for a single user, raising 404 when absent."""
     user = admin_service.get_user_by_id(db, user_id)
     _raise_if_not_found(user, "User not found")
-    return _user_to_schema(user)
+    return _user_to_schema(user, db)
 
 
 def create_user(
@@ -147,8 +154,9 @@ def create_user(
     actor_id: uuid.UUID,
     ip_address: str | None,
     grade_id: int | None = None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> AdminUserCreateResponse:
-    """Create a new user, emit a welcome email, and write an audit entry."""
+    """Create a new user, queue a welcome email in the background, and write an audit entry."""
     if role == UserRole.STUDENT and grade_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="grade_id is required when creating a student")
     if admin_service.email_exists(db, email):
@@ -158,8 +166,49 @@ def create_user(
         db, actor_id, "USER_CREATED", f"Created user {email} (role: {role.value})", "user", str(user.user_id), ip_address,
     )
     db.commit()
-    send_welcome_email(email, full_name, password)
-    return AdminUserCreateResponse(**_user_to_schema(user).model_dump(), generated_password=password)
+    if background_tasks:
+        background_tasks.add_task(send_welcome_email, email, full_name, password)
+    else:
+        send_welcome_email(email, full_name, password)
+    return AdminUserCreateResponse(**_user_to_schema(user, db).model_dump(), generated_password=password)
+
+
+def bulk_import_users(
+    db: Session,
+    rows: list[dict],
+    role: UserRole,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+    background_tasks: BackgroundTasks | None = None,
+) -> BulkImportResponse:
+    """Parse pre-validated CSV rows, create users, queue welcome emails in background, and audit."""
+    raw_results = admin_service.bulk_import_users(db, rows, role)
+    db.commit()
+    for r in raw_results:
+        if r["status"] == "created":
+            if background_tasks:
+                background_tasks.add_task(send_welcome_email, r["email"], r["full_name"], r["generated_password"])
+            else:
+                send_welcome_email(r["email"], r["full_name"], r["generated_password"])
+    admin_service.log_audit_event(
+        db,
+        actor_id,
+        "BULK_IMPORT",
+        f"Bulk import: {sum(1 for r in raw_results if r['status'] == 'created')} created, "
+        f"{sum(1 for r in raw_results if r['status'] == 'skipped')} skipped, "
+        f"{sum(1 for r in raw_results if r['status'] == 'failed')} failed",
+        "user",
+        None,
+        ip_address,
+    )
+    db.commit()
+    return BulkImportResponse(
+        total_rows=len(raw_results),
+        created=sum(1 for r in raw_results if r["status"] == "created"),
+        skipped=sum(1 for r in raw_results if r["status"] == "skipped"),
+        failed=sum(1 for r in raw_results if r["status"] == "failed"),
+        results=[BulkImportRow(**r) for r in raw_results],
+    )
 
 
 def update_user(
@@ -170,16 +219,17 @@ def update_user(
     profile_image_url: str | None,
     actor_id: uuid.UUID,
     ip_address: str | None,
+    grade_id: int | None = None,
 ) -> AdminUserResponse:
     """Apply partial field updates to a user and write an audit entry."""
     user = admin_service.get_user_by_id(db, user_id)
     _raise_if_not_found(user, "User not found")
-    user = admin_service.update_user_fields(db, user, full_name, is_active, profile_image_url)
+    user = admin_service.update_user_fields(db, user, full_name, is_active, profile_image_url, grade_id)
     admin_service.log_audit_event(
         db, actor_id, "USER_UPDATED", f"Updated user {user.email}", "user", str(user_id), ip_address,
     )
     db.commit()
-    return _user_to_schema(user)
+    return _user_to_schema(user, db)
 
 
 def suspend_user(
@@ -199,7 +249,7 @@ def suspend_user(
         db, actor_id, "ACCOUNT_SUSPENDED", f"Suspended {user.email}", "user", str(user_id), ip_address,
     )
     db.commit()
-    return _user_to_schema(user)
+    return _user_to_schema(user, db)
 
 
 def reactivate_user(
@@ -216,7 +266,7 @@ def reactivate_user(
         db, actor_id, "ACCOUNT_REACTIVATED", f"Reactivated {user.email}", "user", str(user_id), ip_address,
     )
     db.commit()
-    return _user_to_schema(user)
+    return _user_to_schema(user, db)
 
 
 def delete_user(
@@ -265,8 +315,9 @@ def force_reset_password(
     user_id: uuid.UUID,
     actor_id: uuid.UUID,
     ip_address: str | None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> dict:
-    """Generate and set a new password, then email it to the user."""
+    """Generate and set a new password, then queue the email in the background."""
     user = admin_service.get_user_by_id(db, user_id)
     _raise_if_not_found(user, "User not found")
     new_password = admin_service.reset_password(db, user)
@@ -274,7 +325,10 @@ def force_reset_password(
         db, actor_id, "PASSWORD_RESET", f"Force reset password for {user.email}", "user", str(user_id), ip_address,
     )
     db.commit()
-    send_welcome_email(user.email, user.full_name, new_password)
+    if background_tasks:
+        background_tasks.add_task(send_welcome_email, user.email, user.full_name, new_password)
+    else:
+        send_welcome_email(user.email, user.full_name, new_password)
     return {"message": "Password reset and emailed to user"}
 
 
@@ -296,7 +350,7 @@ def change_role(
         db, actor_id, "ROLE_CHANGE", f"Changed {user.email} role to {new_role.value}", "user", str(user_id), ip_address,
     )
     db.commit()
-    return _user_to_schema(user)
+    return _user_to_schema(user, db)
 
 
 def list_grades(db: Session) -> list[GradeResponse]:

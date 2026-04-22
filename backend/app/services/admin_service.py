@@ -89,11 +89,11 @@ def get_two_fa_compliance(db: Session) -> dict:
         .scalar()
         or 0
     )
-    compliance_pct = round((protected / total) * 100, 1) if total > 0 else 0.0
+    compliance_percentage = round((protected / total) * 100, 1) if total > 0 else 0.0
     return {
-        "protected_users": protected,
+        "two_fa_enabled_count": protected,
         "total_users": total,
-        "compliance_pct": compliance_pct,
+        "compliance_percentage": compliance_percentage,
     }
 
 
@@ -139,11 +139,7 @@ def _apply_user_filters(
             )
         )
     if grade_id is not None:
-        query = (
-            query.join(StudentEnrollment, StudentEnrollment.student_id == User.user_id)
-            .filter(StudentEnrollment.grade_id == grade_id)
-            .distinct()
-        )
+        query = query.filter(User.grade_id == grade_id)
     return query
 
 
@@ -199,12 +195,61 @@ def create_user(
     return user, password
 
 
+def _resolve_grade_id(db: Session, grade_name: str | None) -> tuple[int | None, str | None]:
+    """Return (grade_id, error_reason) by looking up a grade by name (case-insensitive)."""
+    if not grade_name or not grade_name.strip():
+        return None, None
+    grade = db.query(Grade).filter(Grade.grade_name.ilike(grade_name.strip())).first()
+    if not grade:
+        return None, f"grade '{grade_name.strip()}' not found"
+    return grade.grade_id, None
+
+
+def bulk_import_users(
+    db: Session,
+    rows: list[dict],
+    role: UserRole,
+) -> list[dict]:
+    """Create multiple users from pre-parsed CSV rows.
+
+    Each item in *rows* must have 'email' and 'full_name' keys.
+    Optional 'grade' column is resolved to a grade_id by name (case-insensitive).
+    Returns a list of per-row outcome dicts with keys:
+    row, email, full_name, status ('created'|'skipped'|'failed'), reason, generated_password.
+    """
+    results = []
+    for idx, row in enumerate(rows, start=2):
+        email = (row.get("email") or "").strip().lower()
+        full_name = (row.get("full_name") or "").strip()
+        raw_grade = row.get("grade") or ""
+        if not email or not full_name:
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "failed", "reason": "email and full_name are required"})
+            continue
+        if email_exists(db, email):
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "skipped", "reason": "email already registered"})
+            continue
+        grade_id, grade_error = _resolve_grade_id(db, raw_grade)
+        if grade_error:
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "failed", "reason": grade_error})
+            continue
+        try:
+            user, password = create_user(db, email, full_name, role)
+            if grade_id is not None:
+                user.grade_id = grade_id
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "created", "generated_password": password})
+        except Exception as exc:
+            db.rollback()
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "failed", "reason": str(exc)})
+    return results
+
+
 def update_user_fields(
     db: Session,
     user: User,
     full_name: str | None,
     is_active: bool | None,
     profile_image_url: str | None,
+    grade_id: int | None = None,
 ) -> User:
     """Apply partial field updates to a user record."""
     if full_name is not None:
@@ -213,6 +258,8 @@ def update_user_fields(
         user.is_active = is_active
     if profile_image_url is not None:
         user.profile_image_url = profile_image_url
+    if grade_id is not None:
+        user.grade_id = grade_id
     db.flush()
     return user
 
@@ -407,6 +454,16 @@ def get_enrollment_detail(db: Session, enrollment_id: uuid.UUID) -> dict | None:
     }
 
 
+def count_pending_enrollments(db: Session) -> int:
+    """Return the number of enrollments awaiting approval."""
+    return (
+        db.query(func.count(StudentEnrollment.enrollment_id))
+        .filter(StudentEnrollment.is_active == False)
+        .scalar()
+        or 0
+    )
+
+
 def approve_enrollment(db: Session, enrollment: StudentEnrollment) -> StudentEnrollment:
     """Activate an enrollment to mark it as approved."""
     enrollment.is_active = True
@@ -517,6 +574,7 @@ def delete_grade_safe(db: Session, grade_id: int) -> str | None:
 
 def _subject_detail(db: Session, subject: Subject) -> dict:
     """Build a subject detail dict with instructor name and counts."""
+    instructor_id = None
     instructor_name = None
     assignment = (
         db.query(InstructorSubject)
@@ -524,6 +582,7 @@ def _subject_detail(db: Session, subject: Subject) -> dict:
         .first()
     )
     if assignment:
+        instructor_id = assignment.instructor_id
         user = db.query(User).filter(User.user_id == assignment.instructor_id).first()
         instructor_name = user.full_name if user else None
 
@@ -547,6 +606,7 @@ def _subject_detail(db: Session, subject: Subject) -> dict:
         "description": subject.description,
         "grade_id": subject.grade_id,
         "grade_name": grade.grade_name if grade else None,
+        "instructor_id": instructor_id,
         "instructor_name": instructor_name,
         "student_count": student_count,
         "assignment_count": assignment_count,
@@ -1093,11 +1153,27 @@ def get_vector_store_stats(db: Session) -> dict:
         .scalar()
         or 0
     )
+    namespace_count = (
+        db.query(func.count(Subject.subject_id))
+        .filter(Subject.chroma_namespace.isnot(None))
+        .scalar()
+        or 0
+    )
+    last_indexed = (
+        db.query(func.max(CurriculumDocument.embedded_at))
+        .filter(CurriculumDocument.embedding_status == EmbeddingStatus.DONE)
+        .scalar()
+    )
+    success_rate = round(done / total, 4) if total > 0 else 0.0
     return {
         "total_documents": total,
         "total_done": done,
         "total_pending": pending,
         "total_failed": failed,
+        "total_namespaces": namespace_count,
+        "total_chunks": done,
+        "embedding_success_rate": success_rate,
+        "last_indexed_at": last_indexed,
         "ai_service_status": "stub",
     }
 
@@ -1532,10 +1608,24 @@ def _set_setting(db: Session, key: str, value: object) -> None:
 
 def _compute_security_score(two_fa: dict, last_audit: dict | None) -> int:
     """Derive overall security score (0-100) from 2FA coverage and integrity audit."""
-    score = int(two_fa["compliance_pct"] * 0.4)
+    score = int(two_fa["compliance_percentage"] * 0.4)
     score += 30 if (last_audit and last_audit.get("hash_check_status") == "Valid & Synchronized") else 15
     score += 30
     return min(100, score)
+
+
+def _build_rbac_status(db: Session) -> list[dict]:
+    """Return active user roles with counts derived from the users table."""
+    role_counts = (
+        db.query(User.role, func.count(User.user_id))
+        .filter(User.is_active == True)
+        .group_by(User.role)
+        .all()
+    )
+    return [
+        {"role": role.value.title(), "active": True, "user_count": count}
+        for role, count in role_counts
+    ]
 
 
 def get_security_overview(db: Session) -> dict:
@@ -1543,16 +1633,10 @@ def get_security_overview(db: Session) -> dict:
     two_fa = get_two_fa_compliance(db)
     iot_key_count = db.query(IotDevice).filter(IotDevice.status != "decommissioned").count()
     last_audit = _get_setting(db, "last_integrity_audit")
+    threshold = int(_get_setting(db, "rate_limit_threshold") or 2500)
     return {
-        "jwt_rbac_status": [
-            {"role": "Super Admin", "active": True},
-            {"role": "IoT Controller", "active": True},
-            {"role": "Database Auditor", "active": True},
-            {"role": "Vector Analyst", "active": True},
-            {"role": "User Manager", "active": True},
-            {"role": "Guest Viewer", "active": False},
-        ],
-        "api_rate_limit": {"threshold_per_min": 2500, "current_usage_pct": 34},
+        "jwt_rbac_status": _build_rbac_status(db),
+        "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": None},
         "device_auth": {"active_api_keys_count": iot_key_count},
         "two_fa_compliance": two_fa,
         "overall_security_score": _compute_security_score(two_fa, last_audit),
@@ -1627,17 +1711,17 @@ def get_full_dashboard(db: Session) -> dict:
     two_fa = get_two_fa_compliance(db)
     last_audit = _get_setting(db, "last_integrity_audit")
     doc_count = db.query(CurriculumDocument).count()
+    vector_stats = get_vector_store_stats(db)
     return {
         "iot_nodes_active": iot_online,
-        "chromadb_accuracy_pct": 99.2,
-        "two_fa_compliance_pct": two_fa["compliance_pct"],
+        "chromadb_accuracy_pct": round(vector_stats["embedding_success_rate"] * 100, 1),
+        "two_fa_compliance_pct": two_fa["compliance_percentage"],
         "iot_registry_preview": _build_iot_preview(db),
         "integrity_status": "Integrity Optimal" if last_audit else "No Audit Run",
         "integrity_verified_count": doc_count,
         "quick_user_access": _build_quick_user_access(db),
         "system_health": {
             "node_uptime_pct": health["health_check_pct"],
-            "memory_load_pct": 64,
             "live_monitoring_active": True,
         },
     }
@@ -1648,14 +1732,20 @@ def get_admin_settings(db: Session) -> dict:
     def _get(key: str, default: object) -> object:
         return _get_setting(db, key) or default
 
+    raw_notif = _get_setting(db, "notification_prefs")
+    raw_appearance = _get_setting(db, "appearance_prefs")
+
     return {
         "ocr_engine": _get("ocr_engine", "tesseract_5_optimized"),
         "rag_chunk_size": int(_get("rag_chunk_size", 512)),
         "google_vision_key_hint": "••••1234" if _get_setting(db, "google_vision_api_key") else None,
-        "gemini_key_hint": None,
+        "gemini_key_hint": "••••5678" if _get_setting(db, "gemini_api_key") else None,
         "mqtt_broker_host": _get_setting(db, "mqtt_broker_host"),
         "maintenance_mode": _get_setting(db, "maintenance_mode") in (True, "true"),
-        "backup_last_success": None,
+        "backup_last_success": _get_setting(db, "backup_last_success"),
+        "notification_prefs": raw_notif if isinstance(raw_notif, dict) else None,
+        "appearance_prefs": raw_appearance if isinstance(raw_appearance, dict) else None,
+        "webhook_url": _get_setting(db, "webhook_url"),
     }
 
 

@@ -76,9 +76,8 @@ def send_welcome_email(to_email: str, full_name: str, password: str) -> None:
 
 
 def _send_email(to_email: str, subject: str, html_body: str) -> None:
-    # Dev mode: log instead of sending
-    if not settings.SMTP_USER or settings.ENVIRONMENT == "development":
-        logger.info(f"[DEV] Email to {to_email} | Subject: {subject}")
+    if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
+        logger.info(f"[EMAIL SKIPPED — no SMTP credentials] To: {to_email} | Subject: {subject}")
         return
 
     try:
@@ -93,6 +92,6 @@ def _send_email(to_email: str, subject: str, html_body: str) -> None:
             server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.sendmail(settings.SMTP_FROM_EMAIL, to_email, msg.as_string())
 
-        logger.info(f"Email sent to {to_email}")
+        logger.info(f"[EMAIL SENT] To: {to_email} | Subject: {subject}")
     except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}")
+        logger.error(f"[EMAIL FAILED] To: {to_email} | Error: {e}")

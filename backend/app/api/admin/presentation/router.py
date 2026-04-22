@@ -10,7 +10,7 @@ import csv
 import io
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from app.schemas.admin import (
     AdminUserUpdateRequest,
     AssignInstructorRequest,
     BulkEnrollmentResponse,
+    BulkImportResponse,
     BulkUserIdsRequest,
     CurriculumDocDetailResponse,
     CurriculumDocListResponse,
@@ -120,6 +121,7 @@ def approve_enrollment(
 @router.post("/users", response_model=AdminUserCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_user(
     body: AdminUserCreateRequest,
+    background_tasks: BackgroundTasks,
     request: Request,
     current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db),
@@ -134,7 +136,32 @@ def create_user(
         actor_id=current_user.user_id,
         ip_address=_ip(request),
         grade_id=body.grade_id,
+        background_tasks=background_tasks,
     )
+
+
+@router.post("/users/bulk-import", response_model=BulkImportResponse)
+def bulk_import_users(
+    role: UserRole,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    request: Request = None,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Accept a CSV file (columns: full_name, email) and create users in bulk."""
+    raw = file.file.read().decode("utf-8", errors="replace")
+    reader = csv.DictReader(io.StringIO(raw))
+    missing = {c for c in ("full_name", "email") if c not in (reader.fieldnames or [])}
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"CSV missing required columns: {', '.join(sorted(missing))}",
+        )
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV file has no data rows")
+    return service.bulk_import_users(db, rows, role, current_user.user_id, _ip(request), background_tasks)
 
 
 @router.post("/users/bulk-suspend")
@@ -182,6 +209,7 @@ def update_user(
         full_name=body.full_name,
         is_active=body.is_active,
         profile_image_url=body.profile_image_url,
+        grade_id=body.grade_id,
         actor_id=current_user.user_id,
         ip_address=_ip(request),
     )
@@ -223,12 +251,13 @@ def delete_user(
 @router.post("/users/{user_id}/reset-password")
 def reset_password(
     user_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     request: Request,
     current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db),
 ):
     """Force-reset a user's password and email the new credentials."""
-    return service.force_reset_password(db, user_id, current_user.user_id, _ip(request))
+    return service.force_reset_password(db, user_id, current_user.user_id, _ip(request), background_tasks)
 
 
 @router.patch("/users/{user_id}/role", response_model=AdminUserResponse)

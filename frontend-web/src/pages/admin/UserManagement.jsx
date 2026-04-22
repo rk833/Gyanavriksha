@@ -1,30 +1,16 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
-  Users,
-  Plus,
-  Pencil,
-  KeyRound,
-  Trash2,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  ShieldCheck,
-  Loader2,
-  AlertCircle,
+  Users, Plus, Pencil, KeyRound, Trash2, X, ChevronLeft, ChevronRight,
+  Copy, ShieldCheck, Loader2, AlertCircle, UserCog, CheckCircle2, Clock,
+  RotateCcw, Upload, Download, FileText, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  getUsers,
-  createUser,
-  suspendUser,
-  deleteUser,
-  bulkSuspend,
-  bulkDelete,
-  resetPassword,
-  getGrades,
+  getUsers, createUser, updateUser, suspendUser, reactivateUser, deleteUser,
+  bulkSuspend, bulkDelete, resetPassword, changeUserRole,
+  getGrades, getPendingEnrollments, approveEnrollment, bulkImportUsers,
 } from '../../services/adminService';
 
 function RoleBadge({ role }) {
@@ -52,15 +38,13 @@ function StatusDot({ isActive }) {
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${isActive ? 'text-green-600' : 'text-amber-600'}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-amber-500'}`} />
-      {isActive ? 'Active' : 'Pending'}
+      {isActive ? 'Active' : 'Suspended'}
     </span>
   );
 }
 
 function TfaBadge({ enabled }) {
-  return (
-    <ShieldCheck className={`w-4 h-4 ${enabled ? 'text-green-500' : 'text-slate-300'}`} />
-  );
+  return <ShieldCheck className={`w-4 h-4 ${enabled ? 'text-green-500' : 'text-slate-300'}`} />;
 }
 
 function Pagination({ page, totalPages, onChange }) {
@@ -99,81 +83,22 @@ function Pagination({ page, totalPages, onChange }) {
   );
 }
 
-function PasswordDisplayModal({ password, onClose }) {
-  const copy = () => {
-    navigator.clipboard.writeText(password);
-    toast.success('Password copied!');
-  };
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
-        <h3 className="text-lg font-bold text-primary-dark mb-2">User Created Successfully</h3>
-        <p className="text-sm text-slate-500 mb-4">
-          Share this auto-generated password with the user — it will not be shown again.
-        </p>
-        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-4">
-          <code className="flex-1 text-sm font-mono text-primary-dark">{password}</code>
-          <button onClick={copy} className="text-slate-400 hover:text-primary transition">
-            <Copy className="w-4 h-4" />
-          </button>
-        </div>
-        <button
-          onClick={onClose}
-          className="w-full py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition"
-        >
-          Done
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ConfirmDialog({ title, message, confirmLabel, dangerous, onConfirm, onCancel, loading }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
-        <h3 className="text-lg font-bold text-primary-dark mb-2">{title}</h3>
-        <p className="text-sm text-slate-500 mb-6">{message}</p>
-        <div className="flex gap-3">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2 border border-slate-200 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-50 transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={loading}
-            className={`flex-1 py-2 text-white text-sm font-medium rounded-lg transition disabled:opacity-60 flex items-center justify-center gap-2 ${
-              dangerous ? 'bg-red-600 hover:bg-red-700' : 'bg-primary hover:bg-primary/90'
-            }`}
-          >
-            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function AddUserModal({ grades, onClose, onSuccess }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'student', grade_id: '', password: '' });
   const [autoPass, setAutoPass] = useState(true);
   const [saving, setSaving] = useState(false);
-
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const payload = { ...form, grade_id: form.grade_id ? Number(form.grade_id) : undefined };
+      const payload = { ...form, grade_id: form.grade_id ? parseInt(form.grade_id) : null };
       if (autoPass) delete payload.password;
       const res = await createUser(payload);
       onSuccess(res.data);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to create user');
+      toast.error(err?.response?.data?.detail ?? 'Failed to create user');
     } finally {
       setSaving(false);
     }
@@ -181,14 +106,11 @@ function AddUserModal({ grades, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-primary-dark">Add New User</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="w-5 h-5" />
-          </button>
+          <h2 className="text-lg font-bold text-primary-dark">Add New User</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Full Name</label>
@@ -283,11 +205,266 @@ function AddUserModal({ grades, onClose, onSuccess }) {
   );
 }
 
-function BottomStats({ users, data }) {
+function EditUserModal({ user, grades = [], onClose, onSuccess }) {
+  const [fullName, setFullName] = useState(user.full_name);
+  const [gradeId, setGradeId] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const isStudent = user.role === 'student';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const payload = { full_name: fullName };
+      if (isStudent && gradeId) payload.grade_id = parseInt(gradeId);
+      await updateUser(user.user_id, payload);
+      toast.success('User updated');
+      onSuccess();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail ?? 'Failed to update user');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-primary-dark">Edit User</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-xs text-slate-500 mb-4">{user.email}</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Full Name</label>
+            <input
+              required
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          {isStudent && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Grade <span className="font-normal text-slate-400">(current: {user.grade_name || 'none'})</span>
+              </label>
+              <select
+                value={gradeId}
+                onChange={(e) => setGradeId(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">— no grade —</option>
+                {grades.map((g) => (
+                  <option key={g.grade_id} value={g.grade_id}>{g.grade_name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 py-2 border border-slate-200 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving} className="flex-1 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition disabled:opacity-60 flex items-center justify-center gap-2">
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Save
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ChangeRoleModal({ user, onClose, onSuccess }) {
+  const [role, setRole] = useState(user.role);
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await changeUserRole(user.user_id, { role });
+      toast.success('Role updated');
+      onSuccess();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail ?? 'Failed to change role');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-primary-dark">Change Role</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-sm text-slate-600 mb-4">
+          User: <span className="font-semibold text-primary-dark">{user.full_name}</span>
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">New Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="student">Student</option>
+              <option value="instructor">Instructor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 py-2 border border-slate-200 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving || role === user.role} className="flex-1 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition disabled:opacity-60 flex items-center justify-center gap-2">
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Update Role
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PasswordDisplayModal({ password, onClose }) {
+  const copy = () => { navigator.clipboard.writeText(password); toast.success('Copied!'); };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+        <h2 className="text-lg font-bold text-primary-dark mb-2">User Created</h2>
+        <p className="text-sm text-slate-500 mb-4">This is the one-time generated password. Share it securely.</p>
+        <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2 font-mono text-sm mb-4">
+          <span className="flex-1">{password}</span>
+          <button onClick={copy} className="text-slate-500 hover:text-primary"><Copy className="w-4 h-4" /></button>
+        </div>
+        <button onClick={onClose} className="w-full bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-primary transition-colors">
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel, dangerous, onConfirm, onCancel, loading }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+        <div className="flex items-start gap-3 mb-4">
+          <AlertCircle className={`w-5 h-5 shrink-0 mt-0.5 ${dangerous ? 'text-red-500' : 'text-amber-500'}`} />
+          <div>
+            <h2 className="font-bold text-primary-dark">{title}</h2>
+            <p className="text-sm text-slate-500 mt-1">{message}</p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className={`flex-1 rounded-lg py-2 text-sm font-semibold text-white flex items-center justify-center gap-2 ${dangerous ? 'bg-red-600 hover:bg-red-700' : 'bg-primary hover:bg-primary/90'} disabled:opacity-60`}
+          >
+            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingEnrollmentsPanel() {
+  const queryClient = useQueryClient();
+
+  const { data: pending = [], isLoading } = useQuery({
+    queryKey: ['admin', 'pending-enrollments'],
+    queryFn: async () => (await getPendingEnrollments()).data ?? [],
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (id) => approveEnrollment(id),
+    onSuccess: () => {
+      toast.success('Enrollment approved');
+      queryClient.invalidateQueries({ queryKey: ['admin', 'pending-enrollments'] });
+    },
+    onError: () => toast.error('Failed to approve enrollment'),
+  });
+
+  return (
+    <div className="bg-white rounded-xl border border-primary-light shadow-sm overflow-hidden mt-6">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-primary-light">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-amber-500" />
+          <span className="font-semibold text-primary-dark text-sm">Pending Enrollment Approvals</span>
+          {pending.length > 0 && (
+            <span className="ml-1 bg-amber-100 text-amber-700 text-xs font-bold px-2 py-0.5 rounded-full">{pending.length}</span>
+          )}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="w-5 h-5 animate-spin text-primary" />
+        </div>
+      ) : pending.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+          <CheckCircle2 className="w-8 h-8 mb-2 text-green-400" />
+          <p className="text-sm">No pending enrollments</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {['Student', 'Email', 'Grade', 'Subject', 'Requested', 'Action'].map((h) => (
+                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pending.map((e) => (
+                <tr key={e.enrollment_id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <td className="px-4 py-3 font-medium text-primary-dark">{e.student_name ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{e.student_email ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{e.grade_name ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{e.subject_name ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-400 text-xs">
+                    {e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => approveMutation.mutate(e.enrollment_id)}
+                      disabled={approveMutation.isPending}
+                      className="flex items-center gap-1.5 bg-primary text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-primary/90 transition disabled:opacity-60"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Approve
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BottomStats({ data }) {
   const navigate = useNavigate();
   const roleDist = data?.role_distribution || {};
-  const twoFaPct = data?.two_fa_compliance?.compliance_pct ?? 0;
-  const pendingCount = users?.filter((u) => !u.is_active).length ?? 0;
+  const twoFaPct = data?.security_health_pct ?? 0;
+  const pendingCount = data?.pending_approvals_count ?? 0;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
@@ -311,15 +488,15 @@ function BottomStats({ users, data }) {
         <div className="space-y-1.5">
           <div className="flex justify-between text-sm">
             <span className="text-slate-500">Students</span>
-            <span className="font-semibold text-primary-dark">{roleDist.student ?? '—'}</span>
+            <span className="font-semibold text-primary-dark">{roleDist.students ?? '—'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-slate-500">Instructors</span>
-            <span className="font-semibold text-primary-dark">{roleDist.instructor ?? '—'}</span>
+            <span className="font-semibold text-primary-dark">{roleDist.instructors ?? '—'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-slate-500">Administrators</span>
-            <span className="font-semibold text-primary-dark">{roleDist.admin ?? '—'}</span>
+            <span className="font-semibold text-primary-dark">{roleDist.admins ?? '—'}</span>
           </div>
         </div>
       </div>
@@ -327,18 +504,200 @@ function BottomStats({ users, data }) {
       <div className="bg-primary-dark text-white rounded-xl p-5 shadow-sm flex flex-col justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Users className="w-4 h-4 text-white/70" />
-            <span className="text-sm font-semibold">Pending Approval</span>
+            <Clock className="w-4 h-4 text-white/70" />
+            <span className="text-sm font-semibold">Pending Approvals</span>
           </div>
           <p className="text-4xl font-bold mt-2">{pendingCount}</p>
-          <p className="text-white/60 text-xs mt-1">New enrollments requiring review</p>
+          <p className="text-white/60 text-xs mt-1">Enrollments requiring review</p>
         </div>
         <button
-          onClick={() => navigate('/admin/users?status=pending')}
+          onClick={() => navigate('/admin/academic')}
           className="mt-4 w-full py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-medium rounded-lg transition"
         >
           Review Queue
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ImportResultRow({ r }) {
+  const icon = r.status === 'created'
+    ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+    : r.status === 'skipped'
+    ? <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+    : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />;
+  return (
+    <div className={`flex items-start gap-2 py-2 border-b border-slate-100 last:border-0 text-sm ${r.status === 'failed' ? 'bg-red-50 px-2 rounded' : ''}`}>
+      {icon}
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-slate-700 truncate">{r.full_name} <span className="text-slate-400 font-normal">({r.email})</span></p>
+        {r.reason && <p className="text-xs text-slate-500 mt-0.5">{r.reason}</p>}
+        {r.generated_password && (
+          <p className="text-xs font-mono bg-slate-100 px-2 py-0.5 rounded mt-0.5 text-slate-600">
+            Temp password: {r.generated_password}
+          </p>
+        )}
+      </div>
+      <span className={`text-xs font-semibold uppercase px-2 py-0.5 rounded-full shrink-0 ${
+        r.status === 'created' ? 'bg-green-100 text-green-700'
+        : r.status === 'skipped' ? 'bg-amber-100 text-amber-700'
+        : 'bg-red-100 text-red-600'
+      }`}>{r.status}</span>
+    </div>
+  );
+}
+
+function BulkImportModal({ grades = [], onClose, onDone }) {
+  const [role, setRole] = useState('student');
+  const [file, setFile] = useState(null);
+  const [results, setResults] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef();
+
+  const gradeNames = grades.map((g) => g.grade_name);
+
+  const downloadTemplate = () => {
+    const isStudent = role === 'student';
+    const header = isStudent ? 'full_name,email,grade' : 'full_name,email';
+    const rows = isStudent
+      ? `John Doe,john.doe@school.edu,${gradeNames[0] ?? 'Grade 9'}\nJane Smith,jane.smith@school.edu,${gradeNames[1] ?? 'Grade 10'}`
+      : 'John Doe,john.doe@school.edu\nJane Smith,jane.smith@school.edu';
+    const csv = `${header}\n${rows}\n`;
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bulk_import_template_${role}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = async () => {
+    if (!file) { toast.error('Please select a CSV file'); return; }
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await bulkImportUsers(role, fd);
+      setResults(res.data);
+      onDone();
+      toast.success(`Import complete — ${res.data.created} created, ${res.data.skipped} skipped, ${res.data.failed} failed`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail ?? 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-primary-light">
+          <div className="flex items-center gap-2">
+            <Upload className="w-5 h-5 text-primary" />
+            <h2 className="text-base font-bold text-primary-dark">Bulk Import Users</h2>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+          {!results ? (
+            <>
+              <div className="bg-primary-light rounded-lg p-4 text-sm text-primary-dark space-y-1">
+                <p>Required columns: <code className="font-mono font-bold">full_name</code>, <code className="font-mono font-bold">email</code></p>
+                {role === 'student' && (
+                  <p>Optional: <code className="font-mono font-bold">grade</code> — use exact grade name e.g. <span className="font-semibold">Grade 9</span>, <span className="font-semibold">Grade 10</span></p>
+                )}
+                <p className="text-xs text-primary/70">Duplicate emails are skipped. A welcome email is sent after import.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Role to assign</label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="student">Student</option>
+                  <option value="instructor">Instructor</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">CSV File</label>
+                <div
+                  onClick={() => fileRef.current?.click()}
+                  className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center cursor-pointer hover:border-primary/40 transition"
+                >
+                  {file ? (
+                    <div className="flex items-center justify-center gap-2 text-sm text-primary-dark font-medium">
+                      <FileText className="w-5 h-5 text-primary" />
+                      {file.name}
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">Click to choose a CSV file</p>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+
+              <button
+                onClick={downloadTemplate}
+                className="flex items-center gap-2 text-sm text-primary font-semibold hover:underline"
+              >
+                <Download className="w-4 h-4" /> Download CSV template
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3 mb-2">
+                {[['Created', results.created, 'text-green-700 bg-green-100'], ['Skipped', results.skipped, 'text-amber-700 bg-amber-100'], ['Failed', results.failed, 'text-red-600 bg-red-100']].map(([label, val, cls]) => (
+                  <div key={label} className={`rounded-lg p-3 text-center ${cls}`}>
+                    <p className="text-2xl font-bold">{val}</p>
+                    <p className="text-xs font-semibold">{label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-lg p-2">
+                {results.results.map((r) => <ImportResultRow key={`${r.row}-${r.email}`} r={r} />)}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-primary-light flex gap-3">
+          {results ? (
+            <button onClick={onClose} className="flex-1 bg-primary-dark text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary">
+              Done
+            </button>
+          ) : (
+            <>
+              <button onClick={onClose} className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={importing || !file}
+                className="flex-1 bg-primary-dark text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {importing && <Loader2 className="w-4 h-4 animate-spin" />}
+                {importing ? 'Importing…' : 'Import Users'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -350,6 +709,9 @@ export default function UserManagement() {
   const [roleFilter, setRoleFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [roleTarget, setRoleTarget] = useState(null);
   const [generatedPassword, setGeneratedPassword] = useState(null);
   const [confirmSuspend, setConfirmSuspend] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -368,7 +730,7 @@ export default function UserManagement() {
 
   const { data: gradesData } = useQuery({
     queryKey: ['admin', 'grades'],
-    queryFn: async () => (await getGrades()).data?.grades ?? [],
+    queryFn: async () => (await getGrades()).data ?? [],
   });
 
   const users = userData?.users ?? [];
@@ -432,6 +794,16 @@ export default function UserManagement() {
       toast.error('Failed to suspend user');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleReactivate = async (id) => {
+    try {
+      await reactivateUser(id);
+      toast.success('User reactivated');
+      invalidate();
+    } catch {
+      toast.error('Failed to reactivate user');
     }
   };
 
@@ -501,6 +873,13 @@ export default function UserManagement() {
             <option value="instructor">Instructor</option>
             <option value="admin">Admin</option>
           </select>
+          <button
+            onClick={() => setShowBulkImport(true)}
+            className="flex items-center gap-2 border border-primary text-primary text-sm font-medium px-4 py-2 rounded-lg hover:bg-primary-light transition"
+          >
+            <Upload className="w-4 h-4" />
+            Bulk Import
+          </button>
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 bg-primary text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-primary/90 transition"
@@ -603,27 +982,51 @@ export default function UserManagement() {
                       <TfaBadge enabled={u.totp_enabled} />
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setEditTarget(u)}
+                          className="text-slate-400 hover:text-primary transition p-1 rounded hover:bg-primary-light/50"
+                          title="Edit"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setRoleTarget(u)}
+                          className="text-slate-400 hover:text-blue-500 transition p-1 rounded hover:bg-blue-50"
+                          title="Change Role"
+                        >
+                          <UserCog className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => handleResetPassword(u.user_id)}
-                          className="text-slate-400 hover:text-amber-500 transition"
+                          className="text-slate-400 hover:text-amber-500 transition p-1 rounded hover:bg-amber-50"
                           title="Reset Password"
                         >
-                          <KeyRound className="w-4 h-4" />
+                          <KeyRound className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => setConfirmSuspend(u.user_id)}
-                          className="text-slate-400 hover:text-primary transition"
-                          title="Suspend"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                        {u.is_active ? (
+                          <button
+                            onClick={() => setConfirmSuspend(u.user_id)}
+                            className="text-slate-400 hover:text-orange-500 transition p-1 rounded hover:bg-orange-50"
+                            title="Suspend"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleReactivate(u.user_id)}
+                            className="text-slate-400 hover:text-green-500 transition p-1 rounded hover:bg-green-50"
+                            title="Reactivate"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => setConfirmDelete(u.user_id)}
-                          className="text-slate-400 hover:text-red-500 transition"
+                          className="text-slate-400 hover:text-red-500 transition p-1 rounded hover:bg-red-50"
                           title="Delete"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
@@ -642,13 +1045,31 @@ export default function UserManagement() {
         </div>
       </div>
 
-      <BottomStats users={users} data={userData} />
+      <BottomStats data={userData} />
+      <PendingEnrollmentsPanel />
 
       {showAddModal && (
         <AddUserModal
           grades={gradesData}
           onClose={() => setShowAddModal(false)}
           onSuccess={handleUserCreated}
+        />
+      )}
+
+      {editTarget && (
+        <EditUserModal
+          user={editTarget}
+          grades={gradesData}
+          onClose={() => setEditTarget(null)}
+          onSuccess={() => { setEditTarget(null); invalidate(); }}
+        />
+      )}
+
+      {roleTarget && (
+        <ChangeRoleModal
+          user={roleTarget}
+          onClose={() => setRoleTarget(null)}
+          onSuccess={() => { setRoleTarget(null); invalidate(); }}
         />
       )}
 
@@ -680,6 +1101,14 @@ export default function UserManagement() {
           onConfirm={handleDelete}
           onCancel={() => setConfirmDelete(null)}
           loading={actionLoading}
+        />
+      )}
+
+      {showBulkImport && (
+        <BulkImportModal
+          grades={gradesData}
+          onClose={() => setShowBulkImport(false)}
+          onDone={invalidate}
         />
       )}
     </div>
