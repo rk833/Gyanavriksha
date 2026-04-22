@@ -51,6 +51,27 @@ class AdminUserCreateResponse(AdminUserResponse):
     generated_password: Optional[str] = None
 
 
+class BulkImportRow(BaseModel):
+    """Single row outcome from a CSV bulk-import operation."""
+
+    row: int
+    email: str
+    full_name: str
+    status: str
+    reason: Optional[str] = None
+    generated_password: Optional[str] = None
+
+
+class BulkImportResponse(BaseModel):
+    """Summary returned after processing a bulk-import CSV file."""
+
+    total_rows: int
+    created: int
+    skipped: int
+    failed: int
+    results: list[BulkImportRow]
+
+
 class RoleDistribution(BaseModel):
     """Count of users per role across the platform."""
 
@@ -140,6 +161,7 @@ class SubjectResponse(BaseModel):
     description: Optional[str] = None
     grade_id: int
     grade_name: str
+    instructor_id: Optional[uuid.UUID] = None
     instructor_name: Optional[str] = None
     student_count: int = 0
     assignment_count: int = 0

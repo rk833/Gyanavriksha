@@ -13,6 +13,10 @@ export const resetPassword = (id) => api.post(`/api/admin/users/${id}/reset-pass
 export const changeUserRole = (id, data) => api.patch(`/api/admin/users/${id}/role`, data);
 export const bulkSuspend = (data) => api.post('/api/admin/users/bulk-suspend', data);
 export const bulkDelete = (data) => api.post('/api/admin/users/bulk-delete', data);
+export const bulkImportUsers = (role, formData) =>
+  api.post(`/api/admin/users/bulk-import?role=${role}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
 export const getPendingEnrollments = () => api.get('/api/admin/users/pending-enrollments');
 export const approveEnrollment = (enrollmentId) =>
   api.patch(`/api/admin/users/enrollments/${enrollmentId}/approve`);

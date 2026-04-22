@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   BookOpen, Plus, Pencil, Trash2, Users, BookMarked,
-  ChevronRight, Loader2, AlertCircle, X, GraduationCap, UserPlus, UsersRound,
+  ChevronRight, Loader2, AlertCircle, X, GraduationCap, UserPlus, UsersRound, Search,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -494,7 +494,7 @@ function SubjectModal({ initial, gradeId, gradeName, onClose, onSave, instructor
     name: initial?.name ?? '',
     subject_code: initial?.subject_code ?? '',
     description: initial?.description ?? '',
-    instructor_id: '',
+    instructor_id: initial?.instructor_id ?? '',
   });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -567,7 +567,7 @@ function SubjectModal({ initial, gradeId, gradeName, onClose, onSave, instructor
 }
 
 function AssignInstructorModal({ subject, instructors, onClose, onSave }) {
-  const [instructorId, setInstructorId] = useState('');
+  const [instructorId, setInstructorId] = useState(subject?.instructor_id ?? '');
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -634,6 +634,7 @@ function ConfirmDeleteDialog({ title, message, onConfirm, onCancel }) {
 export default function AcademicManagement() {
   const [selectedGrade, setSelectedGrade] = useState(null);
   const [selectedSubject, setSelectedSubject] = useState(null);
+  const [gradeSearch, setGradeSearch] = useState('');
   const [gradeModal, setGradeModal] = useState(null);
   const [subjectModal, setSubjectModal] = useState(null);
   const [assignModal, setAssignModal] = useState(null);
@@ -645,6 +646,10 @@ export default function AcademicManagement() {
     queryKey: ['admin', 'grades'],
     queryFn: async () => (await getGrades()).data ?? [],
   });
+
+  const filteredGrades = gradeSearch.trim()
+    ? grades.filter((g) => g.grade_name.toLowerCase().includes(gradeSearch.trim().toLowerCase()))
+    : grades;
 
   const { data: subjects = [], isLoading: subjectsLoading } = useQuery({
     queryKey: ['admin', 'subjects', selectedGrade?.grade_id],
@@ -724,27 +729,41 @@ export default function AcademicManagement() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <div className="lg:col-span-2">
           <div className="bg-white rounded-xl border border-primary-light shadow-sm">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-primary-light">
-              <div className="flex items-center gap-2 font-semibold text-primary-dark">
-                <BookOpen className="w-4 h-4" />
-                Grades <span className="text-xs font-normal text-slate-400 ml-1">({grades.length})</span>
+            <div className="px-5 py-4 border-b border-primary-light space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold text-primary-dark">
+                  <BookOpen className="w-4 h-4" />
+                  Grades
+                  <span className="text-xs font-normal text-slate-400 ml-1">
+                    ({filteredGrades.length}{gradeSearch ? ` of ${grades.length}` : ''})
+                  </span>
+                </div>
+                <button
+                  onClick={() => setGradeModal({ mode: 'create' })}
+                  className="flex items-center gap-1.5 bg-primary-dark text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-primary transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Grade
+                </button>
               </div>
-              <button
-                onClick={() => setGradeModal({ mode: 'create' })}
-                className="flex items-center gap-1.5 bg-primary-dark text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-primary transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Grade
-              </button>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                <input
+                  value={gradeSearch}
+                  onChange={(e) => setGradeSearch(e.target.value)}
+                  placeholder="Search grades…"
+                  className="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
             </div>
-            <div className="p-3 space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto">
+            <div className="p-3 space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto">
               {gradesLoading && <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 text-primary animate-spin" /></div>}
-              {!gradesLoading && grades.length === 0 && (
+              {!gradesLoading && filteredGrades.length === 0 && (
                 <div className="text-center py-10 text-slate-400">
                   <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">No grades yet. Add your first grade.</p>
+                  <p className="text-sm">{gradeSearch ? 'No grades match your search.' : 'No grades yet. Add your first grade.'}</p>
                 </div>
               )}
-              {grades.map((g) => (
+              {filteredGrades.map((g) => (
                 <GradeCard
                   key={g.grade_id}
                   grade={g}

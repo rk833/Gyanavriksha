@@ -1,4 +1,5 @@
 """FastAPI application factory for the Gyanavriksha backend API."""
+import app.core.compat  # noqa: F401 — must be first to patch bcrypt before passlib loads
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

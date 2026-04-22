@@ -1,16 +1,16 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, Plus, Pencil, KeyRound, Trash2, X, ChevronLeft, ChevronRight,
   Copy, ShieldCheck, Loader2, AlertCircle, UserCog, CheckCircle2, Clock,
-  RotateCcw,
+  RotateCcw, Upload, Download, FileText, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   getUsers, createUser, updateUser, suspendUser, reactivateUser, deleteUser,
   bulkSuspend, bulkDelete, resetPassword, changeUserRole,
-  getGrades, getPendingEnrollments, approveEnrollment,
+  getGrades, getPendingEnrollments, approveEnrollment, bulkImportUsers,
 } from '../../services/adminService';
 
 function RoleBadge({ role }) {
@@ -205,15 +205,20 @@ function AddUserModal({ grades, onClose, onSuccess }) {
   );
 }
 
-function EditUserModal({ user, onClose, onSuccess }) {
+function EditUserModal({ user, grades = [], onClose, onSuccess }) {
   const [fullName, setFullName] = useState(user.full_name);
+  const [gradeId, setGradeId] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const isStudent = user.role === 'student';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
-      await updateUser(user.user_id, { full_name: fullName });
+      const payload = { full_name: fullName };
+      if (isStudent && gradeId) payload.grade_id = parseInt(gradeId);
+      await updateUser(user.user_id, payload);
       toast.success('User updated');
       onSuccess();
     } catch (err) {
@@ -241,6 +246,23 @@ function EditUserModal({ user, onClose, onSuccess }) {
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
+          {isStudent && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Grade <span className="font-normal text-slate-400">(current: {user.grade_name || 'none'})</span>
+              </label>
+              <select
+                value={gradeId}
+                onChange={(e) => setGradeId(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">— no grade —</option>
+                {grades.map((g) => (
+                  <option key={g.grade_id} value={g.grade_id}>{g.grade_name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 py-2 border border-slate-200 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-50 transition">
               Cancel
@@ -499,12 +521,195 @@ function BottomStats({ data }) {
   );
 }
 
+function ImportResultRow({ r }) {
+  const icon = r.status === 'created'
+    ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+    : r.status === 'skipped'
+    ? <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+    : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />;
+  return (
+    <div className={`flex items-start gap-2 py-2 border-b border-slate-100 last:border-0 text-sm ${r.status === 'failed' ? 'bg-red-50 px-2 rounded' : ''}`}>
+      {icon}
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-slate-700 truncate">{r.full_name} <span className="text-slate-400 font-normal">({r.email})</span></p>
+        {r.reason && <p className="text-xs text-slate-500 mt-0.5">{r.reason}</p>}
+        {r.generated_password && (
+          <p className="text-xs font-mono bg-slate-100 px-2 py-0.5 rounded mt-0.5 text-slate-600">
+            Temp password: {r.generated_password}
+          </p>
+        )}
+      </div>
+      <span className={`text-xs font-semibold uppercase px-2 py-0.5 rounded-full shrink-0 ${
+        r.status === 'created' ? 'bg-green-100 text-green-700'
+        : r.status === 'skipped' ? 'bg-amber-100 text-amber-700'
+        : 'bg-red-100 text-red-600'
+      }`}>{r.status}</span>
+    </div>
+  );
+}
+
+function BulkImportModal({ grades = [], onClose, onDone }) {
+  const [role, setRole] = useState('student');
+  const [file, setFile] = useState(null);
+  const [results, setResults] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef();
+
+  const gradeNames = grades.map((g) => g.grade_name);
+
+  const downloadTemplate = () => {
+    const isStudent = role === 'student';
+    const header = isStudent ? 'full_name,email,grade' : 'full_name,email';
+    const rows = isStudent
+      ? `John Doe,john.doe@school.edu,${gradeNames[0] ?? 'Grade 9'}\nJane Smith,jane.smith@school.edu,${gradeNames[1] ?? 'Grade 10'}`
+      : 'John Doe,john.doe@school.edu\nJane Smith,jane.smith@school.edu';
+    const csv = `${header}\n${rows}\n`;
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bulk_import_template_${role}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = async () => {
+    if (!file) { toast.error('Please select a CSV file'); return; }
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await bulkImportUsers(role, fd);
+      setResults(res.data);
+      onDone();
+      toast.success(`Import complete — ${res.data.created} created, ${res.data.skipped} skipped, ${res.data.failed} failed`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail ?? 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-primary-light">
+          <div className="flex items-center gap-2">
+            <Upload className="w-5 h-5 text-primary" />
+            <h2 className="text-base font-bold text-primary-dark">Bulk Import Users</h2>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+          {!results ? (
+            <>
+              <div className="bg-primary-light rounded-lg p-4 text-sm text-primary-dark space-y-1">
+                <p>Required columns: <code className="font-mono font-bold">full_name</code>, <code className="font-mono font-bold">email</code></p>
+                {role === 'student' && (
+                  <p>Optional: <code className="font-mono font-bold">grade</code> — use exact grade name e.g. <span className="font-semibold">Grade 9</span>, <span className="font-semibold">Grade 10</span></p>
+                )}
+                <p className="text-xs text-primary/70">Duplicate emails are skipped. A welcome email is sent after import.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Role to assign</label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="student">Student</option>
+                  <option value="instructor">Instructor</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">CSV File</label>
+                <div
+                  onClick={() => fileRef.current?.click()}
+                  className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center cursor-pointer hover:border-primary/40 transition"
+                >
+                  {file ? (
+                    <div className="flex items-center justify-center gap-2 text-sm text-primary-dark font-medium">
+                      <FileText className="w-5 h-5 text-primary" />
+                      {file.name}
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">Click to choose a CSV file</p>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+
+              <button
+                onClick={downloadTemplate}
+                className="flex items-center gap-2 text-sm text-primary font-semibold hover:underline"
+              >
+                <Download className="w-4 h-4" /> Download CSV template
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3 mb-2">
+                {[['Created', results.created, 'text-green-700 bg-green-100'], ['Skipped', results.skipped, 'text-amber-700 bg-amber-100'], ['Failed', results.failed, 'text-red-600 bg-red-100']].map(([label, val, cls]) => (
+                  <div key={label} className={`rounded-lg p-3 text-center ${cls}`}>
+                    <p className="text-2xl font-bold">{val}</p>
+                    <p className="text-xs font-semibold">{label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-lg p-2">
+                {results.results.map((r) => <ImportResultRow key={`${r.row}-${r.email}`} r={r} />)}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-primary-light flex gap-3">
+          {results ? (
+            <button onClick={onClose} className="flex-1 bg-primary-dark text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary">
+              Done
+            </button>
+          ) : (
+            <>
+              <button onClick={onClose} className="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2 text-sm font-semibold hover:bg-slate-50">
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={importing || !file}
+                className="flex-1 bg-primary-dark text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {importing && <Loader2 className="w-4 h-4 animate-spin" />}
+                {importing ? 'Importing…' : 'Import Users'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function UserManagement() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [roleTarget, setRoleTarget] = useState(null);
   const [generatedPassword, setGeneratedPassword] = useState(null);
@@ -668,6 +873,13 @@ export default function UserManagement() {
             <option value="instructor">Instructor</option>
             <option value="admin">Admin</option>
           </select>
+          <button
+            onClick={() => setShowBulkImport(true)}
+            className="flex items-center gap-2 border border-primary text-primary text-sm font-medium px-4 py-2 rounded-lg hover:bg-primary-light transition"
+          >
+            <Upload className="w-4 h-4" />
+            Bulk Import
+          </button>
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 bg-primary text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-primary/90 transition"
@@ -847,6 +1059,7 @@ export default function UserManagement() {
       {editTarget && (
         <EditUserModal
           user={editTarget}
+          grades={gradesData}
           onClose={() => setEditTarget(null)}
           onSuccess={() => { setEditTarget(null); invalidate(); }}
         />
@@ -888,6 +1101,14 @@ export default function UserManagement() {
           onConfirm={handleDelete}
           onCancel={() => setConfirmDelete(null)}
           loading={actionLoading}
+        />
+      )}
+
+      {showBulkImport && (
+        <BulkImportModal
+          grades={gradesData}
+          onClose={() => setShowBulkImport(false)}
+          onDone={invalidate}
         />
       )}
     </div>

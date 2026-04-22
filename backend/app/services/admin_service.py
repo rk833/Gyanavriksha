@@ -139,11 +139,7 @@ def _apply_user_filters(
             )
         )
     if grade_id is not None:
-        query = (
-            query.join(StudentEnrollment, StudentEnrollment.student_id == User.user_id)
-            .filter(StudentEnrollment.grade_id == grade_id)
-            .distinct()
-        )
+        query = query.filter(User.grade_id == grade_id)
     return query
 
 
@@ -199,12 +195,61 @@ def create_user(
     return user, password
 
 
+def _resolve_grade_id(db: Session, grade_name: str | None) -> tuple[int | None, str | None]:
+    """Return (grade_id, error_reason) by looking up a grade by name (case-insensitive)."""
+    if not grade_name or not grade_name.strip():
+        return None, None
+    grade = db.query(Grade).filter(Grade.grade_name.ilike(grade_name.strip())).first()
+    if not grade:
+        return None, f"grade '{grade_name.strip()}' not found"
+    return grade.grade_id, None
+
+
+def bulk_import_users(
+    db: Session,
+    rows: list[dict],
+    role: UserRole,
+) -> list[dict]:
+    """Create multiple users from pre-parsed CSV rows.
+
+    Each item in *rows* must have 'email' and 'full_name' keys.
+    Optional 'grade' column is resolved to a grade_id by name (case-insensitive).
+    Returns a list of per-row outcome dicts with keys:
+    row, email, full_name, status ('created'|'skipped'|'failed'), reason, generated_password.
+    """
+    results = []
+    for idx, row in enumerate(rows, start=2):
+        email = (row.get("email") or "").strip().lower()
+        full_name = (row.get("full_name") or "").strip()
+        raw_grade = row.get("grade") or ""
+        if not email or not full_name:
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "failed", "reason": "email and full_name are required"})
+            continue
+        if email_exists(db, email):
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "skipped", "reason": "email already registered"})
+            continue
+        grade_id, grade_error = _resolve_grade_id(db, raw_grade)
+        if grade_error:
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "failed", "reason": grade_error})
+            continue
+        try:
+            user, password = create_user(db, email, full_name, role)
+            if grade_id is not None:
+                user.grade_id = grade_id
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "created", "generated_password": password})
+        except Exception as exc:
+            db.rollback()
+            results.append({"row": idx, "email": email, "full_name": full_name, "status": "failed", "reason": str(exc)})
+    return results
+
+
 def update_user_fields(
     db: Session,
     user: User,
     full_name: str | None,
     is_active: bool | None,
     profile_image_url: str | None,
+    grade_id: int | None = None,
 ) -> User:
     """Apply partial field updates to a user record."""
     if full_name is not None:
@@ -213,6 +258,8 @@ def update_user_fields(
         user.is_active = is_active
     if profile_image_url is not None:
         user.profile_image_url = profile_image_url
+    if grade_id is not None:
+        user.grade_id = grade_id
     db.flush()
     return user
 
@@ -527,6 +574,7 @@ def delete_grade_safe(db: Session, grade_id: int) -> str | None:
 
 def _subject_detail(db: Session, subject: Subject) -> dict:
     """Build a subject detail dict with instructor name and counts."""
+    instructor_id = None
     instructor_name = None
     assignment = (
         db.query(InstructorSubject)
@@ -534,6 +582,7 @@ def _subject_detail(db: Session, subject: Subject) -> dict:
         .first()
     )
     if assignment:
+        instructor_id = assignment.instructor_id
         user = db.query(User).filter(User.user_id == assignment.instructor_id).first()
         instructor_name = user.full_name if user else None
 
@@ -557,6 +606,7 @@ def _subject_detail(db: Session, subject: Subject) -> dict:
         "description": subject.description,
         "grade_id": subject.grade_id,
         "grade_name": grade.grade_name if grade else None,
+        "instructor_id": instructor_id,
         "instructor_name": instructor_name,
         "student_count": student_count,
         "assignment_count": assignment_count,

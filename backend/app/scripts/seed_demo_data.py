@@ -518,6 +518,9 @@ def seed_demo_data(db: Session) -> None:
     student = _get_or_create_user(
         db, DEMO_STUDENT_EMAIL, DEMO_STUDENT_PASSWORD, DEMO_STUDENT_NAME, UserRole.STUDENT
     )
+    if student.grade_id is None and grade_map:
+        student.grade_id = next(iter(grade_map.values())).grade_id
+        db.flush()
     instructor = _get_or_create_user(
         db, DEMO_INSTRUCTOR_EMAIL, DEMO_INSTRUCTOR_PASSWORD, DEMO_INSTRUCTOR_NAME, UserRole.INSTRUCTOR
     )
