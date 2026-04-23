@@ -39,6 +39,18 @@ import InstructorNotifications from './pages/instructor/Notifications';
 import InstructorProfile from './pages/instructor/Profile';
 import InstructorStudentReview from './pages/instructor/StudentReview';
 
+// Admin Pages
+import AdminLayout from './layouts/AdminLayout';
+import AdminDashboard from './pages/admin/Dashboard';
+import AdminUserManagement from './pages/admin/UserManagement';
+import AdminAuditLogs from './pages/admin/AuditLogs';
+import AdminVectorStore from './pages/admin/VectorStore';
+import AdminDeviceManagement from './pages/admin/DeviceManagement';
+import AdminSecurityIntegrity from './pages/admin/SecurityIntegrity';
+import AdminCurriculumUpload from './pages/admin/CurriculumUpload';
+import AdminSettings from './pages/admin/AdminSettings';
+import AdminAcademicManagement from './pages/admin/AcademicManagement';
+
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
 
@@ -107,8 +119,26 @@ function App() {
             <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
 
-          {/* Admin Routes — coming in Sprint 5 */}
-          {/* <Route path="/admin" element={...}> */}
+          {/* Admin Routes */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<AdminDashboard />} />
+            <Route path="users" element={<AdminUserManagement />} />
+            <Route path="audit-logs" element={<AdminAuditLogs />} />
+            <Route path="academic" element={<AdminAcademicManagement />} />
+            <Route path="vector-store" element={<AdminVectorStore />} />
+            <Route path="iot" element={<AdminDeviceManagement />} />
+            <Route path="security" element={<AdminSecurityIntegrity />} />
+            <Route path="curriculum-ingestion" element={<AdminCurriculumUpload />} />
+            <Route path="settings" element={<AdminSettings />} />
+          </Route>
         </Routes>
       </AuthProvider>
     </Router>
