@@ -67,6 +67,17 @@ def _fetch_active_user(db: Session, user_id: str) -> User:
     return user
 
 
+def _validate_token_version(payload: dict, user: User) -> None:
+    """Raise HTTP 401 when the token's version is stale after a forced password reset."""
+    token_tv = payload.get("tv", 0)
+    if token_tv != (user.token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been invalidated. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -74,7 +85,9 @@ def get_current_user(
     """FastAPI dependency that resolves the authenticated user from the Bearer token."""
     payload = _validate_access_token(token)
     user_id = _resolve_user_id(payload)
-    return _fetch_active_user(db, user_id)
+    user = _fetch_active_user(db, user_id)
+    _validate_token_version(payload, user)
+    return user
 
 
 def require_role(allowed_roles: list[UserRole]) -> Callable:
