@@ -348,7 +348,10 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
         </Tab.Screen>
         <Tab.Screen
           name="CameraScreen"
-          options={{ title: 'CameraScreen' }}
+          options={{
+            title: 'CameraScreen',
+            unmountOnBlur: true,
+          }}
         >
           {(props) => <CameraScreen {...props} />}
         </Tab.Screen>

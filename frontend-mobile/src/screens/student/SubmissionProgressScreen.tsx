@@ -12,6 +12,9 @@ type SubmissionStatus = 'queued' | 'ocr' | 'grading' | 'done' | 'rejected';
 type SubmissionDetailResponse = {
   submission_id: string;
   processing_status: SubmissionStatus;
+  feedback?: {
+    overall_feedback?: string;
+  } | null;
 };
 
 type ProgressNavigation = {
@@ -48,7 +51,7 @@ const STATUS_INDEX: Record<SubmissionStatus, number> = {
   ocr: 1,
   grading: 2,
   done: 3,
-  rejected: 3,
+  rejected: 2,
 };
 
 const PROGRESS_BLUE = '#2563EB';
@@ -143,15 +146,26 @@ export default function SubmissionProgressScreen({ navigation, route }: Submissi
     statusRef.current = next;
     setStatus(next);
     setIsBusy(false);
+    setHasTimedOut(false);
 
     if (next === 'rejected') {
-      setBannerError(message?.trim() || 'Submission was rejected.');
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      setBannerError(message?.trim() || 'Submission was rejected. Please review and re-upload.');
       return;
     }
 
     setBannerError(null);
 
     if (next === 'done') {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
       if (doneNavRef.current) {
         clearTimeout(doneNavRef.current);
       }
@@ -159,6 +173,8 @@ export default function SubmissionProgressScreen({ navigation, route }: Submissi
       doneNavRef.current = setTimeout(() => {
         navigation.navigate('SubmissionResultScreen', { submissionId });
       }, 1000);
+
+      return;
     }
   };
 
@@ -232,7 +248,8 @@ export default function SubmissionProgressScreen({ navigation, route }: Submissi
 
         const nextStatus = response.data?.processing_status;
         if (nextStatus) {
-          applyStatus(nextStatus);
+          const rejectedMessage = nextStatus === 'rejected' ? response.data?.feedback?.overall_feedback : undefined;
+          applyStatus(nextStatus, rejectedMessage);
         }
       } catch {
         if (!cancelled) {
@@ -266,6 +283,8 @@ export default function SubmissionProgressScreen({ navigation, route }: Submissi
       }
 
       const wsBase = getWebSocketBaseUrl();
+      // Backend currently has no explicit submission websocket route in source.
+      // Keep two candidates and rely on polling as the guaranteed fallback.
       const wsCandidates = [
         `${wsBase}/api/students/submissions/${submissionId}/ws?token=${encodeURIComponent(token)}`,
         `${wsBase}/api/students/ws/submissions/${submissionId}?token=${encodeURIComponent(token)}`,
@@ -316,7 +335,7 @@ export default function SubmissionProgressScreen({ navigation, route }: Submissi
       }, 5000);
 
       timeoutRef.current = setTimeout(() => {
-        if (statusRef.current !== 'done') {
+        if (statusRef.current !== 'done' && statusRef.current !== 'rejected') {
           setHasTimedOut(true);
           setBannerError('Processing timeout. Please retry.');
           setIsBusy(false);
@@ -443,6 +462,11 @@ export default function SubmissionProgressScreen({ navigation, route }: Submissi
                 style={styles.primaryButton}
                 activeOpacity={0.85}
                 onPress={() => {
+                  setStatus('queued');
+                  statusRef.current = 'queued';
+                  setBannerError(null);
+                  setIsBusy(true);
+                  setHasTimedOut(false);
                   setRetrySeed((current) => current + 1);
                 }}
               >
