@@ -1310,7 +1310,7 @@ def register_iot_device(
         location=location,
         description=description,
         api_key_hash=hash_password(plain_key),
-        mqtt_topic_prefix=f"iot/{node_id}",
+        mqtt_topic_prefix=f"gyanavriksha/devices/{node_id}",
         device_mac=_generate_mac(),
         status="offline",
         registered_by=actor_id,
@@ -1632,12 +1632,20 @@ def get_security_overview(db: Session) -> dict:
     """Return the full security dashboard payload."""
     two_fa = get_two_fa_compliance(db)
     iot_key_count = db.query(IotDevice).filter(IotDevice.status != "decommissioned").count()
+    ingest_ok = int(_get_setting(db, "iot_ingest_accepted") or 0)
+    ingest_rejected = int(_get_setting(db, "iot_ingest_rejected") or 0)
+    integrity_violations = int(_get_setting(db, "iot_integrity_violations") or 0)
     last_audit = _get_setting(db, "last_integrity_audit")
     threshold = int(_get_setting(db, "rate_limit_threshold") or 2500)
     return {
         "jwt_rbac_status": _build_rbac_status(db),
         "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": None},
-        "device_auth": {"active_api_keys_count": iot_key_count},
+        "device_auth": {
+            "active_api_keys_count": iot_key_count,
+            "ingest_accepted_count": ingest_ok,
+            "ingest_rejected_count": ingest_rejected,
+            "integrity_violations_count": integrity_violations,
+        },
         "two_fa_compliance": two_fa,
         "overall_security_score": _compute_security_score(two_fa, last_audit),
         "integrity_status": last_audit or {"hash_check_status": "No audit run yet"},
