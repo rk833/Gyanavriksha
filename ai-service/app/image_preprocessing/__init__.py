@@ -18,10 +18,100 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.ocr import extract_text  # module-level so tests can patch it easily
 from .image_processor import ImageProcessor, ProcessedImage
 from .quality_validator import QualityValidator, QualityThresholds, ImageQualityError
 
 logger = logging.getLogger(__name__)
+
+
+# -------------------------------------------------------
+# Module-level convenience functions for simpler usage
+# -------------------------------------------------------
+
+def validate(image_bytes: bytes) -> None:
+    """
+    Validate the quality of a raw image using QualityValidator.
+
+    Parameters
+    ----------
+    image_bytes:
+        Raw bytes of any supported image format.
+
+    Raises
+    ------
+    ImageQualityError
+        Describing the specific quality issue found.
+    """
+    validator = QualityValidator()
+    validator.validate(image_bytes)
+
+
+def preprocess(image_bytes: bytes) -> bytes:
+    """
+    Preprocess raw image bytes using ImageProcessor.
+
+    Parameters
+    ----------
+    image_bytes:
+        Raw bytes of any supported image format.
+
+    Returns
+    -------
+    bytes
+        Preprocessed image bytes ready for OCR.
+
+    Raises
+    ------
+    PreprocessingFailureError
+        If preprocessing fails unexpectedly.
+    """
+    processor = ImageProcessor()
+    result = processor.preprocess(image_bytes)
+    return result.image_bytes
+
+
+def run_pipeline(
+    image_bytes: bytes,
+    *,
+    ocr_provider: str = "auto",
+) -> str | None:
+    """
+    Full OCR pipeline: validate → preprocess → OCR.
+
+    Parameters
+    ----------
+    image_bytes:
+        Raw bytes of any supported image format.
+    ocr_provider:
+        Forwarded to ``ocr.extract_text``.  One of ``"auto"``,
+        ``"google_cloud_vision"``, or ``"tesseract"``.
+
+    Returns
+    -------
+    str
+        Extracted text (may be empty string for images with no text).
+    None
+        When quality validation fails or a ``RuntimeError`` is raised by the
+        OCR layer.
+    """
+    try:
+        validate(image_bytes)
+    except ImageQualityError as exc:
+        logger.info("Image rejected by quality validator: %s", exc)
+        return None
+
+    try:
+        processed_bytes = preprocess(image_bytes)
+    except (RuntimeError, PreprocessingFailureError) as exc:
+        logger.warning("Preprocessing failed: %s", exc)
+        return None
+
+    try:
+        return extract_text(processed_bytes, provider=ocr_provider)
+    except RuntimeError as exc:
+        logger.warning("OCR failed: %s", exc)
+        return None
 
 
 class PreprocessingFailureError(RuntimeError):
@@ -126,6 +216,12 @@ class PreprocessingService:
 
 
 __all__ = [
+    # Module-level convenience functions
+    "run_pipeline",
+    "validate",
+    "preprocess",
+    "extract_text",
+    # Classes and exceptions
     "PreprocessingService",
     "PreprocessingResponse",
     "PreprocessingFailureError",

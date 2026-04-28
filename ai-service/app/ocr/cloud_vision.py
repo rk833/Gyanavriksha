@@ -1,118 +1,65 @@
-import logging
-from dataclasses import dataclass, field
-from typing import Optional
+import os
+import base64
+import requests
+try:
+    from dotenv import load_dotenv
+except Exception:
+    def load_dotenv(*_, **__):
+        return False
 
-from google.cloud import vision
-from google.api_core.exceptions import GoogleAPICallError, ServiceUnavailable
+from ..preprocessing.image_processor import validate_image
 
-logger = logging.getLogger(__name__)
+# Load .env if available
+load_dotenv()
 
-
-@dataclass
-class OCRResult:
-    """Encapsulates a raw OCR extraction result."""
-    text: str
-    confidence: float
-    engine: str
-    raw_response: Optional[object] = field(default=None, repr=False)
-
-    @property
-    def is_confident(self) -> bool:
-        return self.confidence >= CloudVisionOCR.CONFIDENCE_THRESHOLD
-
-
-class CloudVisionOCR:
-    """
-    Primary OCR engine backed by the Google Cloud Vision API.
-
-    Responsibilities (E1-02):
-        - Submit preprocessed image bytes to the Vision API.
-        - Parse and score the returned full-text annotation.
-        - Signal low-confidence or API-unavailable outcomes to the caller.
-    """
-
-    CONFIDENCE_THRESHOLD: float = 0.80  # Scores below this trigger fallback (E1-03)
-
-    def __init__(self, client: Optional[vision.ImageAnnotatorClient] = None) -> None:
-        """
-        Args:
-            client: Injectable Vision API client; a default is created when
-                    omitted, which picks up ADC / GOOGLE_APPLICATION_CREDENTIALS.
-        """
-        self._client = client or vision.ImageAnnotatorClient()
-
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
-
-    def extract(self, image_bytes: bytes) -> OCRResult:
-        """
-        Run OCR on *already-preprocessed* image bytes.
-
-        Args:
-            image_bytes: Raw image bytes produced by the upstream
-                        preprocessing microservice (E1-01 delegated).
-
-        Returns:
-            OCRResult with extracted text, aggregate confidence, and engine tag.
-
-        Raises:
-            ServiceUnavailable: Propagated so the orchestrator can invoke the
-                                Tesseract fallback (E1-03).
-        """
-        image = vision.Image(content=image_bytes)
-        try:
-            response = self._client.document_text_detection(image=image)
-        except ServiceUnavailable as exc:
-            logger.warning("Cloud Vision API unavailable: %s", exc)
-            raise
-        except GoogleAPICallError as exc:
-            logger.error("Cloud Vision API call failed: %s", exc)
-            raise ServiceUnavailable(str(exc)) from exc
-
-        self._raise_for_api_errors(response)
-
-        full_text = response.full_text_annotation
-        if not full_text or not full_text.text.strip():
-            logger.info("Cloud Vision returned an empty annotation.")
-            return OCRResult(text="", confidence=0.0, engine="cloud_vision",
-                            raw_response=response)
-
-        confidence = self._aggregate_confidence(full_text)
-        logger.debug("Cloud Vision confidence: %.3f", confidence)
-
-        return OCRResult(
-            text=full_text.text,
-            confidence=confidence,
-            engine="cloud_vision",
-            raw_response=response,
+class VisionService:
+    def __init__(self):
+        # Accept multiple possible env var names used in this project
+        self.api_key = (
+            os.getenv("GOOGLE_VISION_API_KEY")
+            or os.getenv("GOOGLE_CLOUD_VISION_APPLICATION_CREDENTIALS")
+            or os.getenv("GOOGLE_GENAI_API_KEY")
         )
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _raise_for_api_errors(response: vision.AnnotateImageResponse) -> None:
-        if response.error.message:
-            raise GoogleAPICallError(
-                f"Cloud Vision returned an error: {response.error.message}"
+        if not self.api_key:
+            raise ValueError(
+                "Google Vision API key not found in environment. "
+                "Set GOOGLE_VISION_API_KEY or GOOGLE_CLOUD_VISION_APPLICATION_CREDENTIALS."
             )
 
-    @staticmethod
-    def _aggregate_confidence(
-        full_text: vision.TextAnnotation,
-    ) -> float:
+        self.url = f"https://vision.googleapis.com/v1/images:annotate?key={self.api_key}"
+
+    def extract_text(self, image_content: bytes) -> str:
         """
-        Derive an aggregate confidence score from page-level symbol confidences.
-        Falls back to 0.0 if the API omits confidence metadata.
+        Validates the image locally first, then sends to Vision API.
         """
-        scores: list[float] = []
-        for page in full_text.pages:
-            for block in page.blocks:
-                for paragraph in block.paragraphs:
-                    for word in paragraph.words:
-                        for symbol in word.symbols:
-                            if symbol.confidence:
-                                scores.append(symbol.confidence)
-        return sum(scores) / len(scores) if scores else 0.0
+        # --- NEW PREPROCESSING STEP ---
+        if not validate_image(image_content):
+            return "" # Return empty string for invalid images
+        # ------------------------------
+
+        image_base64 = base64.b64encode(image_content).decode("utf-8")
+
+        payload = {
+            "requests": [
+                {
+                    "image": {"content": image_base64},
+                    "features": [{"type": "TEXT_DETECTION"}]
+                }
+            ]
+        }
+
+        try:
+            response = requests.post(self.url, json=payload)
+            response.raise_for_status()
+            
+            data = response.json()
+            results = data.get("responses", [])
+            
+            if results and "textAnnotations" in results[0]:
+                return results[0]["textAnnotations"][0]["description"]
+            
+            return ""
+
+        except requests.exceptions.RequestException as e:
+            print(f"API Request failed: {e}")
+            return ""

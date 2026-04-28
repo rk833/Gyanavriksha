@@ -229,3 +229,33 @@ class ImageProcessor:
         if not success:
             raise RuntimeError("OpenCV failed to encode the processed image.")
         return buffer.tobytes()
+
+
+# =====================================================================
+# Module-level convenience function
+# =====================================================================
+
+def preprocess(image_bytes: bytes) -> bytes:
+    """
+    Preprocess raw image bytes (convenience wrapper).
+
+    Parameters
+    ----------
+    image_bytes:
+        Raw bytes of any supported image format.
+
+    Returns
+    -------
+    bytes
+        Preprocessed image bytes in PNG format, ready for OCR.
+
+    Raises
+    ------
+    ValueError
+        If the bytes cannot be decoded as an image.
+    RuntimeError
+        If encoding the result fails.
+    """
+    processor = ImageProcessor()
+    result = processor.preprocess(image_bytes)
+    return result.image_bytes
