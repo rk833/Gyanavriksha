@@ -15,6 +15,7 @@ import {
   Settings,
 } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
+import Footer from '../components/common/Footer';
 
 const NAV_ITEMS = [
   { to: '/student/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -158,6 +159,8 @@ export default function StudentLayout() {
         <main className="flex-1 p-4 lg:p-6">
           <Outlet />
         </main>
+
+        <Footer />
       </div>
     </div>
   );
