@@ -289,13 +289,16 @@ export default function Login() {
           </Link>
 
           {/* Footer links */}
-          <div className="mt-6 flex items-center justify-between text-sm text-slate-500">
+          <div className="mt-6 flex items-center justify-between text-sm text-slate-500 flex-wrap gap-3">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-primary inline-block" />
               2FA Active
             </span>
-            <div className="space-x-4">
+            <div className="space-x-4 flex flex-wrap justify-end gap-2">
+              <Link to="/faq" className="hover:text-primary-dark transition">FAQ</Link>
+              <span className="text-slate-300">•</span>
               <span className="hover:text-primary-dark cursor-pointer">Privacy policy</span>
+              <span className="text-slate-300">•</span>
               <span className="hover:text-primary-dark cursor-pointer">Terms of Service</span>
             </div>
           </div>

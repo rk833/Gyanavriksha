@@ -51,7 +51,8 @@ import AdminCurriculumUpload from './pages/admin/CurriculumUpload';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminAcademicManagement from './pages/admin/AcademicManagement';
 
-// Common
+// Common Pages
+import FAQ from './pages/FAQ';
 import ProtectedRoute from './components/common/ProtectedRoute';
 
 function App() {
@@ -62,6 +63,9 @@ function App() {
         <Routes>
           {/* Default redirect */}
           <Route path="/" element={<Navigate to="/login" replace />} />
+
+          {/* Public Routes */}
+          <Route path="/faq" element={<FAQ />} />
 
           {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
