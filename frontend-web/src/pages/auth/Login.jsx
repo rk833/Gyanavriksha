@@ -295,8 +295,12 @@ export default function Login() {
               2FA Active
             </span>
             <div className="space-x-4">
-              <span className="hover:text-primary-dark cursor-pointer">Privacy policy</span>
-              <span className="hover:text-primary-dark cursor-pointer">Terms of Service</span>
+              <Link to="/privacy-policy" className="hover:text-primary-dark cursor-pointer">
+                Privacy policy
+              </Link>
+              <Link to="/terms-of-service" className="hover:text-primary-dark cursor-pointer">
+                Terms of Service
+              </Link>
             </div>
           </div>
         </div>
