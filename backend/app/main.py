@@ -7,6 +7,7 @@ from app.api.admin.presentation.router import router as admin_router
 from app.api.auth.presentation.router import router as auth_router
 from app.api.instructor.presentation.router import router as instructors_router
 from app.api.middleware.rate_limiter import rate_limit_middleware
+from app.api.routes.iot_devices import router as iot_router
 from app.api.student.presentation.router import router as students_router
 
 app = FastAPI(
@@ -34,6 +35,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(instructors_router)
 app.include_router(students_router)
+app.include_router(iot_router)
 
 
 @app.get("/health")
