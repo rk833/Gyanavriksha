@@ -1,7 +1,16 @@
 """
-document_preprocessor.py
+RAG Document Preprocessor
+
 Preprocesses .pdf, .txt, .doc, and .docx files for a RAG pipeline.
 Produces cleaned, chunked documents with metadata ready for embedding.
+
+Quick start
+-----------
+# from document_preprocessor import DocumentPreprocessor, PreprocessingConfig
+
+config = PreprocessingConfig(chunk_size=400, chunk_overlap=40)
+preprocessor = DocumentPreprocessor(config)
+chunks = preprocessor.process("my_file.pdf")
 """
 
 import os
@@ -12,7 +21,6 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -55,7 +63,7 @@ class DocumentPreprocessor:
     .pdf   — pdfplumber (text layer); falls back to PyPDF2
     .txt   — built-in
     .docx  — python-docx
-    .doc   — python-docx2txt  (requires LibreOffice or antiword on some OSes)
+    .doc   — python-docx2txt (requires LibreOffice or antiword on some OSes)
 
     Install dependencies
     --------------------
@@ -316,3 +324,9 @@ class DocumentPreprocessor:
                 start += cfg.chunk_size - cfg.chunk_overlap
 
         return chunks
+
+__all__ = [
+    "DocumentChunk",
+    "DocumentPreprocessor",
+    "PreprocessingConfig",
+]

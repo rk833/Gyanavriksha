@@ -24,7 +24,7 @@ import pytest
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.document_preprocessing.document_preprocessor import (  # noqa: E402
+from app.preprocessing.document_preprocessor import (  # noqa: E402
     DocumentChunk,
     DocumentPreprocessor,
     PreprocessingConfig,
