@@ -4,13 +4,14 @@
 #define WIFI_SSID "heavenyard_2"
 #define WIFI_PASSWORD "CLB4041D64"
 
-#define MQTT_BROKER "192.168.1.100"
+#define MQTT_BROKER "192.168.1.89"
 #define MQTT_PORT 1883
 #define MQTT_USER ""
 #define MQTT_PASSWORD ""
 
 #define DEVICE_ID "smart-desk-001"
 #define DEVICE_API_KEY "your_device_api_key"
+#define FIRMWARE_VERSION "0.2.0"
 
 #define TOPIC_LIGHT "gyanavriksha/devices/" DEVICE_ID "/sensors/light"
 #define TOPIC_DISTANCE "gyanavriksha/devices/" DEVICE_ID "/sensors/distance"
@@ -39,6 +40,11 @@
 
 #define SENSOR_READ_INTERVAL 1000
 #define MQTT_PUBLISH_INTERVAL 5000
+#define MQTT_HEARTBEAT_INTERVAL 10000
 #define SENSOR_BOOT_SAMPLE_COUNT 5
+#define WIFI_CONNECT_TIMEOUT_MS 20000
+#define WIFI_RETRY_INTERVAL_MS 10000
+#define MQTT_RECONNECT_BASE_MS 2000
+#define MQTT_RECONNECT_MAX_MS 30000
 
 #endif
