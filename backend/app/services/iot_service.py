@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 from app.core.security import verify_password
 from app.db.models.audit_log import AuditLog
 from app.db.models.iot_device import IotDevice
+from app.db.models.notification import Notification
 from app.db.models.sensor_log import SensorLog
 from app.db.models.system_setting import SystemSetting
-from app.shared.source_enum import AlertTriggered
+from app.db.models.user import User
+from app.shared.source_enum import AlertTriggered, NotificationChannel, NotificationType, UserRole
 
 _TOPIC_PATTERN = re.compile(
     r"^gyanavriksha/devices/(?P<node_id>[^/]+)/(?P<channel>sensors/light|sensors/distance|status)$"
@@ -54,6 +56,24 @@ def _log_integrity_violation(db: Session, reason: str, topic: str, ip_address: s
         )
     )
     _increment_counter(db, "iot_integrity_violations")
+    admins = (
+        db.query(User)
+        .filter(User.role == UserRole.ADMIN, User.is_active == True)
+        .all()
+    )
+    for admin in admins:
+        db.add(
+            Notification(
+                recipient_id=admin.user_id,
+                type=NotificationType.AT_RISK_FLAG,
+                title="IoT integrity violation detected",
+                body=reason,
+                channel=NotificationChannel.IN_APP,
+                is_read=False,
+                related_resource_id=topic,
+                sent_at=datetime.now(timezone.utc),
+            )
+        )
 
 
 def _parse_topic(topic: str) -> tuple[str, str] | None:

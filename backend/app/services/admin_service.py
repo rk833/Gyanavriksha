@@ -2,8 +2,12 @@
 import ipaddress
 import os
 import secrets
+import socket
 import string
 import uuid
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from sqlalchemy import func, or_
@@ -15,11 +19,19 @@ from app.db.models.audit_log import AuditLog
 from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.grade import Grade
 from app.db.models.instructor_subject import InstructorSubject
+from app.db.models.notification import Notification
 from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.user import User
-from app.shared.source_enum import ActorRole, DocumentType, EmbeddingStatus, UserRole
+from app.shared.source_enum import (
+    ActorRole,
+    DocumentType,
+    EmbeddingStatus,
+    NotificationChannel,
+    NotificationType,
+    UserRole,
+)
 
 
 def _sanitize_ip(ip: str | None) -> str | None:
@@ -54,6 +66,50 @@ def log_audit_event(
     )
     db.add(entry)
     db.flush()
+    _notify_for_audit_action(db, action, description, resource_id)
+
+
+def _broadcast_admin_notification(
+    db: Session,
+    notif_type: NotificationType,
+    title: str,
+    body: str,
+    related_resource_id: str | None = None,
+) -> None:
+    admins = (
+        db.query(User)
+        .filter(User.role == UserRole.ADMIN, User.is_active == True)
+        .all()
+    )
+    for admin in admins:
+        db.add(
+            Notification(
+                recipient_id=admin.user_id,
+                type=notif_type,
+                title=title[:255],
+                body=body,
+                channel=NotificationChannel.IN_APP,
+                is_read=False,
+                related_resource_id=related_resource_id,
+                sent_at=datetime.now(timezone.utc),
+            )
+        )
+
+
+def _notify_for_audit_action(db: Session, action: str, description: str, resource_id: str | None) -> None:
+    mapping: dict[str, tuple[NotificationType, str]] = {
+        "USER_CREATED": (NotificationType.QUIZ_ASSIGNED, "New user account created"),
+        "BULK_IMPORT": (NotificationType.QUIZ_ASSIGNED, "Bulk user import completed"),
+        "IOT_DEVICE_REGISTERED": (NotificationType.POSTURE_ALERT, "IoT device registered"),
+        "IOT_KEY_REGENERATED": (NotificationType.AT_RISK_FLAG, "IoT API key rotated"),
+        "MAINTENANCE_MODE_ENABLED": (NotificationType.AT_RISK_FLAG, "Maintenance mode enabled"),
+        "BACKUP_TRIGGERED": (NotificationType.HEATMAP_UPDATED, "Manual backup completed"),
+    }
+    selected = mapping.get(action)
+    if not selected:
+        return
+    notif_type, title = selected
+    _broadcast_admin_notification(db, notif_type, title, description, resource_id)
 
 
 def _count_users_by_role(db: Session, role: UserRole) -> int:
@@ -1897,3 +1953,148 @@ def update_admin_settings(db: Session, updates: dict, admin_id: uuid.UUID, ip_ad
             ip_address=ip_address,
         )
     return get_admin_settings(db)
+
+
+def get_notification_prefs(db: Session) -> dict:
+    """Return notification preferences with defaults for missing keys."""
+    defaults = {
+        "login_alert": True,
+        "user_created": True,
+        "audit_alert": True,
+        "iot_alert": True,
+        "backup_done": False,
+        "integrity_fail": True,
+        "email_digest": False,
+        "push_all": True,
+    }
+    raw = _get_setting(db, "notification_prefs")
+    if isinstance(raw, dict):
+        return {**defaults, **raw}
+    return defaults
+
+
+def _mqtt_host_port(raw_host: str) -> tuple[str, int]:
+    text = (raw_host or "").strip()
+    if not text:
+        raise ValueError("MQTT broker host is empty")
+    if "://" not in text:
+        text = f"mqtt://{text}"
+    parsed = urllib.parse.urlparse(text)
+    host = parsed.hostname
+    port = parsed.port or 1883
+    if not host:
+        raise ValueError("Invalid MQTT broker host")
+    return host, int(port)
+
+
+def _post_json(url: str, body: dict, timeout_sec: float = 5.0) -> tuple[int, str]:
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url=url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            return resp.status, (resp.reason or "OK")
+    except urllib.error.HTTPError as exc:
+        return exc.code, (exc.reason or "HTTPError")
+    except Exception as exc:  # noqa: BLE001
+        raise ConnectionError(str(exc))
+
+
+def _get_json(url: str, timeout_sec: float = 5.0) -> tuple[int, str]:
+    req = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            return resp.status, (resp.reason or "OK")
+    except urllib.error.HTTPError as exc:
+        return exc.code, (exc.reason or "HTTPError")
+    except Exception as exc:  # noqa: BLE001
+        raise ConnectionError(str(exc))
+
+
+def test_integration_connection(db: Session, target: str, overrides: dict | None = None) -> dict:
+    """Test connectivity/credentials for configured integrations."""
+    payload = overrides or {}
+    key_google = payload.get("google_vision_api_key") or _get_setting(db, "google_vision_api_key")
+    key_gemini = payload.get("gemini_api_key") or _get_setting(db, "gemini_api_key")
+    mqtt_host = payload.get("mqtt_broker_host") or _get_setting(db, "mqtt_broker_host")
+    webhook_url = payload.get("webhook_url") or _get_setting(db, "webhook_url")
+
+    try:
+        if target == "mqtt":
+            host, port = _mqtt_host_port(str(mqtt_host or ""))
+            with socket.create_connection((host, port), timeout=4):
+                pass
+            return {"ok": True, "target": target, "message": f"Connected to MQTT broker {host}:{port}", "status_code": 200}
+
+        if target == "webhook":
+            if not webhook_url:
+                return {"ok": False, "target": target, "message": "Webhook URL not configured", "status_code": 400}
+            code, reason = _post_json(
+                str(webhook_url),
+                {"event": "admin.settings.test", "source": "gyanavriksha_admin"},
+            )
+            ok = 200 <= code < 300
+            return {"ok": ok, "target": target, "message": f"Webhook responded: {reason}", "status_code": code}
+
+        if target == "google_vision":
+            if not key_google:
+                return {"ok": False, "target": target, "message": "Google Vision API key not configured", "status_code": 400}
+            url = f"https://vision.googleapis.com/v1/images:annotate?key={urllib.parse.quote(str(key_google))}"
+            code, reason = _post_json(url, {"requests": []})
+            ok = code in (200, 400)
+            msg = "Google Vision endpoint reachable" if ok else f"Google Vision test failed: {reason}"
+            return {"ok": ok, "target": target, "message": msg, "status_code": code}
+
+        if target == "gemini":
+            if not key_gemini:
+                return {"ok": False, "target": target, "message": "Gemini API key not configured", "status_code": 400}
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(str(key_gemini))}"
+            code, reason = _get_json(url)
+            ok = 200 <= code < 300
+            msg = "Gemini endpoint reachable" if ok else f"Gemini test failed: {reason}"
+            return {"ok": ok, "target": target, "message": msg, "status_code": code}
+
+        return {"ok": False, "target": target, "message": "Unsupported integration target", "status_code": 400}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "target": target, "message": f"Connection failed: {exc}", "status_code": 500}
+
+
+def trigger_manual_backup(
+    db: Session,
+    admin_id: uuid.UUID,
+    ip_address: str | None,
+) -> dict:
+    """Create a backup snapshot artifact and store last successful backup time."""
+    now = datetime.now(timezone.utc)
+    backup_dir = Path("backups")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    snapshot = {
+        "created_at": now.isoformat(),
+        "summary": {
+            "users": db.query(func.count(User.user_id)).scalar() or 0,
+            "iot_devices": db.query(func.count(IotDevice.device_id)).scalar() or 0,
+            "sensor_logs": db.query(func.count(SensorLog.log_id)).scalar() or 0,
+            "curriculum_docs": db.query(func.count(CurriculumDocument.doc_id)).scalar() or 0,
+            "audit_logs": db.query(func.count(AuditLog.log_id)).scalar() or 0,
+        },
+    }
+    file_name = f"manual_backup_{now.strftime('%Y%m%d_%H%M%S')}.json"
+    file_path = backup_dir / file_name
+    file_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+
+    _set_setting(db, "backup_last_success", now.isoformat())
+    log_audit_event(
+        db,
+        admin_id,
+        "BACKUP_TRIGGERED",
+        f"Manual backup created: {file_name}",
+        resource_type="system_backup",
+        resource_id=file_name,
+        ip_address=ip_address,
+    )
+    return {"timestamp": now.isoformat(), "file": str(file_path)}

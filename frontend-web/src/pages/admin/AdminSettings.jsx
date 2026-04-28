@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
-import { getSettings, updateSettings, reindexStore, getVectorStats } from '../../services/adminService';
+import { getSettings, updateSettings, reindexStore, getVectorStats, testIntegrationConnection, triggerManualBackup } from '../../services/adminService';
+import { applyTheme, applyDensity } from '../../lib/theme';
 
 const SIDEBAR_ITEMS = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -32,6 +33,7 @@ const DEFAULT_APPEARANCE_PREFS = {
   lang: 'en',
   tz: 'Asia/Kathmandu',
   density: 'comfortable',
+  theme: 'system',
 };
 
 function SettingsSidebar({ active, onSelect }) {
@@ -311,6 +313,14 @@ function AppearanceSection({ prefs, onSave, saving, saved }) {
     setLocal({ ...DEFAULT_APPEARANCE_PREFS, ...prefs });
   }, [prefs]);
 
+  useEffect(() => {
+    applyTheme(local.theme || 'system');
+  }, [local.theme]);
+
+  useEffect(() => {
+    applyDensity(local.density || 'comfortable');
+  }, [local.density]);
+
   return (
     <div className="space-y-6">
       <SectionLabel>Display Preferences</SectionLabel>
@@ -359,7 +369,13 @@ function AppearanceSection({ prefs, onSave, saving, saved }) {
             { id: 'dark', label: 'Dark', bg: 'bg-slate-800', dot: 'bg-primary-light' },
             { id: 'system', label: 'System', bg: 'bg-gradient-to-r from-white to-slate-800', dot: 'bg-primary' },
           ].map((t) => (
-            <button key={t.id} onClick={() => toast('Theme switching coming soon')} className={`rounded-xl h-16 flex flex-col items-center justify-center gap-1 ${t.bg}`}>
+            <button
+              key={t.id}
+              onClick={() => set('theme', t.id)}
+              className={`rounded-xl h-16 flex flex-col items-center justify-center gap-1 border-2 transition ${t.bg} ${
+                local.theme === t.id ? 'ring-2 ring-primary ring-offset-2' : 'border-transparent'
+              }`}
+            >
               <div className={`w-3 h-3 rounded-full ${t.dot}`} />
               <span className={`text-xs font-semibold ${t.id === 'dark' ? 'text-white' : 'text-slate-700'}`}>{t.label}</span>
             </button>
@@ -383,6 +399,18 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
     navigator.clipboard.writeText(webhookUrl);
     toast.success('Webhook URL copied');
   };
+
+  const testMutation = useMutation({
+    mutationFn: (payload) => testIntegrationConnection(payload),
+    onSuccess: (res) => {
+      const data = res.data;
+      if (data.ok) toast.success(data.message || 'Connection successful');
+      else toast.error(data.message || 'Connection failed');
+    },
+    onError: (err) => {
+      toast.error(err?.response?.data?.detail ?? 'Connection test failed');
+    },
+  });
 
   return (
     <div className="space-y-6">
@@ -414,6 +442,13 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
             {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
             {showKey ? 'Hide' : 'Show'} input
           </button>
+          <button
+            onClick={() => testMutation.mutate({ target: 'google_vision', google_vision_api_key: form.google_vision_api_key || undefined })}
+            disabled={testMutation.isPending}
+            className="text-xs font-semibold text-primary hover:underline"
+          >
+            Test Connection
+          </button>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
@@ -435,6 +470,13 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
             placeholder={geminiHint ? 'Enter new key to replace' : 'Enter API key'}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
           />
+          <button
+            onClick={() => testMutation.mutate({ target: 'gemini', gemini_api_key: form.gemini_api_key || undefined })}
+            disabled={testMutation.isPending}
+            className="text-xs font-semibold text-primary hover:underline"
+          >
+            Test Connection
+          </button>
         </div>
       </div>
 
@@ -458,6 +500,13 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </FieldRow>
+        <button
+          onClick={() => testMutation.mutate({ target: 'mqtt', mqtt_broker_host: form.mqtt_broker_host || undefined })}
+          disabled={testMutation.isPending}
+          className="text-xs font-semibold text-primary hover:underline"
+        >
+          Test MQTT Connection
+        </button>
       </div>
 
       <SectionLabel>Webhook Endpoint</SectionLabel>
@@ -477,6 +526,13 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
           </div>
         </FieldRow>
         <p className="text-xs text-slate-400">Events forwarded: user.created · audit.flagged · iot.alert · integrity.fail</p>
+        <button
+          onClick={() => testMutation.mutate({ target: 'webhook', webhook_url: form.webhook_url || undefined })}
+          disabled={testMutation.isPending}
+          className="text-xs font-semibold text-primary hover:underline"
+        >
+          Test Webhook
+        </button>
       </div>
 
       <SaveBar onSave={onSave} saving={saving} saved={saved} />
@@ -484,7 +540,7 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
   );
 }
 
-function BackupSection({ form, onChange, onMaintenanceToggle, onSave, saving, saved }) {
+function BackupSection({ form, onChange, onMaintenanceToggle, onSave, onTriggerBackup, saving, saved }) {
   const [triggering, setTriggering] = useState(false);
 
   const backupLastSuccess = form.backup_last_success
@@ -493,12 +549,15 @@ function BackupSection({ form, onChange, onMaintenanceToggle, onSave, saving, sa
 
   const handleTriggerBackup = async () => {
     setTriggering(true);
-    await new Promise((r) => setTimeout(r, 1800));
-    const now = new Date().toISOString();
-    onChange('backup_last_success', now);
-    await onSave({ backup_last_success: now });
+    try {
+      const res = await onTriggerBackup();
+      const now = new Date().toISOString();
+      onChange('backup_last_success', now);
+      toast.success(res?.data?.message ?? 'Manual backup triggered successfully');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail ?? 'Failed to trigger manual backup');
+    }
     setTriggering(false);
-    toast.success('Manual backup triggered successfully');
   };
 
   return (
@@ -718,7 +777,7 @@ function MaintenanceConfirmDialog({ onConfirm, onCancel }) {
 }
 
 export default function AdminSettings() {
-  const [activeSection, setActiveSection] = useState('system');
+  const [activeSection, setActiveSection] = useState('profile');
   const [form, setForm] = useState({});
   const [pendingMaintenance, setPendingMaintenance] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -756,6 +815,13 @@ export default function AdminSettings() {
       setTimeout(() => setSaved(false), 2000);
     },
     onError: () => toast.error('Failed to save settings'),
+  });
+
+  const backupMutation = useMutation({
+    mutationFn: () => triggerManualBackup(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'settings'] });
+    },
   });
 
   const buildSystemPayload = () => {
@@ -853,6 +919,7 @@ export default function AdminSettings() {
               onChange={handleChange}
               onMaintenanceToggle={handleMaintenanceToggle}
               onSave={handleSave}
+              onTriggerBackup={() => backupMutation.mutateAsync()}
               saving={saveMutation.isPending}
               saved={saved}
             />
