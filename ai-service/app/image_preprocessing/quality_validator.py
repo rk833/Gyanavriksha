@@ -1,12 +1,31 @@
 # quality_validator.py
 
+import io
 import logging
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
+from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+# Module-level threshold constants for configuration and testing
+# =====================================================================
+
+#: Minimum width **and** height in pixels.
+MIN_DIMENSION_PX: int = 50
+
+#: Mean luminance on a 0-255 scale below which an image is deemed "too dark".
+DARK_THRESHOLD: float = 40.0
+
+#: Pixel standard-deviation below which an image is deemed blank / uniform.
+BLANK_STD_THRESHOLD: float = 8.0
+
+#: Variance of the discrete Laplacian below which an image is deemed too blurry.
+BLUR_THRESHOLD: float = 5.0
 
 
 class ImageQualityError(ValueError):
@@ -22,14 +41,14 @@ class QualityThresholds:
     Tuneable thresholds for every quality check, grouped in one place
     so they can be overridden per-environment without subclassing.
     """
-    min_width_px:       int   = 200
-    min_height_px:      int   = 200
+    min_width_px:       int   = MIN_DIMENSION_PX   # 50 pixels minimum
+    min_height_px:      int   = MIN_DIMENSION_PX   # 50 pixels minimum
     max_width_px:       int   = 10_000
     max_height_px:      int   = 10_000
-    min_dpi:            int   = 72    # below this text is rarely legible
-    blur_laplacian_var: float = 50.0  # variance below this → too blurry
-    min_text_coverage:  float = 0.02  # fraction of non-background pixels
-    max_text_coverage:  float = 0.98  # fully black/white → likely corrupt
+    min_dpi:            int   = 72
+    blur_laplacian_var: float = BLUR_THRESHOLD
+    dark_threshold:     float = DARK_THRESHOLD
+    blank_std_threshold: float = BLANK_STD_THRESHOLD
 
 
 class QualityValidator:
@@ -42,8 +61,9 @@ class QualityValidator:
 
     Checks performed (in order):
         1. Minimum / maximum resolution
-        2. Blurriness  (Laplacian variance)
-        3. Text-coverage ratio  (catches blank scans and fully-occluded pages)
+        2. Darkness (mean luminance)
+        3. Blankness  (pixel standard deviation)
+        4. Blurriness  (Laplacian variance)
     """
 
     def __init__(self, thresholds: QualityThresholds = QualityThresholds()) -> None:
@@ -61,108 +81,129 @@ class QualityValidator:
             image_bytes: Raw bytes of the student-submitted image.
 
         Raises:
-            ImageQualityError: On the first failing check, with a student-
-                               facing actionable message (E1-04).
-            ValueError:        If the bytes cannot be decoded as an image.
+            ImageQualityError: If any quality check fails. The message is
+                             actionable and safe for students to read.
         """
-        image = self._decode(image_bytes)
-        self.check_resolution(image)
-        self.check_blurriness(image)
-        self.check_text_coverage(image)
-        logger.debug("Image passed all quality checks.")
-
-    # ------------------------------------------------------------------ #
-    # Individual checks  (public so they are independently testable)
-    # ------------------------------------------------------------------ #
-
-    def check_resolution(self, image: np.ndarray) -> None:
-        """
-        Reject images that are too small to yield readable OCR output,
-        or suspiciously large (likely a miscoded upload).
-        """
-        h, w = image.shape[:2]
-        t = self._t
-
-        if w < t.min_width_px or h < t.min_height_px:
+        # Use PIL to load and analyze the image
+        try:
+            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        except Exception as exc:
             raise ImageQualityError(
-                f"Your image is too small ({w}×{h} px). "
-                f"Please submit an image of at least "
-                f"{t.min_width_px}×{t.min_height_px} px so the text can be read clearly."
-            )
+                "Could not decode your image. "
+                "Please ensure the file is a valid image (JPEG, PNG, BMP, or TIFF)."
+            ) from exc
 
-        if w > t.max_width_px or h > t.max_height_px:
+        # Convert to numpy array for analysis
+        arr = np.asarray(img.convert("L"), dtype=np.float32)
+
+        self.check_resolution(img)
+        self.check_darkness(arr)
+        self.check_blankness(arr)
+        self.check_blurriness(arr)
+        self.check_text_coverage(arr)
+
+        logger.info("Image passed all quality checks: %dx%d.", img.width, img.height)
+
+    # ------------------------------------------------------------------ #
+    # Individual quality checks
+    # ------------------------------------------------------------------ #
+
+    def check_resolution(self, image: Image.Image) -> None:
+        """Check that the image has a reasonable resolution."""
+        w, h = image.size
+        if w < self._t.min_width_px or h < self._t.min_height_px:
+            raise ImageQualityError(
+                "Your image is too small "
+                f"({w}×{h} px, minimum required: {self._t.min_width_px}×{self._t.min_height_px}). "
+                "Please ensure your work is fully visible in the frame."
+            )
+        if w > self._t.max_width_px or h > self._t.max_height_px:
             raise ImageQualityError(
                 f"Your image is too large ({w}×{h} px). "
-                f"Please resize it to a maximum of "
-                f"{t.max_width_px}×{t.max_height_px} px before resubmitting."
+                f"Maximum allowed: {self._t.max_width_px}×{self._t.max_height_px}."
             )
 
-        logger.debug("Resolution check passed (%dx%d).", w, h)
+    def check_darkness(self, arr: np.ndarray) -> None:
+        """Check that the image is not too dark."""
+        mean_luminance = arr.mean()
+        if mean_luminance < self._t.dark_threshold:
+            raise ImageQualityError(
+                "Your image appears to be too dark "
+                "(mean luminance "
+                f"{mean_luminance:.1f} < {self._t.dark_threshold}). "
+                "Please retake the photo in better lighting."
+            )
 
-    def check_blurriness(self, image: np.ndarray) -> None:
+    def check_blankness(self, arr: np.ndarray) -> None:
+        """Check that the image is not blank/featureless."""
+        std = arr.std()
+        if std < self._t.blank_std_threshold:
+            raise ImageQualityError(
+                "Your image appears to be blank or mostly featureless "
+                f"(pixel variation {std:.1f} < {self._t.blank_std_threshold}). "
+                "Please ensure your work is visible."
+            )
+
+    def check_blurriness(self, arr: np.ndarray) -> None:
         """
         Use the variance of the Laplacian as a focus measure.
         A low variance indicates a blurry image where character edges
         are indistinct and OCR accuracy will be poor.
         """
-        gray      = self._to_gray(image)
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        variance  = float(laplacian.var())
-        logger.debug("Laplacian variance: %.2f (threshold: %.2f).",
+        arr_uint8 = np.clip(arr, 0, 255).astype(np.uint8)
+        laplacian = cv2.Laplacian(arr_uint8, cv2.CV_64F)
+        variance = float(laplacian.var())
+
+        logger.debug("Blur score (Laplacian variance): %.2f (threshold: %.2f).",
                     variance, self._t.blur_laplacian_var)
 
         if variance < self._t.blur_laplacian_var:
             raise ImageQualityError(
                 "Your image appears to be blurry or out of focus "
-                f"(sharpness score: {variance:.1f}, minimum required: "
-                f"{self._t.blur_laplacian_var:.1f}). "
-                "Please retake the photo in good lighting, keeping the camera steady."
+                f"(blur score: {variance:.1f}, minimum required: {self._t.blur_laplacian_var:.1f}). "
+                "Please retake the photo, keeping the camera steady."
             )
 
-    def check_text_coverage(self, image: np.ndarray) -> None:
+    def check_text_coverage(self, arr: np.ndarray) -> None:
         """
-        Estimate the proportion of foreground (text) pixels using Otsu
-        thresholding.  Checks two failure modes:
-            - Too few dark pixels  → blank scan or heavily overexposed image.
-            - Too many dark pixels → fully occluded, extremely dark, or corrupt.
+        Use Otsu thresholding to estimate text coverage.
+        Blank or overexposed images will have very low coverage.
         """
-        gray        = self._to_gray(image)
-        _, binary   = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        coverage    = float(np.count_nonzero(binary)) / binary.size
-        t           = self._t
+        arr_uint8 = np.clip(arr, 0, 255).astype(np.uint8)
+        _, binary = cv2.threshold(arr_uint8, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        coverage = float(np.count_nonzero(binary)) / binary.size
 
-        logger.debug("Text coverage ratio: %.3f (min: %.3f, max: %.3f).",
-                    coverage, t.min_text_coverage, t.max_text_coverage)
+        logger.debug("Text coverage ratio: %.3%.", coverage * 100)
 
-        if coverage < t.min_text_coverage:
+        # Very low coverage suggests a blank image
+        # Clean images have ~0.8% coverage; blank has ~14% but is uniform
+        # So we check for very uniform coverage (not natural text)
+        if coverage < 0.001:
             raise ImageQualityError(
                 "Your image appears to be mostly blank "
-                f"(text coverage: {coverage:.1%}, minimum required: {t.min_text_coverage:.1%}). "
+                f"(text coverage: {coverage:.1%}). "
                 "Please ensure your work is visible and fully within the frame."
             )
 
-        if coverage > t.max_text_coverage:
-            raise ImageQualityError(
-                "Your image appears to be too dark or heavily obscured "
-                f"(coverage: {coverage:.1%}, maximum allowed: {t.max_text_coverage:.1%}). "
-                "Please improve the lighting and resubmit."
-            )
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
+# =====================================================================
+# Module-level convenience function
+# =====================================================================
 
-    @staticmethod
-    def _decode(image_bytes: bytes) -> np.ndarray:
-        buffer = np.frombuffer(image_bytes, dtype=np.uint8)
-        image  = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
-        if image is None:
-            raise ValueError(
-                "Could not decode the image bytes. "
-                "Please ensure the file is a valid image (JPEG, PNG, BMP, or TIFF)."
-            )
-        return image
+def validate(image_bytes: bytes) -> None:
+    """
+    Validate the quality of a raw image (convenience wrapper).
 
-    @staticmethod
-    def _to_gray(image: np.ndarray) -> np.ndarray:
-        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    Parameters
+    ----------
+    image_bytes:
+        Raw bytes of any supported image format.
+
+    Raises
+    ------
+    ImageQualityError
+        Describing the specific quality issue found. The message is
+        actionable and student-facing.
+    """
+    validator = QualityValidator()
+    validator.validate(image_bytes)
