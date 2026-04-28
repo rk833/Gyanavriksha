@@ -1237,6 +1237,12 @@ def _device_to_response_dict(device: IotDevice) -> dict:
         "status": device.status,
         "last_seen_at": device.last_seen_at,
         "created_at": device.registered_at,
+        "firmware_version": device.firmware_version,
+        "device_mac": str(device.device_mac) if device.device_mac else None,
+        "latest_light": None,
+        "latest_distance_cm": None,
+        "latest_alert": None,
+        "latest_telemetry_at": None,
     }
 
 
@@ -1254,6 +1260,7 @@ def list_iot_devices(
     db: Session,
     status: str | None,
     device_type: str | None,
+    node_id: str | None,
     location: str | None,
     page: int,
     per_page: int,
@@ -1264,6 +1271,8 @@ def list_iot_devices(
         query = query.filter(IotDevice.status == status)
     if device_type:
         query = query.filter(IotDevice.device_type == device_type)
+    if node_id:
+        query = query.filter(IotDevice.node_id.ilike(f"%{node_id}%"))
     if location:
         query = query.filter(IotDevice.location.ilike(f"%{location}%"))
 
@@ -1278,8 +1287,44 @@ def list_iot_devices(
         .count()
     )
 
+    device_rows = []
+    for device in devices:
+        row = _device_to_response_dict(device)
+        last_light = (
+            db.query(SensorLog)
+            .filter(SensorLog.device_id == device.device_id, SensorLog.sensor_type == "ldr")
+            .order_by(SensorLog.recorded_at.desc())
+            .first()
+        )
+        last_distance = (
+            db.query(SensorLog)
+            .filter(SensorLog.device_id == device.device_id, SensorLog.sensor_type == "ultrasonic")
+            .order_by(SensorLog.recorded_at.desc())
+            .first()
+        )
+        last_alert = (
+            db.query(SensorLog)
+            .filter(
+                SensorLog.device_id == device.device_id,
+                SensorLog.alert_triggered.isnot(None),
+            )
+            .order_by(SensorLog.recorded_at.desc())
+            .first()
+        )
+        latest = (
+            db.query(SensorLog)
+            .filter(SensorLog.device_id == device.device_id)
+            .order_by(SensorLog.recorded_at.desc())
+            .first()
+        )
+        row["latest_light"] = last_light.ldr_value if last_light else None
+        row["latest_distance_cm"] = last_distance.distance_cm if last_distance else None
+        row["latest_alert"] = last_alert.alert_triggered.value if last_alert and last_alert.alert_triggered else None
+        row["latest_telemetry_at"] = latest.recorded_at if latest else None
+        device_rows.append(row)
+
     return {
-        "devices": [_device_to_response_dict(d) for d in devices],
+        "devices": device_rows,
         "total_count": total_count,
         "active_nodes": active_nodes,
         "alerts_count": alerts_count,
@@ -1403,12 +1448,47 @@ def get_iot_network_health(db: Session) -> dict:
         .filter(IotDevice.status == "offline", IotDevice.last_seen_at < threshold)
         .count()
     )
+    now = datetime.now(timezone.utc)
+    recent_cutoff = now - timedelta(minutes=5)
+    recent_logs = (
+        db.query(SensorLog)
+        .filter(SensorLog.recorded_at >= recent_cutoff)
+        .all()
+    )
+    total_bytes = 0
+    for log in recent_logs:
+        payload = {
+            "sensor_type": log.sensor_type,
+            "ldr_value": log.ldr_value,
+            "distance_cm": log.distance_cm,
+            "led_activated": log.led_activated,
+            "alert_triggered": log.alert_triggered.value if log.alert_triggered else None,
+            "recorded_at": log.recorded_at.isoformat() if log.recorded_at else None,
+        }
+        total_bytes += len(json.dumps(payload))
+    # Convert recent byte-rate to Gbit/s for dashboard contract compatibility.
+    throughput_gbps = (total_bytes * 8) / (5 * 60 * 1_000_000_000)
+
+    protocol_setting = _get_setting(db, "mqtt_security_protocol")
+    if isinstance(protocol_setting, str) and protocol_setting.strip():
+        protocol = protocol_setting.strip()
+    else:
+        tls_enabled = _get_setting(db, "mqtt_tls_enabled")
+        if tls_enabled in (True, "true", "1", 1):
+            protocol = "TLS"
+        else:
+            broker_host = _get_setting(db, "mqtt_broker_host")
+            if isinstance(broker_host, str) and broker_host.startswith(("ssl://", "mqtts://")):
+                protocol = "TLS"
+            else:
+                protocol = "TCP (no TLS)"
+
     health_pct = round(online / total * 100, 1) if total > 0 else 0.0
     return {
         "health_check_pct": health_pct,
         "uptime_status": "Stable uptime this week" if health_pct >= 95 else "Degraded",
-        "data_throughput_gbps": 1.2,
-        "network_security_protocol": "TLS 1.3",
+        "data_throughput_gbps": round(throughput_gbps, 6),
+        "network_security_protocol": protocol,
         "active_device_count": online,
         "offline_device_count": total - online,
         "alert_count": alerts,
@@ -1436,6 +1516,55 @@ def get_device_telemetry(db: Session, device_id: uuid.UUID, limit: int) -> list[
         }
         for log in logs
     ]
+
+
+def get_iot_alert_timeline(
+    db: Session,
+    device_id: uuid.UUID | None,
+    severity: str | None,
+    hours: int,
+    limit: int,
+) -> tuple[list[dict], int]:
+    """Return timeline events for posture/absence and auto-light transitions."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max(hours, 1))
+    query = db.query(SensorLog, IotDevice).join(IotDevice, IotDevice.device_id == SensorLog.device_id)
+    query = query.filter(SensorLog.recorded_at >= cutoff)
+    if device_id:
+        query = query.filter(SensorLog.device_id == device_id)
+    rows = query.order_by(SensorLog.recorded_at.desc()).limit(max(limit, 1) * 4).all()
+
+    events: list[dict] = []
+    for log, device in rows:
+        if log.sensor_type == "ultrasonic" and log.alert_triggered:
+            event_type = "too_close" if log.alert_triggered.value == "posture" else "away"
+            row = {
+                "device_id": device.device_id,
+                "node_id": device.node_id or str(device.device_id)[:8],
+                "severity": "critical" if event_type == "too_close" else "warning",
+                "event_type": event_type,
+                "sensor_type": "ultrasonic",
+                "message": f"{event_type.replace('_', ' ')} event detected",
+                "recorded_at": log.recorded_at,
+            }
+            events.append(row)
+            continue
+        if log.sensor_type == "ldr" and log.led_activated is not None:
+            event_type = "auto_light_on" if log.led_activated else "auto_light_off"
+            row = {
+                "device_id": device.device_id,
+                "node_id": device.node_id or str(device.device_id)[:8],
+                "severity": "info",
+                "event_type": event_type,
+                "sensor_type": "ldr",
+                "message": "Auto light turned on" if log.led_activated else "Auto light turned off",
+                "recorded_at": log.recorded_at,
+            }
+            events.append(row)
+
+    if severity and severity != "all":
+        events = [e for e in events if e["severity"] == severity]
+    events = events[: max(limit, 1)]
+    return events, len(events)
 
 
 def _to_audit_response_dict(log: AuditLog, email: str | None, full_name: str | None) -> dict:

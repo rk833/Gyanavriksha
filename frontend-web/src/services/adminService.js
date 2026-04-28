@@ -50,6 +50,7 @@ export const reindexStore = (data = {}) => api.post('/api/admin/vector-store/rei
 export const getExportSnapshot = () => api.get('/api/admin/vector-store/export-snapshot');
 
 export const listIotDevices = (params = {}) => api.get('/api/admin/iot/devices', { params });
+export const getIotAlerts = (params = {}) => api.get('/api/admin/iot/alerts', { params });
 export const registerDevice = (data) => api.post('/api/admin/iot/devices', data);
 export const getIotHealth = () => api.get('/api/admin/iot/health');
 export const getIotDevice = (id) => api.get(`/api/admin/iot/devices/${id}`);

@@ -277,6 +277,12 @@ class IoTDeviceResponse(BaseModel):
     status: str
     last_seen_at: Optional[datetime] = None
     created_at: datetime
+    firmware_version: Optional[str] = None
+    device_mac: Optional[str] = None
+    latest_light: Optional[float] = None
+    latest_distance_cm: Optional[float] = None
+    latest_alert: Optional[str] = None
+    latest_telemetry_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -322,6 +328,25 @@ class IoTDeviceDetailResponse(IoTDeviceResponse):
     """Device detail response extended with recent telemetry entries."""
 
     recent_telemetry: list[dict]
+
+
+class IoTAlertEntry(BaseModel):
+    """Single timeline alert/event row for IoT observability."""
+
+    device_id: uuid.UUID
+    node_id: str
+    severity: str
+    event_type: str
+    sensor_type: str
+    message: str
+    recorded_at: datetime
+
+
+class IoTAlertTimelineResponse(BaseModel):
+    """Filtered IoT alert timeline."""
+
+    alerts: list[IoTAlertEntry]
+    total_count: int
 
 
 class AuditLogResponse(BaseModel):
