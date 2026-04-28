@@ -90,7 +90,7 @@ export default function Contact() {
   };
 
   return (
-    <div className="bg-background" id="contact-top">
+    <div className="bg-surface" id="contact-top">
       <main className="pb-16">
         <section className="max-w-[1200px] mx-auto px-6 mb-16 pt-6">
           <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-primary to-primary-dark p-12 md:p-20 text-white shadow-2xl">
@@ -105,7 +105,7 @@ export default function Contact() {
         </section>
 
         <section className="max-w-[1200px] mx-auto px-6 grid grid-cols-1 lg:grid-cols-12 gap-12">
-          <div className="lg:col-span-7 bg-white p-8 md:p-12 rounded-[2rem] shadow-sm">
+          <div className="lg:col-span-7 bg-surface-container-lowest p-8 md:p-12 rounded-[2rem] shadow-sm">
             <h2 className="text-3xl font-bold text-primary mb-8 tracking-tight">Send a Message</h2>
             <form id="contact-form" onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -179,13 +179,13 @@ export default function Contact() {
 
           <div className="lg:col-span-5 space-y-6">
             {infoCards.map(({ icon: Icon, title, line1, line2 }) => (
-              <div key={title} className="bg-[#e6e8eb] p-8 rounded-3xl transition-all hover:bg-white hover:shadow-xl">
+              <div key={title} className="bg-surface-container-high p-8 rounded-3xl transition-all hover:bg-white hover:shadow-xl">
                 <div className="flex items-start gap-4">
                   <div className="p-3 bg-primary/10 text-primary rounded-xl">
                     <Icon className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-primary">{title}</h3>
+                    <h3 className="text-lg font-bold text-primary-dark">{title}</h3>
                     <p className="text-slate-700 leading-relaxed mt-1 font-medium">{line1}</p>
                     <p className="text-sm text-slate-500 mt-2">{line2}</p>
                   </div>
