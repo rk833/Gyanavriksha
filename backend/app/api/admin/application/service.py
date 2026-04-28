@@ -33,6 +33,8 @@ from app.schemas.admin import (
     IngestionJobResponse,
     IntegrityAuditResponse,
     IoTDeviceCreateResponse,
+    IoTAlertTimelineResponse,
+    IoTAlertEntry,
     IoTDeviceDetailResponse,
     IoTDeviceListResponse,
     IoTDeviceResponse,
@@ -767,12 +769,13 @@ def list_iot_devices(
     db: Session,
     status: str | None,
     device_type: str | None,
+    node_id: str | None,
     location: str | None,
     page: int,
     per_page: int,
 ) -> IoTDeviceListResponse:
     """Return a paginated IoT device list with summary counts."""
-    result = admin_service.list_iot_devices(db, status, device_type, location, page, per_page)
+    result = admin_service.list_iot_devices(db, status, device_type, node_id, location, page, per_page)
     return IoTDeviceListResponse(**result)
 
 
@@ -864,6 +867,21 @@ def get_device_telemetry(db: Session, device_id: uuid.UUID, limit: int) -> list[
     device = admin_service.get_iot_device_by_id(db, device_id)
     _raise_if_not_found(device, "Device not found")
     return admin_service.get_device_telemetry(db, device_id, limit)
+
+
+def get_iot_alert_timeline(
+    db: Session,
+    device_id: uuid.UUID | None,
+    severity: str | None,
+    hours: int,
+    limit: int,
+) -> IoTAlertTimelineResponse:
+    """Return filtered timeline for IoT alerts and auto-light transitions."""
+    rows, total = admin_service.get_iot_alert_timeline(db, device_id, severity, hours, limit)
+    return IoTAlertTimelineResponse(
+        alerts=[IoTAlertEntry(**row) for row in rows],
+        total_count=total,
+    )
 
 
 def override_device_status(

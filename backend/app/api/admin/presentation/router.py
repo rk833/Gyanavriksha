@@ -52,6 +52,7 @@ from app.schemas.admin import (
     IoTDeviceDetailResponse,
     IoTDeviceListResponse,
     IoTDeviceResponse,
+    IoTAlertTimelineResponse,
     IoTDeviceUpdateRequest,
     IoTHealthResponse,
     NamespaceCreateRequest,
@@ -580,6 +581,7 @@ def requeue_curriculum_doc(
 def list_iot_devices(
     status: Optional[str] = None,
     device_type: Optional[str] = None,
+    node_id: Optional[str] = None,
     location: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
@@ -587,7 +589,7 @@ def list_iot_devices(
     db: Session = Depends(get_db),
 ):
     """List all IoT devices with optional filters and a network summary."""
-    return service.list_iot_devices(db, status, device_type, location, page, per_page)
+    return service.list_iot_devices(db, status, device_type, node_id, location, page, per_page)
 
 
 @router.post("/iot/devices", response_model=IoTDeviceCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -665,6 +667,19 @@ def get_device_telemetry(
 ):
     """Return the last N telemetry entries for a specific device."""
     return service.get_device_telemetry(db, device_id, limit)
+
+
+@router.get("/iot/alerts", response_model=IoTAlertTimelineResponse)
+def get_iot_alerts(
+    device_id: Optional[uuid.UUID] = None,
+    severity: Optional[str] = "all",
+    hours: int = 24,
+    limit: int = 50,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return filtered IoT alert timeline across devices."""
+    return service.get_iot_alert_timeline(db, device_id, severity, hours, limit)
 
 
 @router.patch("/iot/devices/{device_id}/status", response_model=IoTDeviceResponse)

@@ -49,6 +49,11 @@ function TfaBadge({ enabled }) {
 
 function Pagination({ page, totalPages, onChange }) {
   if (totalPages <= 1) return null;
+  const maxVisible = 5;
+  const startPage = Math.max(1, page - Math.floor(maxVisible / 2));
+  const endPage = Math.min(totalPages, startPage + maxVisible - 1);
+  const pages = [];
+  for (let p = startPage; p <= endPage; p += 1) pages.push(p);
   return (
     <div className="flex items-center gap-1">
       <button
@@ -58,20 +63,39 @@ function Pagination({ page, totalPages, onChange }) {
       >
         <ChevronLeft className="w-4 h-4 text-slate-600" />
       </button>
-      {[...Array(Math.min(totalPages, 5))].map((_, i) => {
-        const p = i + 1;
-        return (
+      {startPage > 1 && (
+        <>
           <button
-            key={p}
-            onClick={() => onChange(p)}
-            className={`w-8 h-8 rounded text-sm font-medium transition ${
-              p === page ? 'bg-primary text-white' : 'text-slate-600 hover:bg-primary-light/50'
-            }`}
+            onClick={() => onChange(1)}
+            className="w-8 h-8 rounded text-sm font-medium text-slate-600 hover:bg-primary-light/50 transition"
           >
-            {p}
+            1
           </button>
-        );
-      })}
+          {startPage > 2 && <span className="px-1 text-slate-400">...</span>}
+        </>
+      )}
+      {pages.map((p) => (
+        <button
+          key={p}
+          onClick={() => onChange(p)}
+          className={`w-8 h-8 rounded text-sm font-medium transition ${
+            p === page ? 'bg-primary text-white' : 'text-slate-600 hover:bg-primary-light/50'
+          }`}
+        >
+          {p}
+        </button>
+      ))}
+      {endPage < totalPages && (
+        <>
+          {endPage < totalPages - 1 && <span className="px-1 text-slate-400">...</span>}
+          <button
+            onClick={() => onChange(totalPages)}
+            className="w-8 h-8 rounded text-sm font-medium text-slate-600 hover:bg-primary-light/50 transition"
+          >
+            {totalPages}
+          </button>
+        </>
+      )}
       <button
         onClick={() => onChange(page + 1)}
         disabled={page === totalPages}
@@ -707,6 +731,7 @@ export default function UserManagement() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -720,10 +745,11 @@ export default function UserManagement() {
   const perPage = 20;
 
   const { data: userData, isPending: loading, error } = useQuery({
-    queryKey: ['admin', 'users', page, roleFilter],
+    queryKey: ['admin', 'users', page, roleFilter, searchFilter],
     queryFn: async () => {
       const params = { page, per_page: perPage };
       if (roleFilter) params.role = roleFilter;
+      if (searchFilter.trim()) params.search = searchFilter.trim();
       return (await getUsers(params)).data;
     },
   });
@@ -863,6 +889,12 @@ export default function UserManagement() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <input
+            value={searchFilter}
+            onChange={(e) => { setSearchFilter(e.target.value); setPage(1); }}
+            placeholder="Search name or email"
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/30 min-w-[220px]"
+          />
           <select
             value={roleFilter}
             onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }}

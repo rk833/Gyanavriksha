@@ -244,3 +244,17 @@ You should then see:
 - `MQTT connected.`
 - `mqtt=connected`
 
+---
+
+## 9) Sprint 6 Phase 5 Demo
+
+For GD-142/GD-143 validation and demo sign-off, use:
+
+- `iot/docs/sprint_6_phase_5_demo_runbook.md`
+
+It includes:
+- trigger/result script for light and distance rules
+- alert timeline verification
+- broker outage/reconnect checks
+- evidence capture checklist for sprint closure
+
