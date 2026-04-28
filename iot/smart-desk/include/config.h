@@ -1,40 +1,44 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// WiFi Credentials
-#define WIFI_SSID "your_wifi_ssid"
-#define WIFI_PASSWORD "your_wifi_password"
+#define WIFI_SSID "heavenyard_2"
+#define WIFI_PASSWORD "CLB4041D64"
 
-// MQTT Broker
-#define MQTT_BROKER "192.168.1.100"  // Your server IP
+#define MQTT_BROKER "192.168.1.100"
 #define MQTT_PORT 1883
 #define MQTT_USER ""
 #define MQTT_PASSWORD ""
 
-// Device Identity
 #define DEVICE_ID "smart-desk-001"
 #define DEVICE_API_KEY "your_device_api_key"
 
-// MQTT Topics (namespaced per device)
 #define TOPIC_LIGHT "gyanavriksha/devices/" DEVICE_ID "/sensors/light"
 #define TOPIC_DISTANCE "gyanavriksha/devices/" DEVICE_ID "/sensors/distance"
 #define TOPIC_STATUS "gyanavriksha/devices/" DEVICE_ID "/status"
 #define TOPIC_LED_CMD "gyanavriksha/devices/" DEVICE_ID "/commands/led"
 
-// Sensor Pins
-#define LDR_PIN 34            // Analog pin for LDR
-#define LED_PIN 2             // Digital pin for White LED
-#define ULTRASONIC_TRIG 5     // HC-SR04 Trigger
-#define ULTRASONIC_ECHO 18    // HC-SR04 Echo
+#define LDR_PIN 13
+#define LDR_USE_DIGITAL_OUTPUT true
+#define LDR_DO_DARK_STATE HIGH
+#define LED_PIN 2
+#define ULTRASONIC_TRIG 5
+#define ULTRASONIC_ECHO 18
 
-// Thresholds
-#define LIGHT_THRESHOLD 300   // Below this = too dark, activate LED
-#define POSTURE_MIN_CM 30     // Closer than this = posture alert
-#define PRESENCE_MAX_CM 150   // Further than this = student absent
-#define POSTURE_ALERT_SEC 10  // Seconds before posture alert triggers
+#define LDR_BUCKET_DIM_MAX 1200
+#define LDR_BUCKET_NORMAL_MAX 2600
+#define LDR_BUCKET_BRIGHT_MAX 4095
+#define LDR_LED_ON_THRESHOLD 1000
+#define LDR_LED_OFF_THRESHOLD 1400
 
-// Timing
-#define SENSOR_READ_INTERVAL 1000   // Read sensors every 1 second
-#define MQTT_PUBLISH_INTERVAL 5000  // Publish to MQTT every 5 seconds
+#define DISTANCE_TOO_CLOSE_CM 30.0f
+#define DISTANCE_PRESENT_MAX_CM 150.0f
+#define DISTANCE_VALID_MIN_CM 2.0f
+#define DISTANCE_VALID_MAX_CM 400.0f
+#define DISTANCE_ALERT_WINDOW_MS 8000
+#define DISTANCE_FILTER_WINDOW 5
+
+#define SENSOR_READ_INTERVAL 1000
+#define MQTT_PUBLISH_INTERVAL 5000
+#define SENSOR_BOOT_SAMPLE_COUNT 5
 
 #endif
