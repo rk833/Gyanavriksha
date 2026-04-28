@@ -80,3 +80,9 @@ export const runIntegrityAudit = () => api.post('/api/admin/security/run-audit')
 
 export const getSettings = () => api.get('/api/admin/settings');
 export const updateSettings = (data) => api.patch('/api/admin/settings', data);
+export const testIntegrationConnection = (data) => api.post('/api/admin/settings/test-connection', data);
+export const triggerManualBackup = () => api.post('/api/admin/settings/backup/trigger');
+export const getAdminNotifications = (params = {}) => api.get('/api/admin/notifications', { params });
+export const getAdminUnreadCount = () => api.get('/api/admin/notifications/unread-count');
+export const markAdminNotificationRead = (id) => api.patch(`/api/admin/notifications/${id}/read`);
+export const markAllAdminNotificationsRead = () => api.patch('/api/admin/notifications/read-all');

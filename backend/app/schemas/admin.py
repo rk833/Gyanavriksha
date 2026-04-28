@@ -424,6 +424,25 @@ class AdminSettingsUpdateRequest(BaseModel):
     webhook_url: Optional[str] = None
 
 
+class IntegrationTestRequest(BaseModel):
+    """Request body for testing external integration connectivity."""
+
+    target: str
+    google_vision_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    mqtt_broker_host: Optional[str] = None
+    webhook_url: Optional[str] = None
+
+
+class IntegrationTestResponse(BaseModel):
+    """Result payload for integration connectivity tests."""
+
+    ok: bool
+    target: str
+    message: str
+    status_code: Optional[int] = None
+
+
 class CurriculumDocDetailResponse(BaseModel):
     """Full curriculum document detail including ingestion status."""
 

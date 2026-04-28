@@ -50,6 +50,8 @@ import AdminSecurityIntegrity from './pages/admin/SecurityIntegrity';
 import AdminCurriculumUpload from './pages/admin/CurriculumUpload';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminAcademicManagement from './pages/admin/AcademicManagement';
+import AdminNotifications from './pages/admin/Notifications';
+import AdminProfile from './pages/admin/Profile';
 
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
@@ -137,6 +139,8 @@ function App() {
             <Route path="iot" element={<AdminDeviceManagement />} />
             <Route path="security" element={<AdminSecurityIntegrity />} />
             <Route path="curriculum-ingestion" element={<AdminCurriculumUpload />} />
+            <Route path="notifications" element={<AdminNotifications />} />
+            <Route path="profile" element={<AdminProfile />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
         </Routes>

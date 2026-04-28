@@ -10,10 +10,15 @@ from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.models.user import User
+from app.schemas.common import PaginatedResponse
+from app.schemas.notification import NotificationResponse, UnreadCountResponse
+from app.schemas.user import MessageResponse
 from app.schemas.admin import (
     AdminDashboardResponse,
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
+    IntegrationTestResponse,
+    IntegrationTestRequest,
     AdminUserCreateResponse,
     AdminUserListResponse,
     AdminUserResponse,
@@ -46,6 +51,7 @@ from app.schemas.admin import (
     SystemHealthSummary,
     VectorStoreStatsResponse,
 )
+from app.services import notification_service
 from app.services import admin_service
 from app.services.email_service import send_welcome_email
 from app.shared.source_enum import UserRole
@@ -992,3 +998,100 @@ def update_settings(
     data = admin_service.update_admin_settings(db, updates, actor_id, ip_address)
     db.commit()
     return AdminSettingsResponse(**data)
+
+
+def list_notifications(
+    db: Session,
+    admin_id: uuid.UUID,
+    type_filter: str | None,
+    is_read: bool | None,
+    page: int,
+    per_page: int,
+) -> PaginatedResponse[NotificationResponse]:
+    """Return paginated notifications for the admin with optional filters."""
+    prefs = admin_service.get_notification_prefs(db)
+    if not prefs.get("push_all", True):
+        return PaginatedResponse(
+            items=[],
+            total=0,
+            page=page,
+            per_page=per_page,
+            total_pages=0,
+        )
+    items, total, _ = notification_service.get_notifications(
+        db,
+        admin_id,
+        type_filter=type_filter,
+        is_read=is_read,
+        page=page,
+        per_page=per_page,
+    )
+    total_pages = (total + per_page - 1) // per_page if per_page > 0 else 0
+    return PaginatedResponse(
+        items=[NotificationResponse.model_validate(n) for n in items],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
+
+
+def get_unread_notification_count(
+    db: Session,
+    admin_id: uuid.UUID,
+) -> UnreadCountResponse:
+    """Return unread notification count for the current admin."""
+    prefs = admin_service.get_notification_prefs(db)
+    if not prefs.get("push_all", True):
+        return UnreadCountResponse(count=0)
+    return UnreadCountResponse(count=notification_service.get_unread_count(db, admin_id))
+
+
+def mark_notification_read(
+    db: Session,
+    admin_id: uuid.UUID,
+    notification_id: uuid.UUID,
+) -> NotificationResponse:
+    """Mark one admin notification as read."""
+    notification = notification_service.mark_as_read(db, admin_id, notification_id)
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found",
+        )
+    return NotificationResponse.model_validate(notification)
+
+
+def mark_all_notifications_read(
+    db: Session,
+    admin_id: uuid.UUID,
+) -> MessageResponse:
+    """Mark all admin notifications as read."""
+    count = notification_service.mark_all_as_read(db, admin_id)
+    return MessageResponse(message=f"Marked {count} notifications as read")
+
+
+def trigger_manual_backup(
+    db: Session,
+    actor_id: uuid.UUID,
+    ip_address: str | None,
+) -> MessageResponse:
+    """Trigger backup snapshot generation and persist backup metadata."""
+    result = admin_service.trigger_manual_backup(db, actor_id, ip_address)
+    db.commit()
+    return MessageResponse(
+        message=f"Manual backup completed at {result['timestamp']} ({result['file']})"
+    )
+
+
+def test_integration_connection(
+    db: Session,
+    body: IntegrationTestRequest,
+) -> IntegrationTestResponse:
+    """Run connectivity test for requested integration target."""
+    result = admin_service.test_integration_connection(
+        db,
+        target=body.target,
+        overrides=body.model_dump(exclude_none=True),
+    )
+    return IntegrationTestResponse(**result)

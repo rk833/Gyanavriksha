@@ -41,6 +41,8 @@ from app.schemas.admin import (
     GradeUpdateRequest,
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
+    IntegrationTestRequest,
+    IntegrationTestResponse,
     ApiKeyRegenerateResponse,
     AuditLogListResponse,
     DeviceStatusUpdateRequest,
@@ -64,6 +66,9 @@ from app.schemas.admin import (
     SubjectUpdateRequest,
     VectorStoreStatsResponse,
 )
+from app.schemas.common import PaginatedResponse
+from app.schemas.notification import NotificationResponse, UnreadCountResponse
+from app.schemas.user import MessageResponse
 from app.shared.source_enum import UserRole
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -794,3 +799,71 @@ def update_settings(
 ):
     """Update admin system settings."""
     return service.update_settings(db, body, current_user.user_id, _ip(request))
+
+
+@router.post("/settings/test-connection", response_model=IntegrationTestResponse)
+def test_settings_connection(
+    body: IntegrationTestRequest,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Test external integration connectivity from admin settings."""
+    return service.test_integration_connection(db, body)
+
+
+@router.post("/settings/backup/trigger", response_model=MessageResponse)
+def trigger_backup(
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Trigger a manual backup snapshot."""
+    return service.trigger_manual_backup(db, current_user.user_id, _ip(request))
+
+
+@router.get("/notifications", response_model=PaginatedResponse[NotificationResponse])
+def list_notifications(
+    type: Optional[str] = None,
+    read: Optional[bool] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return paginated notifications for the current admin."""
+    return service.list_notifications(
+        db,
+        current_user.user_id,
+        type_filter=type,
+        is_read=read,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+def get_unread_notification_count(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return unread notification count for the current admin."""
+    return service.get_unread_notification_count(db, current_user.user_id)
+
+
+@router.patch("/notifications/{notification_id}/read", response_model=NotificationResponse)
+def mark_notification_read(
+    notification_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Mark a single admin notification as read."""
+    return service.mark_notification_read(db, current_user.user_id, notification_id)
+
+
+@router.patch("/notifications/read-all", response_model=MessageResponse)
+def mark_all_notifications_read(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Mark all admin notifications as read."""
+    return service.mark_all_notifications_read(db, current_user.user_id)
