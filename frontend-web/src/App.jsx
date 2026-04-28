@@ -11,6 +11,7 @@ import QRLogin from './pages/auth/QRLogin';
 
 // Public Pages
 import About from './pages/About';
+import Features from './pages/Features';
 
 // Student Pages
 import StudentLayout from './layouts/StudentLayout';
@@ -93,6 +94,7 @@ function App() {
             <Route path="notifications" element={<StudentNotifications />} />
             <Route path="library" element={<StudentLibrary />} />
             <Route path="help" element={<StudentHelp />} />
+            <Route path="features" element={<Features />} />
             <Route path="about" element={<About />} />
           </Route>
 
@@ -120,6 +122,7 @@ function App() {
             <Route path="help" element={<InstructorHelp />} />
             <Route path="notifications" element={<InstructorNotifications />} />
             <Route path="profile" element={<InstructorProfile />} />
+            <Route path="features" element={<Features />} />
             <Route path="about" element={<About />} />
             <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
@@ -143,6 +146,7 @@ function App() {
             <Route path="security" element={<AdminSecurityIntegrity />} />
             <Route path="curriculum-ingestion" element={<AdminCurriculumUpload />} />
             <Route path="settings" element={<AdminSettings />} />
+            <Route path="features" element={<Features />} />
             <Route path="about" element={<About />} />
           </Route>
         </Routes>
