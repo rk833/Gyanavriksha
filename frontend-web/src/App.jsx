@@ -9,6 +9,13 @@ import ResetPassword from './pages/auth/ResetPassword';
 import TwoFactorSetup from './pages/auth/TwoFactorSetup';
 import QRLogin from './pages/auth/QRLogin';
 
+// Public Pages
+import About from './pages/About';
+import Features from './pages/Features';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
+import CookiePolicy from './pages/CookiePolicy';
+
 // Student Pages
 import StudentLayout from './layouts/StudentLayout';
 import StudentDashboard from './pages/student/Dashboard';
@@ -64,6 +71,9 @@ function App() {
         <Routes>
           {/* Default redirect */}
           <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-of-service" element={<TermsOfService />} />
+          <Route path="/cookie-policy" element={<CookiePolicy />} />
 
           {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
@@ -92,6 +102,11 @@ function App() {
             <Route path="notifications" element={<StudentNotifications />} />
             <Route path="library" element={<StudentLibrary />} />
             <Route path="help" element={<StudentHelp />} />
+            <Route path="features" element={<Features />} />
+            <Route path="privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="terms-of-service" element={<TermsOfService />} />
+            <Route path="cookie-policy" element={<CookiePolicy />} />
+            <Route path="about" element={<About />} />
           </Route>
 
           {/* Instructor Routes */}
@@ -118,6 +133,11 @@ function App() {
             <Route path="help" element={<InstructorHelp />} />
             <Route path="notifications" element={<InstructorNotifications />} />
             <Route path="profile" element={<InstructorProfile />} />
+            <Route path="features" element={<Features />} />
+            <Route path="privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="terms-of-service" element={<TermsOfService />} />
+            <Route path="cookie-policy" element={<CookiePolicy />} />
+            <Route path="about" element={<About />} />
             <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
 
@@ -142,6 +162,11 @@ function App() {
             <Route path="notifications" element={<AdminNotifications />} />
             <Route path="profile" element={<AdminProfile />} />
             <Route path="settings" element={<AdminSettings />} />
+            <Route path="features" element={<Features />} />
+            <Route path="privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="terms-of-service" element={<TermsOfService />} />
+            <Route path="cookie-policy" element={<CookiePolicy />} />
+            <Route path="about" element={<About />} />
           </Route>
         </Routes>
       </AuthProvider>
