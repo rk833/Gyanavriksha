@@ -11,6 +11,7 @@ import QRLogin from './pages/auth/QRLogin';
 
 // Public Pages
 import About from './pages/About';
+import Features from './pages/Features';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import CookiePolicy from './pages/CookiePolicy';
@@ -99,6 +100,7 @@ function App() {
             <Route path="notifications" element={<StudentNotifications />} />
             <Route path="library" element={<StudentLibrary />} />
             <Route path="help" element={<StudentHelp />} />
+            <Route path="features" element={<Features />} />
             <Route path="privacy-policy" element={<PrivacyPolicy />} />
             <Route path="terms-of-service" element={<TermsOfService />} />
             <Route path="cookie-policy" element={<CookiePolicy />} />
@@ -129,6 +131,7 @@ function App() {
             <Route path="help" element={<InstructorHelp />} />
             <Route path="notifications" element={<InstructorNotifications />} />
             <Route path="profile" element={<InstructorProfile />} />
+            <Route path="features" element={<Features />} />
             <Route path="privacy-policy" element={<PrivacyPolicy />} />
             <Route path="terms-of-service" element={<TermsOfService />} />
             <Route path="cookie-policy" element={<CookiePolicy />} />
@@ -155,6 +158,7 @@ function App() {
             <Route path="security" element={<AdminSecurityIntegrity />} />
             <Route path="curriculum-ingestion" element={<AdminCurriculumUpload />} />
             <Route path="settings" element={<AdminSettings />} />
+            <Route path="features" element={<Features />} />
             <Route path="privacy-policy" element={<PrivacyPolicy />} />
             <Route path="terms-of-service" element={<TermsOfService />} />
             <Route path="cookie-policy" element={<CookiePolicy />} />
