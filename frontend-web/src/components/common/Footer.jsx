@@ -9,6 +9,9 @@ export default function Footer() {
       ? '/instructor'
       : '/student';
   const aboutPath = `${roleBasePath}/about`;
+  const privacyPolicyPath = `${roleBasePath}/privacy-policy`;
+  const termsPath = `${roleBasePath}/terms-of-service`;
+  const cookiePolicyPath = `${roleBasePath}/cookie-policy`;
 
   return (
     <footer className="bg-white border-t border-primary-light mt-auto">
@@ -112,19 +115,19 @@ export default function Footer() {
             <h3 className="font-semibold text-xs text-primary-dark mb-4">Legal</h3>
             <ul className="space-y-2">
               <li>
-                <a href="#privacy" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                  <Link to={privacyPolicyPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Privacy Policy
-                </a>
+                  </Link>
               </li>
               <li>
-                <a href="#terms" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={termsPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Terms of Service
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#cookies" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={cookiePolicyPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Cookie Policy
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
