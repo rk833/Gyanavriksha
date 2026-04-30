@@ -1,129 +1,211 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <string.h>
 #include "config.h"
+#include "wifi_manager.h"
+#include "mqtt_handler.h"
+#include "sensor_reader.h"
 
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
+static bool g_ledAutoState = false;
+static const char* g_ledSource = "auto";
+static unsigned long g_manualOverrideUntilMs = 0;
+static unsigned long g_lastSensorReadMs = 0;
+static unsigned long g_lastTelemetryPublishMs = 0;
+static unsigned long g_lastHeartbeatMs = 0;
+static SensorSnapshot g_latestSnapshot{};
+static const char* g_distanceRuleState = "sensor_unavailable";
+static unsigned long g_awayCandidateSinceMs = 0;
+static unsigned long g_tooCloseCandidateSinceMs = 0;
+static unsigned long g_lastAwayEventMs = 0;
+static unsigned long g_lastTooCloseEventMs = 0;
+static bool g_distanceEventPending = false;
+static const char* g_distanceEventTypePending = "none";
 
-unsigned long lastPublish = 0;
-unsigned long postureStartTime = 0;
-bool postureAlertActive = false;
+static void onLedCommand(bool ledOn) {
+    g_ledAutoState = ledOn;
+    g_ledSource = "manual";
+    g_manualOverrideUntilMs = millis() + LED_MANUAL_OVERRIDE_MS;
+    digitalWrite(LED_PIN, ledOn ? HIGH : LOW);
+    Serial.printf("LED command received -> %s (manual override %lu ms)\n", ledOn ? "ON" : "OFF", static_cast<unsigned long>(LED_MANUAL_OVERRIDE_MS));
+}
 
-// Function prototypes
-void setupWiFi();
-void setupMQTT();
-void reconnectMQTT();
-void mqttCallback(char* topic, byte* payload, unsigned int length);
-float readDistance();
-int readLight();
-void publishSensorData();
+static void applyLedRule(unsigned long nowMs, int lightRaw) {
+    if (nowMs < g_manualOverrideUntilMs) {
+        g_ledSource = "manual";
+        return;
+    }
+    g_ledSource = "auto";
+    if (lightRaw <= LDR_LED_ON_THRESHOLD) {
+        g_ledAutoState = true;
+        digitalWrite(LED_PIN, HIGH);
+    } else if (lightRaw >= LDR_LED_OFF_THRESHOLD) {
+        g_ledAutoState = false;
+        digitalWrite(LED_PIN, LOW);
+    }
+}
+
+static bool cooldownElapsed(unsigned long nowMs, unsigned long lastMs) {
+    return lastMs == 0 || nowMs - lastMs >= DISTANCE_EVENT_COOLDOWN_MS;
+}
+
+static void triggerDistanceEvent(unsigned long nowMs, const char* eventType) {
+    if (strcmp(eventType, "away") == 0) {
+        if (!cooldownElapsed(nowMs, g_lastAwayEventMs)) {
+            return;
+        }
+        g_lastAwayEventMs = nowMs;
+    } else if (strcmp(eventType, "too_close") == 0) {
+        if (!cooldownElapsed(nowMs, g_lastTooCloseEventMs)) {
+            return;
+        }
+        g_lastTooCloseEventMs = nowMs;
+    } else {
+        return;
+    }
+    g_distanceEventPending = true;
+    g_distanceEventTypePending = eventType;
+    Serial.printf("Distance event triggered -> %s\n", eventType);
+}
+
+static void updateDistanceRuleState(unsigned long nowMs, const char* instantaneousState) {
+    if (strcmp(instantaneousState, "sensor_unavailable") == 0) {
+        g_awayCandidateSinceMs = 0;
+        g_tooCloseCandidateSinceMs = 0;
+        g_distanceRuleState = "sensor_unavailable";
+        return;
+    }
+    if (strcmp(instantaneousState, "away") == 0) {
+        g_tooCloseCandidateSinceMs = 0;
+        if (g_awayCandidateSinceMs == 0) {
+            g_awayCandidateSinceMs = nowMs;
+        }
+        if (nowMs - g_awayCandidateSinceMs >= DISTANCE_AWAY_SUSTAIN_MS && strcmp(g_distanceRuleState, "away") != 0) {
+            g_distanceRuleState = "away";
+            triggerDistanceEvent(nowMs, "away");
+            Serial.println("Distance rule state -> away");
+        }
+        return;
+    }
+    if (strcmp(instantaneousState, "too_close") == 0) {
+        g_awayCandidateSinceMs = 0;
+        if (g_tooCloseCandidateSinceMs == 0) {
+            g_tooCloseCandidateSinceMs = nowMs;
+        }
+        if (nowMs - g_tooCloseCandidateSinceMs >= DISTANCE_TOO_CLOSE_SUSTAIN_MS && strcmp(g_distanceRuleState, "too_close") != 0) {
+            g_distanceRuleState = "too_close";
+            triggerDistanceEvent(nowMs, "too_close");
+            Serial.println("Distance rule state -> too_close");
+        }
+        return;
+    }
+    g_awayCandidateSinceMs = 0;
+    g_tooCloseCandidateSinceMs = 0;
+    if (strcmp(g_distanceRuleState, "present") != 0) {
+        g_distanceRuleState = "present";
+        Serial.println("Distance rule state -> present");
+    }
+}
+
+static void printBootDiagnostics() {
+    Serial.println("Boot Diagnostics");
+    Serial.printf("  Device ID: %s\n", DEVICE_ID);
+    Serial.printf("  Firmware: %s\n", FIRMWARE_VERSION);
+    Serial.printf("  MQTT Broker: %s:%d\n", MQTT_BROKER, MQTT_PORT);
+    Serial.printf("  LDR Mode: %s\n", LDR_USE_DIGITAL_OUTPUT ? "digital_do" : "analog_ao");
+    Serial.printf("  Pin Map -> LDR:%d LED:%d TRIG:%d ECHO:%d\n", LDR_PIN, LED_PIN, ULTRASONIC_TRIG, ULTRASONIC_ECHO);
+}
+
+static void runBootSamples() {
+    Serial.printf("Boot Sensor Samples (%d)\n", SENSOR_BOOT_SAMPLE_COUNT);
+    for (int i = 0; i < SENSOR_BOOT_SAMPLE_COUNT; i++) {
+        SensorSnapshot s = sensorReadSnapshot();
+        Serial.printf(
+            "  Sample %d -> light=%d (%s), distance=%.2fcm, state=%s\n",
+            i + 1,
+            s.lightRaw,
+            s.lightBucket,
+            s.distanceCm,
+            s.distanceState
+        );
+        delay(200);
+    }
+}
+
+static void publishSensorTelemetry(unsigned long nowMs) {
+    JsonDocument lightDoc;
+    lightDoc["device_id"] = DEVICE_ID;
+    lightDoc["firmware_version"] = FIRMWARE_VERSION;
+    lightDoc["ts"] = nowMs;
+    lightDoc["raw_light"] = g_latestSnapshot.lightRaw;
+    lightDoc["bucket"] = g_latestSnapshot.lightBucket;
+    lightDoc["led_state"] = g_ledAutoState ? "on" : "off";
+    lightDoc["source"] = g_ledSource;
+    lightDoc["led_on_threshold"] = LDR_LED_ON_THRESHOLD;
+    lightDoc["led_off_threshold"] = LDR_LED_OFF_THRESHOLD;
+    char lightPayload[256];
+    serializeJson(lightDoc, lightPayload);
+    mqttPublish(TOPIC_LIGHT, lightPayload);
+
+    JsonDocument distDoc;
+    distDoc["device_id"] = DEVICE_ID;
+    distDoc["firmware_version"] = FIRMWARE_VERSION;
+    distDoc["ts"] = nowMs;
+    distDoc["distance_cm"] = g_latestSnapshot.distanceCm;
+    distDoc["state"] = g_distanceRuleState;
+    distDoc["instant_state"] = g_latestSnapshot.distanceState;
+    distDoc["presence"] = strcmp(g_distanceRuleState, "present") == 0;
+    distDoc["posture_alert"] = strcmp(g_distanceRuleState, "too_close") == 0;
+    distDoc["event_triggered"] = g_distanceEventPending;
+    distDoc["event_type"] = g_distanceEventPending ? g_distanceEventTypePending : "none";
+    distDoc["too_close_threshold"] = DISTANCE_TOO_CLOSE_CM;
+    distDoc["presence_max_threshold"] = DISTANCE_PRESENT_MAX_CM;
+    char distancePayload[256];
+    serializeJson(distDoc, distancePayload);
+    mqttPublish(TOPIC_DISTANCE, distancePayload);
+
+    Serial.printf(
+        "Live -> light=%d (%s), led=%s/%s, distance=%.2fcm, state=%s, event=%s, mqtt=%s\n",
+        g_latestSnapshot.lightRaw,
+        g_latestSnapshot.lightBucket,
+        g_ledAutoState ? "on" : "off",
+        g_ledSource,
+        g_latestSnapshot.distanceCm,
+        g_distanceRuleState,
+        g_distanceEventPending ? g_distanceEventTypePending : "none",
+        mqttIsConnected() ? "connected" : "offline"
+    );
+    g_distanceEventPending = false;
+    g_distanceEventTypePending = "none";
+}
 
 void setup() {
     Serial.begin(115200);
-    pinMode(LED_PIN, OUTPUT);
-    pinMode(ULTRASONIC_TRIG, OUTPUT);
-    pinMode(ULTRASONIC_ECHO, INPUT);
-    
-    setupWiFi();
-    setupMQTT();
-    
-    Serial.println("Gyanavriksha Smart Desk initialized");
+    sensorReaderBegin();
+    wifiBegin();
+    mqttBegin(onLedCommand);
+    printBootDiagnostics();
+    runBootSamples();
+    Serial.println("Gyanavriksha Smart Desk initialized and phase-2 ready");
 }
 
 void loop() {
-    if (!mqttClient.connected()) {
-        reconnectMQTT();
-    }
-    mqttClient.loop();
-
     unsigned long now = millis();
-    if (now - lastPublish >= MQTT_PUBLISH_INTERVAL) {
-        publishSensorData();
-        lastPublish = now;
+    wifiEnsureConnected(now);
+    mqttEnsureConnected(now);
+    mqttLoop();
+
+    if (now - g_lastSensorReadMs >= SENSOR_READ_INTERVAL) {
+        g_latestSnapshot = sensorReadSnapshot();
+        applyLedRule(now, g_latestSnapshot.lightRaw);
+        updateDistanceRuleState(now, g_latestSnapshot.distanceState);
+        g_lastSensorReadMs = now;
     }
-}
-
-void setupWiFi() {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print("Connecting to WiFi");
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
+    if (now - g_lastTelemetryPublishMs >= MQTT_PUBLISH_INTERVAL) {
+        publishSensorTelemetry(now);
+        g_lastTelemetryPublishMs = now;
     }
-    Serial.println("\nWiFi connected: " + WiFi.localIP().toString());
-}
-
-void setupMQTT() {
-    mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
-    mqttClient.setCallback(mqttCallback);
-}
-
-void reconnectMQTT() {
-    while (!mqttClient.connected()) {
-        if (mqttClient.connect(DEVICE_ID, MQTT_USER, MQTT_PASSWORD)) {
-            mqttClient.subscribe(TOPIC_LED_CMD);
-            // Publish online status
-            mqttClient.publish(TOPIC_STATUS, "{\"status\":\"online\"}");
-        } else {
-            delay(5000);
-        }
+    if (now - g_lastHeartbeatMs >= MQTT_HEARTBEAT_INTERVAL) {
+        mqttPublishHeartbeat(now);
+        g_lastHeartbeatMs = now;
     }
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (unsigned int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
-    
-    if (String(topic) == TOPIC_LED_CMD) {
-        if (message == "ON") digitalWrite(LED_PIN, HIGH);
-        else if (message == "OFF") digitalWrite(LED_PIN, LOW);
-    }
-}
-
-float readDistance() {
-    digitalWrite(ULTRASONIC_TRIG, LOW);
-    delayMicroseconds(2);
-    digitalWrite(ULTRASONIC_TRIG, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(ULTRASONIC_TRIG, LOW);
-    long duration = pulseIn(ULTRASONIC_ECHO, HIGH, 30000);
-    return duration * 0.034 / 2;
-}
-
-int readLight() {
-    return analogRead(LDR_PIN);
-}
-
-void publishSensorData() {
-    float distance = readDistance();
-    int light = readLight();
-    
-    // Auto-lighting control
-    if (light < LIGHT_THRESHOLD) {
-        digitalWrite(LED_PIN, HIGH);
-    }
-    
-    // Publish light data
-    JsonDocument lightDoc;
-    lightDoc["device_id"] = DEVICE_ID;
-    lightDoc["value"] = light;
-    lightDoc["threshold"] = LIGHT_THRESHOLD;
-    lightDoc["led_active"] = (light < LIGHT_THRESHOLD);
-    char lightBuffer[256];
-    serializeJson(lightDoc, lightBuffer);
-    mqttClient.publish(TOPIC_LIGHT, lightBuffer);
-    
-    // Publish distance data
-    JsonDocument distDoc;
-    distDoc["device_id"] = DEVICE_ID;
-    distDoc["distance_cm"] = distance;
-    distDoc["presence"] = (distance < PRESENCE_MAX_CM);
-    distDoc["posture_alert"] = (distance < POSTURE_MIN_CM);
-    char distBuffer[256];
-    serializeJson(distDoc, distBuffer);
-    mqttClient.publish(TOPIC_DISTANCE, distBuffer);
 }

@@ -41,6 +41,8 @@ from app.schemas.admin import (
     GradeUpdateRequest,
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
+    IntegrationTestRequest,
+    IntegrationTestResponse,
     ApiKeyRegenerateResponse,
     AuditLogListResponse,
     DeviceStatusUpdateRequest,
@@ -52,6 +54,7 @@ from app.schemas.admin import (
     IoTDeviceDetailResponse,
     IoTDeviceListResponse,
     IoTDeviceResponse,
+    IoTAlertTimelineResponse,
     IoTDeviceUpdateRequest,
     IoTHealthResponse,
     NamespaceCreateRequest,
@@ -63,6 +66,9 @@ from app.schemas.admin import (
     SubjectUpdateRequest,
     VectorStoreStatsResponse,
 )
+from app.schemas.common import PaginatedResponse
+from app.schemas.notification import NotificationResponse, UnreadCountResponse
+from app.schemas.user import MessageResponse
 from app.shared.source_enum import UserRole
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -155,7 +161,7 @@ def bulk_import_users(
     missing = {c for c in ("full_name", "email") if c not in (reader.fieldnames or [])}
     if missing:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"CSV missing required columns: {', '.join(sorted(missing))}",
         )
     rows = list(reader)
@@ -580,6 +586,7 @@ def requeue_curriculum_doc(
 def list_iot_devices(
     status: Optional[str] = None,
     device_type: Optional[str] = None,
+    node_id: Optional[str] = None,
     location: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
@@ -587,7 +594,7 @@ def list_iot_devices(
     db: Session = Depends(get_db),
 ):
     """List all IoT devices with optional filters and a network summary."""
-    return service.list_iot_devices(db, status, device_type, location, page, per_page)
+    return service.list_iot_devices(db, status, device_type, node_id, location, page, per_page)
 
 
 @router.post("/iot/devices", response_model=IoTDeviceCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -665,6 +672,19 @@ def get_device_telemetry(
 ):
     """Return the last N telemetry entries for a specific device."""
     return service.get_device_telemetry(db, device_id, limit)
+
+
+@router.get("/iot/alerts", response_model=IoTAlertTimelineResponse)
+def get_iot_alerts(
+    device_id: Optional[uuid.UUID] = None,
+    severity: Optional[str] = "all",
+    hours: int = 24,
+    limit: int = 50,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return filtered IoT alert timeline across devices."""
+    return service.get_iot_alert_timeline(db, device_id, severity, hours, limit)
 
 
 @router.patch("/iot/devices/{device_id}/status", response_model=IoTDeviceResponse)
@@ -779,3 +799,71 @@ def update_settings(
 ):
     """Update admin system settings."""
     return service.update_settings(db, body, current_user.user_id, _ip(request))
+
+
+@router.post("/settings/test-connection", response_model=IntegrationTestResponse)
+def test_settings_connection(
+    body: IntegrationTestRequest,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Test external integration connectivity from admin settings."""
+    return service.test_integration_connection(db, body)
+
+
+@router.post("/settings/backup/trigger", response_model=MessageResponse)
+def trigger_backup(
+    request: Request,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Trigger a manual backup snapshot."""
+    return service.trigger_manual_backup(db, current_user.user_id, _ip(request))
+
+
+@router.get("/notifications", response_model=PaginatedResponse[NotificationResponse])
+def list_notifications(
+    type: Optional[str] = None,
+    read: Optional[bool] = None,
+    page: int = 1,
+    per_page: int = 20,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return paginated notifications for the current admin."""
+    return service.list_notifications(
+        db,
+        current_user.user_id,
+        type_filter=type,
+        is_read=read,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+def get_unread_notification_count(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Return unread notification count for the current admin."""
+    return service.get_unread_notification_count(db, current_user.user_id)
+
+
+@router.patch("/notifications/{notification_id}/read", response_model=NotificationResponse)
+def mark_notification_read(
+    notification_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Mark a single admin notification as read."""
+    return service.mark_notification_read(db, current_user.user_id, notification_id)
+
+
+@router.patch("/notifications/read-all", response_model=MessageResponse)
+def mark_all_notifications_read(
+    current_user: User = Depends(require_role([UserRole.ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """Mark all admin notifications as read."""
+    return service.mark_all_notifications_read(db, current_user.user_id)
