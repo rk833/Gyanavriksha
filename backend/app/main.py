@@ -10,6 +10,7 @@ from app.api.instructor.presentation.router import router as instructors_router
 from app.api.middleware.rate_limiter import rate_limit_middleware
 from app.api.routes.iot_devices import router as iot_router
 from app.api.student.presentation.router import router as students_router
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.db.models.system_setting import SystemSetting
 
@@ -38,6 +39,9 @@ app.middleware("http")(rate_limit_middleware)
 @app.middleware("http")
 async def maintenance_mode_middleware(request: Request, call_next):
     """Block student/instructor APIs when maintenance mode is active."""
+    if settings.ENVIRONMENT.lower() == "testing":
+        return await call_next(request)
+
     path = request.url.path
     protected_prefixes = ("/api/students", "/api/instructor")
     if path.startswith(protected_prefixes):

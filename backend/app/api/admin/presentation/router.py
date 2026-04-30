@@ -161,7 +161,7 @@ def bulk_import_users(
     missing = {c for c in ("full_name", "email") if c not in (reader.fieldnames or [])}
     if missing:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"CSV missing required columns: {', '.join(sorted(missing))}",
         )
     rows = list(reader)

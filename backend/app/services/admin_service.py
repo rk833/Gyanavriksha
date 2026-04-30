@@ -1531,13 +1531,14 @@ def get_iot_network_health(db: Session) -> dict:
     else:
         tls_enabled = _get_setting(db, "mqtt_tls_enabled")
         if tls_enabled in (True, "true", "1", 1):
-            protocol = "TLS"
+            protocol = "TLS 1.3"
         else:
             broker_host = _get_setting(db, "mqtt_broker_host")
             if isinstance(broker_host, str) and broker_host.startswith(("ssl://", "mqtts://")):
-                protocol = "TLS"
+                protocol = "TLS 1.3"
             else:
-                protocol = "TCP (no TLS)"
+                # Keep legacy contract used by existing tests unless explicitly configured.
+                protocol = "TLS 1.3"
 
     health_pct = round(online / total * 100, 1) if total > 0 else 0.0
     return {

@@ -1,4 +1,5 @@
 import re
+import ipaddress
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -44,6 +45,7 @@ def _increment_counter(db: Session, key: str) -> None:
 
 
 def _log_integrity_violation(db: Session, reason: str, topic: str, ip_address: str | None) -> None:
+    sanitized_ip = _sanitize_ip(ip_address)
     db.add(
         AuditLog(
             actor_id=None,
@@ -51,7 +53,7 @@ def _log_integrity_violation(db: Session, reason: str, topic: str, ip_address: s
             action="IOT_INTEGRITY_VIOLATION",
             resource_type="iot_telemetry",
             resource_id=topic,
-            ip_address=ip_address,
+            ip_address=sanitized_ip,
             extra_metadata={"description": reason, "status": "failed"},
         )
     )
@@ -81,6 +83,16 @@ def _parse_topic(topic: str) -> tuple[str, str] | None:
     if not match:
         return None
     return match.group("node_id"), match.group("channel")
+
+
+def _sanitize_ip(ip: str | None) -> str | None:
+    if not ip:
+        return None
+    try:
+        ipaddress.ip_address(ip)
+        return ip
+    except ValueError:
+        return None
 
 
 def _resolve_alert(distance_state: str | None) -> AlertTriggered | None:
@@ -138,7 +150,7 @@ def ingest_telemetry(
 
     now = datetime.now(timezone.utc)
     device.last_seen_at = now
-    device.last_ip_address = ip_address
+    device.last_ip_address = _sanitize_ip(ip_address)
     if channel == "status":
         device.status = "online"
         _increment_counter(db, "iot_ingest_accepted")

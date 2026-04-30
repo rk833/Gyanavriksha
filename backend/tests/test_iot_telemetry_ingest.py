@@ -34,8 +34,9 @@ API_KEY = "iot_test_key_123"
 
 def _create_admin() -> User:
     db = TestSession()
+    unique_suffix = uuid.uuid4().hex[:8]
     user = User(
-        email=f"iot_ingest_admin_{RUN_ID}@example.com",
+        email=f"iot_ingest_admin_{RUN_ID}_{unique_suffix}@example.com",
         password_hash=hash_password("StrongPass@123"),
         full_name="IoT Ingest Admin",
         role=UserRole.ADMIN,
