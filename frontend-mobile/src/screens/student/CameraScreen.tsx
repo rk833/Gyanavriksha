@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useIsFocused } from '@react-navigation/native';
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as jpeg from 'jpeg-js';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const BRIGHTNESS_THRESHOLD = 85;
-const BLUR_VARIANCE_THRESHOLD = 420;
+const BRIGHTNESS_THRESHOLD = 55;
+const BLUR_SHARPNESS_THRESHOLD = 4;
 
 type CameraNavigation = {
   navigate: (screenName: string, params?: Record<string, unknown>) => void;
@@ -29,7 +28,7 @@ type CameraScreenProps = {
 
 type QualityCheckResult = {
   averageLuminance: number;
-  variance: number;
+  sharpness: number;
 };
 
 function base64ToUint8Array(base64: string) {
@@ -46,7 +45,7 @@ function base64ToUint8Array(base64: string) {
 async function analyzeImageQuality(imageUri: string): Promise<QualityCheckResult> {
   const resizedImage = await ImageManipulator.manipulateAsync(
     imageUri,
-    [{ resize: { width: 100, height: 100 } }],
+    [{ resize: { width: 480 } }],
     {
       compress: 1,
       format: ImageManipulator.SaveFormat.JPEG,
@@ -65,7 +64,9 @@ async function analyzeImageQuality(imageUri: string): Promise<QualityCheckResult
   };
 
   let luminanceSum = 0;
-  let luminanceSquareSum = 0;
+  const { width, height } = decoded;
+  const luminanceValues = new Float32Array(width * height);
+
   let pixelCount = 0;
 
   for (let index = 0; index < decoded.data.length; index += 4) {
@@ -75,14 +76,32 @@ async function analyzeImageQuality(imageUri: string): Promise<QualityCheckResult
     const luminance = 0.299 * red + 0.587 * green + 0.114 * blue;
 
     luminanceSum += luminance;
-    luminanceSquareSum += luminance * luminance;
+    luminanceValues[pixelCount] = luminance;
     pixelCount += 1;
   }
 
   const averageLuminance = luminanceSum / pixelCount;
-  const variance = luminanceSquareSum / pixelCount - averageLuminance * averageLuminance;
 
-  return { averageLuminance, variance };
+  // Edge-based sharpness score. Lower values usually indicate blur.
+  let gradientSum = 0;
+  let gradientCount = 0;
+
+  for (let y = 0; y < height - 1; y += 1) {
+    for (let x = 0; x < width - 1; x += 1) {
+      const current = y * width + x;
+      const right = current + 1;
+      const below = current + width;
+
+      const dx = Math.abs(luminanceValues[current] - luminanceValues[right]);
+      const dy = Math.abs(luminanceValues[current] - luminanceValues[below]);
+      gradientSum += dx + dy;
+      gradientCount += 2;
+    }
+  }
+
+  const sharpness = gradientCount > 0 ? gradientSum / gradientCount : 0;
+
+  return { averageLuminance, sharpness };
 }
 
 export default function CameraScreen({ navigation, route }: CameraScreenProps) {
@@ -90,21 +109,25 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   const [facing] = useState<CameraType>('back');
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const [cameraErrorMessage, setCameraErrorMessage] = useState<string | null>(null);
+  const [cameraInstanceKey, setCameraInstanceKey] = useState(0);
   const [capturedImageUris, setCapturedImageUris] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
-  const isScreenFocused = useIsFocused();
 
   useEffect(() => {
-    if (isScreenFocused && (!permission || permission.status === 'undetermined' || (permission.canAskAgain && !permission.granted))) {
+    if (!permission || permission.status === 'undetermined' || (permission.canAskAgain && !permission.granted)) {
       void requestPermission();
     }
+
+    setIsCameraReady(false);
+    setCameraErrorMessage(null);
 
     return () => {
       setTorchEnabled(false);
     };
-  }, [isScreenFocused, permission, requestPermission]);
+  }, [permission, requestPermission]);
 
   const assignmentId = route?.params?.assignmentId;
 
@@ -167,7 +190,7 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   }, []);
 
   const capturePhoto = useCallback(async () => {
-    if (!cameraRef.current || isAnalyzing || !isCameraReady) {
+    if (!cameraRef.current || isAnalyzing || !isCameraReady || cameraErrorMessage) {
       return;
     }
 
@@ -180,13 +203,23 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
         base64: true,
         exif: false,
         skipProcessing: false,
+        // Avoid forced camera shutter sounds across devices.
+        shutterSound: false,
       });
 
-      const sourceUri = photo.base64 ? `data:image/jpg;base64,${photo.base64}` : photo.uri;
-      const { averageLuminance, variance } = await analyzeImageQuality(sourceUri);
+      const sourceUri = photo.uri || (photo.base64 ? `data:image/jpg;base64,${photo.base64}` : '');
 
-      if (averageLuminance < BRIGHTNESS_THRESHOLD || variance < BLUR_VARIANCE_THRESHOLD) {
-        setBannerMessage('Image too dark / blurry — retake');
+      if (!sourceUri) {
+        throw new Error('Captured image is missing a source URI.');
+      }
+
+      const { averageLuminance, sharpness } = await analyzeImageQuality(sourceUri);
+
+      const isTooDark = averageLuminance < BRIGHTNESS_THRESHOLD;
+      const isTooBlurry = sharpness < BLUR_SHARPNESS_THRESHOLD;
+
+      if (isTooDark || isTooBlurry) {
+        setBannerMessage(isTooDark ? 'Image too dark — retake' : 'Image too blurry — retake');
         return;
       }
 
@@ -202,7 +235,14 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [isAnalyzing, isCameraReady]);
+  }, [cameraErrorMessage, isAnalyzing, isCameraReady]);
+
+  const retryCameraMount = useCallback(() => {
+    setCameraErrorMessage(null);
+    setBannerMessage(null);
+    setIsCameraReady(false);
+    setCameraInstanceKey((current) => current + 1);
+  }, []);
 
   const permissionState = useMemo(() => {
     if (!permission) {
@@ -237,14 +277,31 @@ export default function CameraScreen({ navigation, route }: CameraScreenProps) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.cameraWrap}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing={facing}
-          active={isScreenFocused}
-          enableTorch={torchEnabled}
-          onCameraReady={() => setIsCameraReady(true)}
-        />
+        {cameraErrorMessage ? (
+          <View style={styles.cameraErrorWrap}>
+            <MaterialIcons name="camera-alt" size={42} color="#FFFFFF" />
+            <Text style={styles.cameraErrorTitle}>Unable to start camera</Text>
+            <Text style={styles.cameraErrorText}>{cameraErrorMessage}</Text>
+            <TouchableOpacity style={styles.permissionButton} activeOpacity={0.85} onPress={retryCameraMount}>
+              <Text style={styles.permissionButtonText}>Retry Camera</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <CameraView
+            key={cameraInstanceKey}
+            ref={cameraRef}
+            style={styles.camera}
+            facing={facing}
+            active
+            autofocus="on"
+            enableTorch={torchEnabled}
+            onCameraReady={() => setIsCameraReady(true)}
+            onMountError={({ message }) => {
+              setIsCameraReady(false);
+              setCameraErrorMessage(message || 'Camera failed to initialize.');
+            }}
+          />
+        )}
 
         <View style={styles.overlay} pointerEvents="box-none">
           <View style={styles.topBar} pointerEvents="box-none">
@@ -323,6 +380,27 @@ const styles = StyleSheet.create({
   },
   camera: {
     flex: 1,
+  },
+  cameraErrorWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 10,
+    backgroundColor: '#0F172A',
+  },
+  cameraErrorTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  cameraErrorText: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+    maxWidth: 320,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

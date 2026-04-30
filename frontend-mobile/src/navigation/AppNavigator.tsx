@@ -17,6 +17,8 @@ import CameraScreen from '../screens/student/CameraScreen';
 import DashboardScreen from '../screens/student/DashboardScreen';
 import ProfileStack from '../screens/student/ProfileScreen';
 import SubmissionDetailsScreen from '../screens/student/SubmissionDetailsScreen';
+import SubmissionProgressScreen from '../screens/student/SubmissionProgressScreen';
+import SubmissionResultScreen from '../screens/student/SubmissionResultScreen';
 import UploadScreen from '../screens/student/UploadScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -92,7 +94,7 @@ function GlobalBottomTabBar({ state, navigation }: BottomTabBarProps) {
   const { theme } = useAppTheme();
 
   const focusedRouteName = state.routes[state.index]?.name;
-  if (focusedRouteName === 'CameraScreen' || focusedRouteName === 'UploadScreen' || focusedRouteName === 'SubmissionDetailsScreen') {
+  if (focusedRouteName === 'CameraScreen' || focusedRouteName === 'UploadScreen' || focusedRouteName === 'SubmissionDetailsScreen' || focusedRouteName === 'SubmissionProgressScreen' || focusedRouteName === 'SubmissionResultScreen') {
     return null;
   }
 
@@ -269,7 +271,7 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
     <Tab.Navigator
         tabBar={(props) => <GlobalBottomTabBar {...props} />}
         screenOptions={({ route, navigation }) => ({
-          headerShown: route.name !== 'Profile' && route.name !== 'CameraScreen' && route.name !== 'UploadScreen' && route.name !== 'SubmissionDetailsScreen',
+          headerShown: route.name !== 'Profile' && route.name !== 'CameraScreen' && route.name !== 'UploadScreen' && route.name !== 'SubmissionDetailsScreen' && route.name !== 'SubmissionProgressScreen' && route.name !== 'SubmissionResultScreen',
           headerStyle: {
             backgroundColor: theme.colors.surface,
             borderBottomWidth: 1,
@@ -346,7 +348,10 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
         </Tab.Screen>
         <Tab.Screen
           name="CameraScreen"
-          options={{ title: 'CameraScreen' }}
+          options={{
+            title: 'CameraScreen',
+            unmountOnBlur: true,
+          }}
         >
           {(props) => <CameraScreen {...props} />}
         </Tab.Screen>
@@ -361,6 +366,18 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
           options={{ title: 'UploadScreen' }}
         >
           {(props) => <UploadScreen {...props} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="SubmissionProgressScreen"
+          options={{ title: 'SubmissionProgressScreen' }}
+        >
+          {(props) => <SubmissionProgressScreen {...props} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="SubmissionResultScreen"
+          options={{ title: 'SubmissionResultScreen' }}
+        >
+          {(props) => <SubmissionResultScreen {...props} />}
         </Tab.Screen>
       </Tab.Navigator>
 
