@@ -3,12 +3,12 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE_URL } from '../../config/api';
@@ -19,6 +19,7 @@ type TwoFactorScreenProps = {
   navigation?: {
     navigate: (screenName: string, params?: Record<string, unknown>) => void;
   };
+  onLoginSuccess?: (token: string) => void;
   route?: {
     params?: {
       user_id?: string;
@@ -36,7 +37,7 @@ type Validate2faResponse = {
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export default function TwoFactorScreen({ navigation, route }: TwoFactorScreenProps) {
+export default function TwoFactorScreen({ navigation, route, onLoginSuccess }: TwoFactorScreenProps) {
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -71,9 +72,11 @@ export default function TwoFactorScreen({ navigation, route }: TwoFactorScreenPr
         code,
       });
 
+      await SecureStore.setItemAsync('access_token', response.data.access_token);
       await SecureStore.setItemAsync('auth_token', response.data.access_token);
       await SecureStore.setItemAsync('refresh_token', response.data.refresh_token);
 
+      onLoginSuccess?.(response.data.access_token);
       navigation?.navigate('HomeScreen');
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 422) {

@@ -28,12 +28,13 @@ type LoginScreenProps = {
     navigate: (screenName: string, params?: Record<string, unknown>) => void;
   };
   onLoginSuccess?: (token: string) => void;
+  initialMessage?: string | null;
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenProps) {
-  const [submitError, setSubmitError] = useState<string | null>(null);
+export default function LoginScreen({ navigation, onLoginSuccess, initialMessage }: LoginScreenProps) {
+  const [submitError, setSubmitError] = useState<string | null>(initialMessage ?? null);
   const [passwordVisible, setPasswordVisible] = useState(false);
 
   const {
@@ -82,6 +83,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: LoginScreenP
 
       const refreshToken = response.data?.refresh_token;
 
+      await SecureStore.setItemAsync('access_token', token);
       await SecureStore.setItemAsync('auth_token', token);
       if (typeof refreshToken === 'string' && refreshToken.length > 0) {
         await SecureStore.setItemAsync('refresh_token', refreshToken);
