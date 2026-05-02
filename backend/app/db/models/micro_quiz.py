@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import Column, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, SmallInteger, String
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 from app.shared.source_enum import MicroQuizStatus
@@ -31,3 +32,5 @@ class MicroQuiz(Base):
         default=datetime.utcnow,
         server_default="now()",
     )
+
+    questions = relationship("QuizQuestion", backref="quiz", cascade="all, delete-orphan")
