@@ -20,11 +20,10 @@ from app.schemas.common import PaginatedResponse
 from app.schemas.library import CurriculumDocumentResponse
 from app.schemas.notification import NotificationResponse, UnreadCountResponse
 from app.schemas.progress import (
-    DashboardResponse,
-    KnowledgeGapResponse,
     KnowledgeGapSummary,
     StudentProgressResponse,
 )
+from app.schemas.quiz import MicroQuizSchema, QuizGenerateRequest
 from app.schemas.submission import (
     SubmissionDetailResponse,
     SubmissionFeedbackResponse,
@@ -312,3 +311,37 @@ def get_library_document(
 ):
     """Return detail for a single curriculum document accessible to the student."""
     return service.get_library_document(db, current_user.user_id, doc_id)
+
+
+@router.get("/quizzes", response_model=PaginatedResponse[MicroQuizSchema])
+def list_quizzes(
+    subject_id: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Return paginated micro-quizzes for the current student."""
+    return service.list_quizzes(db, current_user.user_id, subject_id, page, per_page)
+
+
+@router.get("/quizzes/{quiz_id}", response_model=MicroQuizSchema)
+def get_quiz_detail(
+    quiz_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Return full detail for a specific quiz, including questions."""
+    return service.get_quiz_detail(db, current_user.user_id, quiz_id)
+
+
+@router.post("/quizzes/generate", response_model=MicroQuizSchema, status_code=201)
+async def generate_quiz(
+    data: QuizGenerateRequest,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Trigger AI quiz generation for a concept and save to DB."""
+    return await service.generate_quiz(
+        db, current_user.user_id, data.subject_id, data.concept, data.num_questions
+    )
