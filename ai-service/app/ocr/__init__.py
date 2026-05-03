@@ -5,11 +5,17 @@ from .tesseract_fallback import TesseractService
 _vision_service = VisionService()
 _tesseract_service = TesseractService()
 
-def get_text_from_image(image_bytes: bytes) -> str:
+def extract_text(image_bytes: bytes, provider: str = "auto") -> str:
     """
     Main entry point for extracting text from preprocessed image bytes.
-    Uses Google Cloud Vision as primary and Tesseract as fallback.
+    Uses Google Cloud Vision as primary and Tesseract as fallback by default.
     """
+    if provider == "google_cloud_vision":
+        return _vision_service.extract_text(image_bytes)
+    elif provider == "tesseract":
+        return _tesseract_service.extract_text(image_bytes)
+    
+    # "auto" or default behavior
     # 1. Try Primary: Google Cloud Vision
     text = ""
     try:

@@ -39,8 +39,8 @@ class DocumentPreprocessor:
         Initialize the preprocessor using environment variables if arguments are not provided.
         """
         # Load from .env or fallback to defaults
-        self.chunk_size = chunk_size or int(os.getenv('CHUNK_SIZE', '1000'))
-        self.chunk_overlap = chunk_overlap or int(os.getenv('CHUNK_OVERLAP', '200'))
+        self.chunk_size = chunk_size if chunk_size is not None else int(os.getenv('CHUNK_SIZE', '1000'))
+        self.chunk_overlap = chunk_overlap if chunk_overlap is not None else int(os.getenv('CHUNK_OVERLAP', '200'))
         
         if RecursiveCharacterTextSplitter is None:
             raise ImportError("langchain text splitters are required. Please ensure langchain or langchain-text-splitters is installed.")

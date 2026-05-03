@@ -21,9 +21,10 @@ class VisionService:
             or os.getenv("GOOGLE_GENAI_API_KEY")
         )
         if not self.api_key:
-            raise ValueError(
-                "Google Vision API key not found in environment. "
-                "Set GOOGLE_VISION_API_KEY or GOOGLE_CLOUD_VISION_APPLICATION_CREDENTIALS."
+            print(
+                "WARNING: Google Vision API key not found in environment. "
+                "OCR will not work until GOOGLE_VISION_API_KEY or "
+                "GOOGLE_CLOUD_VISION_APPLICATION_CREDENTIALS is set."
             )
 
         self.url = f"https://vision.googleapis.com/v1/images:annotate?key={self.api_key}"

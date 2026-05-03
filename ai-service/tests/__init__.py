@@ -30,5 +30,5 @@ def run_tests(test_name: str = None):
 
 
 if __name__ == "__main__":
-    # Default: only run OCR tests for now
-    sys.exit(run_tests("test_ocr"))
+    # Default: run all tests in the package
+    sys.exit(run_tests())
