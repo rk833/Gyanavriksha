@@ -1,10 +1,11 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from app.rag.rag_service import RAGService, QueryRequest
 import os
+from app.core.google_auth import configure_google_credentials
 
 class GeneratedQuestion(BaseModel):
     question_text: str = Field(description="The text of the question")
@@ -20,7 +21,8 @@ class GeneratedQuiz(BaseModel):
 
 class QuizGeneratorService:
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+        configure_google_credentials()
+        self.llm = ChatVertexAI(model_name="gemini-2.5-flash", temperature=0.3)
         self.rag_service = RAGService()
         self.parser = JsonOutputParser(pydantic_object=List[GeneratedQuestion])
         

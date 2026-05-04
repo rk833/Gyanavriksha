@@ -16,7 +16,7 @@ async def test_quiz_generator_service_success():
         }
     ]
 
-    with patch('app.quiz_generator.service.ChatGoogleGenerativeAI'), \
+    with patch('app.quiz_generator.service.ChatVertexAI'), \
          patch('app.quiz_generator.service.RAGService') as mock_rag_cls, \
          patch('app.quiz_generator.service.JsonOutputParser') as mock_parser_cls:
         
@@ -64,7 +64,7 @@ async def test_gap_detector_success():
         ]
     }
 
-    with patch('app.quiz_generator.gap_detector.ChatGoogleGenerativeAI'):
+    with patch('app.quiz_generator.gap_detector.ChatVertexAI'):
         detector = QuizGapDetector()
 
         # Mock the chain by patching the prompt's pipe operator

@@ -3,8 +3,8 @@ from unittest.mock import patch, MagicMock
 from app.rag.rag_service import RAGService, DocumentUploadRequest, QueryRequest
 
 @pytest.fixture
-@patch("app.rag.rag_service.GoogleGenerativeAIEmbeddings")
-@patch("app.rag.rag_service.ChatGoogleGenerativeAI")
+@patch("app.rag.rag_service.VertexAIEmbeddings")
+@patch("app.rag.rag_service.ChatVertexAI")
 @patch("app.rag.rag_service.get_document_preprocessor")
 def rag_service(mock_preprocessor, mock_llm, mock_embeddings):
     return RAGService()
