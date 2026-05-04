@@ -439,15 +439,16 @@ def remove_enrollment(
 @router.post("/ingestion/upload", response_model=IngestionJobResponse, status_code=status.HTTP_201_CREATED)
 async def upload_curriculum(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     subject_id: int = Form(...),
     doc_type: str = Form(default="curriculum_pdf"),
     current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db),
 ):
-    """Upload a curriculum PDF or DOCX and queue it for embedding."""
+    """Upload a curriculum PDF or DOCX and queue it for RAG indexing."""
     file_bytes = await file.read()
-    return service.upload_curriculum(db, file_bytes, file.filename, subject_id, current_user.user_id, doc_type, _ip(request))
+    return service.upload_curriculum(db, background_tasks, file_bytes, file.filename, subject_id, current_user.user_id, doc_type, _ip(request))
 
 
 @router.get("/ingestion/jobs", response_model=IngestionJobListResponse)
@@ -575,11 +576,12 @@ def delete_curriculum_doc(
 def requeue_curriculum_doc(
     doc_id: uuid.UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db),
 ):
     """Re-queue a failed or completed document for re-embedding."""
-    return service.requeue_curriculum_doc(db, doc_id, current_user.user_id, _ip(request))
+    return service.requeue_curriculum_doc(db, background_tasks, doc_id, current_user.user_id, _ip(request))
 
 
 @router.get("/iot/devices", response_model=IoTDeviceListResponse)
