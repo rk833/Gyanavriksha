@@ -1,13 +1,14 @@
 import os
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_vertexai import ChatVertexAI, VertexAIEmbeddings
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from app.rag.chroma_client import chroma_manager
 from app.rag.document_preprocessing import get_document_preprocessor
+from app.core.google_auth import configure_google_credentials
 
 class DocumentUploadRequest(BaseModel):
     user_type: str  # admin, instructor, student
@@ -28,9 +29,10 @@ class QueryRequest(BaseModel):
 
 class RAGService:
     def __init__(self):
-        # Using Gemini models via LangChain
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.3)
+        configure_google_credentials()
+        # Use Vertex AI with ADC (service-account.json / GOOGLE_APPLICATION_CREDENTIALS)
+        self.embeddings = VertexAIEmbeddings(model_name="text-embedding-005")
+        self.llm = ChatVertexAI(model_name="gemini-2.5-flash", temperature=0.3)
         self.preprocessor = get_document_preprocessor()
         
         system_prompt = (

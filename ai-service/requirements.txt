@@ -7,6 +7,11 @@ scikit-learn
 
 # rag focus
 langchain
+langchain-google-genai
+langchain-google-vertexai
+langchain-chroma
+langchain-classic
+langchain-text-splitters
 chromadb
 rank_bm25
 
@@ -24,4 +29,5 @@ seaborn
 # core tech
 fastapi
 pydantic
+python-multipart
 uvicorn
