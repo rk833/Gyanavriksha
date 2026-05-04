@@ -7,6 +7,7 @@ and keeps the presentation layer free of business logic.
 import uuid
 
 from fastapi import BackgroundTasks, HTTPException, status
+from app.services import curriculum_ingestion_service
 from sqlalchemy.orm import Session
 
 from app.db.models.user import User
@@ -578,6 +579,7 @@ def remove_enrollment(
 
 def upload_curriculum(
     db: Session,
+    background_tasks: BackgroundTasks,
     file_bytes: bytes,
     filename: str,
     subject_id: int,
@@ -585,7 +587,7 @@ def upload_curriculum(
     doc_type_str: str,
     ip_address: str | None,
 ) -> IngestionJobResponse:
-    """Validate, save, and register a curriculum file upload."""
+    """Validate, save, and queue a curriculum file for RAG indexing."""
     try:
         doc = admin_service.upload_curriculum_file(db, file_bytes, filename, subject_id, actor_id, doc_type_str)
     except ValueError as exc:
@@ -594,6 +596,7 @@ def upload_curriculum(
         db, actor_id, "CURRICULUM_UPLOAD", f"Uploaded '{filename}' for subject {subject_id}", "curriculum_document", str(doc.doc_id), ip_address,
     )
     db.commit()
+    background_tasks.add_task(curriculum_ingestion_service.ingest_curriculum_document, doc.doc_id)
     return IngestionJobResponse(**admin_service._doc_to_job_dict(db, doc))
 
 
@@ -728,11 +731,12 @@ def delete_curriculum_doc(
 
 def requeue_curriculum_doc(
     db: Session,
+    background_tasks: BackgroundTasks,
     doc_id: uuid.UUID,
     actor_id: uuid.UUID,
     ip_address: str | None,
 ) -> IngestionJobResponse:
-    """Re-queue a document for re-embedding."""
+    """Re-queue a document for re-embedding and restart the RAG ingestion pipeline."""
     error = admin_service.requeue_curriculum_doc(db, doc_id)
     if error == "NOT_FOUND":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
@@ -740,6 +744,7 @@ def requeue_curriculum_doc(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
     admin_service.log_audit_event(db, actor_id, "CURRICULUM_REQUEUED", f"Requeued document {doc_id}", "curriculum_document", str(doc_id), ip_address)
     db.commit()
+    background_tasks.add_task(curriculum_ingestion_service.ingest_curriculum_document, doc_id)
     doc = admin_service.get_curriculum_doc_by_id(db, doc_id)
     return IngestionJobResponse(**admin_service._doc_to_job_dict(db, doc))
 

@@ -20,6 +20,8 @@ from app.schemas.common import PaginatedResponse
 from app.schemas.library import CurriculumDocumentResponse
 from app.schemas.notification import NotificationResponse, UnreadCountResponse
 from app.schemas.progress import (
+    DashboardResponse,
+    KnowledgeGapResponse,
     KnowledgeGapSummary,
     StudentProgressResponse,
 )
