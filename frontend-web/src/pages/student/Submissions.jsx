@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Calendar,
   TrendingUp,
   Zap,
   Eye,
@@ -14,8 +13,12 @@ import {
   CheckCircle,
   AlertCircle,
   Loader2,
+  Download,
+  Bot,
+  UserCircle,
 } from 'lucide-react';
-import { getSubmissions, getSubjects, getDashboard, getSubmissionDetail, getSubmissionFeedback } from '../../services/studentService';
+import toast from 'react-hot-toast';
+import { getSubmissions, getSubjects, getDashboard, getSubmissionDetail, downloadSubmissionFile } from '../../services/studentService';
 
 const STATUS_COLORS = {
   queued: 'bg-yellow-100 text-yellow-700',
@@ -37,6 +40,7 @@ export default function StudentSubmissions() {
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState(null);
+  const [feedbackView, setFeedbackView] = useState('official');
 
   const { data: subjects = [] } = useQuery({
     queryKey: ['student', 'subjects'],
@@ -71,16 +75,12 @@ export default function StudentSubmissions() {
   const {
     data: selectedSubmission,
     isPending: detailLoading,
+    isError: detailError,
   } = useQuery({
     queryKey: ['student', 'submission', selectedSubmissionId],
     queryFn: async () => {
-      const [detailRes, feedbackRes] = await Promise.allSettled([
-        getSubmissionDetail(selectedSubmissionId),
-        getSubmissionFeedback(selectedSubmissionId),
-      ]);
-      const detail = detailRes.status === 'fulfilled' ? detailRes.value.data : null;
-      const feedback = feedbackRes.status === 'fulfilled' ? feedbackRes.value.data : null;
-      return { ...detail, feedback };
+      const res = await getSubmissionDetail(selectedSubmissionId);
+      return res.data;
     },
     enabled: !!selectedSubmissionId,
   });
@@ -89,8 +89,31 @@ export default function StudentSubmissions() {
   const totalPages = submissionsData?.total_pages || 0;
   const total = submissionsData?.total || 0;
 
-  const openDetail = (submissionId) => setSelectedSubmissionId(submissionId);
+  const openDetail = (submissionId) => {
+    setFeedbackView('official');
+    setSelectedSubmissionId(submissionId);
+  };
   const closeDetail = () => setSelectedSubmissionId(null);
+
+  const handleDownloadFile = async (fileIndex, name) => {
+    if (!selectedSubmissionId) return;
+    try {
+      await downloadSubmissionFile(selectedSubmissionId, fileIndex, name || `file-${fileIndex}`);
+    } catch {
+      toast.error('Could not download file');
+    }
+  };
+
+  const fileEntryLabel = (entry) => {
+    if (entry == null) return 'File';
+    if (typeof entry === 'string') return entry;
+    return entry.name || 'File';
+  };
+
+  const fileEntryIndex = (entry, i) => {
+    if (entry && typeof entry === 'object' && typeof entry.index === 'number') return entry.index;
+    return i;
+  };
 
   const avgScore = dashboard?.average_score;
 
@@ -264,11 +287,13 @@ export default function StudentSubmissions() {
               </button>
             </div>
 
-            {selectedSubmission.loading ? (
+            {detailLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 text-primary animate-spin" />
               </div>
-            ) : (
+            ) : detailError ? (
+              <div className="p-8 text-center text-sm text-red-600">Could not load submission details.</div>
+            ) : selectedSubmission ? (
               <div className="p-5 space-y-4">
                 {/* Assignment info */}
                 <div>
@@ -304,42 +329,193 @@ export default function StudentSubmissions() {
                 {/* Uploaded files */}
                 {selectedSubmission.uploaded_files && selectedSubmission.uploaded_files.length > 0 && (
                   <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Uploaded Files</p>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Your uploads</p>
                     <div className="space-y-1.5">
-                      {selectedSubmission.uploaded_files.map((f, i) => (
-                        <div key={i} className="flex items-center gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
-                          <FileText className="w-4 h-4 text-primary" />
-                          <span className="text-slate-700 truncate">{f}</span>
-                        </div>
-                      ))}
+                      {selectedSubmission.uploaded_files.map((f, i) => {
+                        const idx = fileEntryIndex(f, i);
+                        const label = fileEntryLabel(f);
+                        return (
+                          <div key={`${idx}-${label}`} className="flex items-center justify-between gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-primary shrink-0" />
+                              <span className="text-slate-700 truncate" title={label}>{label}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadFile(idx, label)}
+                              className="shrink-0 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Download
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
-                {/* Feedback */}
+                {/* Feedback — official vs original AI when instructor adjusted grade */}
                 {selectedSubmission.feedback ? (
                   <div className="border-t border-primary-light pt-4">
                     <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Feedback</p>
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                      <div className="flex items-start gap-2">
-                        <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-sm font-medium text-green-800 mb-1">
-                            Score: {selectedSubmission.feedback.score_percentage?.toFixed(0)}%
-                          </p>
-                          {selectedSubmission.feedback.strengths && (
-                            <p className="text-sm text-green-700 mb-1">
-                              <strong>Strengths:</strong> {selectedSubmission.feedback.strengths}
+                    {selectedSubmission.feedback.graded_by && !selectedSubmission.feedback.ai_snapshot ? (
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                        <div className="flex items-start gap-2">
+                          <UserCircle className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-1">Instructor grade</p>
+                            <p className="text-sm font-medium text-emerald-900 mb-1">
+                              Score:{' '}
+                              {selectedSubmission.score_percentage != null
+                                ? `${Number(selectedSubmission.score_percentage).toFixed(0)}%`
+                                : '—'}
                             </p>
-                          )}
-                          {selectedSubmission.feedback.improvements && (
-                            <p className="text-sm text-green-700">
-                              <strong>To improve:</strong> {selectedSubmission.feedback.improvements}
-                            </p>
-                          )}
+                            {selectedSubmission.feedback.overall_feedback && (
+                              <p className="text-sm text-emerald-900/90 mb-2 whitespace-pre-wrap">
+                                {selectedSubmission.feedback.overall_feedback}
+                              </p>
+                            )}
+                            {selectedSubmission.feedback.strengths && (
+                              <p className="text-sm text-emerald-800 mb-1">
+                                <strong>Strengths:</strong> {selectedSubmission.feedback.strengths}
+                              </p>
+                            )}
+                            {selectedSubmission.feedback.improvements && (
+                              <p className="text-sm text-emerald-800">
+                                <strong>To improve:</strong> {selectedSubmission.feedback.improvements}
+                              </p>
+                            )}
+                            <p className="text-xs text-emerald-700/80 mt-2">Original AI comparison is not available for this submission.</p>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : selectedSubmission.feedback.graded_by && selectedSubmission.feedback.ai_snapshot ? (
+                      <div className="space-y-3">
+                        <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50">
+                          <button
+                            type="button"
+                            onClick={() => setFeedbackView('official')}
+                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-md transition ${
+                              feedbackView === 'official'
+                                ? 'bg-white text-primary-dark shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            <UserCircle className="w-3.5 h-3.5" />
+                            Instructor
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFeedbackView('ai')}
+                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-md transition ${
+                              feedbackView === 'ai'
+                                ? 'bg-white text-primary-dark shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            <Bot className="w-3.5 h-3.5" />
+                            Original AI
+                          </button>
+                        </div>
+                        {feedbackView === 'official' ? (
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                            <div className="flex items-start gap-2">
+                              <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-1">Official grade</p>
+                                <p className="text-sm font-medium text-emerald-900 mb-1">
+                                  Score:{' '}
+                                  {selectedSubmission.score_percentage != null
+                                    ? `${Number(selectedSubmission.score_percentage).toFixed(0)}%`
+                                    : '—'}
+                                </p>
+                                {selectedSubmission.feedback.overall_feedback && (
+                                  <p className="text-sm text-emerald-900/90 mb-2 whitespace-pre-wrap">
+                                    {selectedSubmission.feedback.overall_feedback}
+                                  </p>
+                                )}
+                                {selectedSubmission.feedback.strengths && (
+                                  <p className="text-sm text-emerald-800 mb-1">
+                                    <strong>Strengths:</strong> {selectedSubmission.feedback.strengths}
+                                  </p>
+                                )}
+                                {selectedSubmission.feedback.improvements && (
+                                  <p className="text-sm text-emerald-800">
+                                    <strong>To improve:</strong> {selectedSubmission.feedback.improvements}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div className="flex items-start gap-2">
+                              <Bot className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-[11px] font-bold text-blue-800 uppercase tracking-wider mb-1">AI grading (before adjustment)</p>
+                                <p className="text-sm font-medium text-blue-900 mb-1">
+                                  Score:{' '}
+                                  {selectedSubmission.feedback.ai_snapshot.score_percentage != null
+                                    ? `${Number(selectedSubmission.feedback.ai_snapshot.score_percentage).toFixed(0)}%`
+                                    : '—'}
+                                </p>
+                                {selectedSubmission.feedback.ai_snapshot.overall_feedback && (
+                                  <p className="text-sm text-blue-900/90 mb-2 whitespace-pre-wrap">
+                                    {selectedSubmission.feedback.ai_snapshot.overall_feedback}
+                                  </p>
+                                )}
+                                {selectedSubmission.feedback.ai_snapshot.strengths && (
+                                  <p className="text-sm text-blue-800 mb-1">
+                                    <strong>Strengths:</strong> {selectedSubmission.feedback.ai_snapshot.strengths}
+                                  </p>
+                                )}
+                                {selectedSubmission.feedback.ai_snapshot.improvements && (
+                                  <p className="text-sm text-blue-800">
+                                    <strong>To improve:</strong> {selectedSubmission.feedback.ai_snapshot.improvements}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="flex items-start gap-2">
+                          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                          <div>
+                            {(() => {
+                              const fbScore = selectedSubmission.feedback.score_percentage;
+                              const rowScore = selectedSubmission.score_percentage;
+                              const pct = fbScore != null ? fbScore : rowScore;
+                              return (
+                                <p className="text-sm font-medium text-green-800 mb-1">
+                                  Score:
+                                  {' '}
+                                  {pct != null && pct !== undefined ? `${Number(pct).toFixed(0)}%` : '—'}
+                                </p>
+                              );
+                            })()}
+                            {selectedSubmission.feedback.overall_feedback && (
+                              <p className="text-sm text-green-800/90 mb-2 whitespace-pre-wrap">
+                                {selectedSubmission.feedback.overall_feedback}
+                              </p>
+                            )}
+                            {selectedSubmission.feedback.strengths && (
+                              <p className="text-sm text-green-700 mb-1">
+                                <strong>Strengths:</strong> {selectedSubmission.feedback.strengths}
+                              </p>
+                            )}
+                            {selectedSubmission.feedback.improvements && (
+                              <p className="text-sm text-green-700">
+                                <strong>To improve:</strong> {selectedSubmission.feedback.improvements}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : selectedSubmission.processing_status !== 'done' ? (
                   <div className="border-t border-primary-light pt-4">
@@ -351,8 +527,24 @@ export default function StudentSubmissions() {
                     </div>
                   </div>
                 ) : null}
+
+                {/* Link to full AI result page */}
+                {selectedSubmission.submission_id && (
+                  <div className="border-t border-primary-light pt-4">
+                    <button
+                      onClick={() => {
+                        closeDetail();
+                        navigate(`/student/submissions/${selectedSubmission.submission_id}/result`);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 text-sm font-semibold text-primary-dark border border-primary rounded-xl py-2.5 hover:bg-primary-light transition-colors"
+                    >
+                      <Zap className="w-4 h-4" />
+                      View Full AI Result
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}

@@ -103,6 +103,27 @@ export const getSubmissionDetail = (id) =>
   api.get(`/api/instructors/submissions/${id}`);
 
 /**
+ * Download one uploaded file for a submission the instructor can access.
+ *
+ * @param {string} submissionId
+ * @param {number} fileIndex
+ * @param {string} [filename]
+ */
+export const downloadSubmissionFile = (submissionId, fileIndex, filename) =>
+  api.get(`/api/instructors/submissions/${submissionId}/files/${fileIndex}`, {
+    responseType: 'blob',
+    timeout: 120000,
+  }).then((res) => {
+    const blob = new Blob([res.data]);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `submission-${fileIndex}`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  });
+
+/**
  * Create or override instructor feedback and score on a submission.
  *
  * @param {string} id - Submission UUID.

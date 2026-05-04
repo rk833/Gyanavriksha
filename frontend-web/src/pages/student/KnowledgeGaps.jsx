@@ -147,6 +147,15 @@ export default function StudentKnowledgeGaps() {
                       </div>
                     </div>
                     <button
+                      onClick={() => {
+                        if (gap.is_resolved) {
+                          navigate('/student/submissions');
+                        } else {
+                          navigate(
+                            `/student/micro-quiz?gap_id=${gap.gap_id}&concept=${encodeURIComponent(gap.concept_name)}&subject_id=${gap.subject_id || ''}`
+                          );
+                        }
+                      }}
                       className="text-xs bg-primary-dark text-white px-3 py-1.5 rounded-lg hover:bg-primary transition-colors"
                     >
                       {gap.is_resolved ? 'Review Results' : 'Linked Quiz'}

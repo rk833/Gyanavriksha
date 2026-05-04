@@ -7,11 +7,16 @@ mapping all live in the application layer.
 """
 import uuid
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+import mimetypes
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.auth.infrastructure.dependencies import require_role
 from app.api.student.application import service
+from app.services import submission_service as submission_service_mod
 from app.api.student.domain.schemas import StudentProfileUpdateInput
 from app.core.database import get_db
 from app.db.models.user import User
@@ -148,6 +153,26 @@ def get_submission(
 ):
     """Return full submission detail including feedback and knowledge gap data."""
     return service.get_submission(db, current_user.user_id, submission_id)
+
+
+@router.get("/submissions/{submission_id}/files/{file_index}")
+def download_submission_file(
+    submission_id: uuid.UUID,
+    file_index: int,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Download one uploaded file for the student's own submission."""
+    submission_service_mod.get_submission_detail(db, current_user.user_id, submission_id)
+    abs_path, fname = submission_service_mod.get_submission_file_for_download(
+        db, submission_id, file_index
+    )
+    media, _ = mimetypes.guess_type(fname)
+    return FileResponse(
+        abs_path,
+        filename=fname,
+        media_type=media or "application/octet-stream",
+    )
 
 
 @router.get(
@@ -313,6 +338,32 @@ def get_library_document(
 ):
     """Return detail for a single curriculum document accessible to the student."""
     return service.get_library_document(db, current_user.user_id, doc_id)
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[4]
+
+
+@router.get("/library/{doc_id}/download")
+def download_library_document(
+    doc_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Stream a curriculum document file to the authenticated student."""
+    detail = service.get_library_document(db, current_user.user_id, doc_id)
+    file_path = _BACKEND_ROOT / detail.file_path
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on server.",
+        )
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(
+        path=str(file_path),
+        filename=detail.file_name,
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{detail.file_name}"'},
+    )
 
 
 @router.get("/quizzes", response_model=PaginatedResponse[MicroQuizSchema])

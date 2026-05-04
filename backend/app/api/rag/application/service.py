@@ -38,6 +38,7 @@ async def execute_rag_query(payload: RagQueryInput) -> dict[str, Any]:
         user_type=payload.user_type,
         query=payload.query,
         grade=payload.grade,
+        subject=payload.subject,
         instructor_id=payload.instructor_id,
         class_id=payload.class_id,
         student_id=payload.student_id,

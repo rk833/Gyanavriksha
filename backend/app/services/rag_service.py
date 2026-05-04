@@ -19,6 +19,7 @@ def _build_query_payload(
     user_type: str,
     query: str,
     grade: int | None,
+    subject: str | None,
     instructor_id: str | None,
     class_id: str | None,
     student_id: str | None,
@@ -27,6 +28,8 @@ def _build_query_payload(
     payload: dict[str, Any] = {"user_type": user_type, "query": query}
     if grade is not None:
         payload["grade"] = grade
+    if subject:
+        payload["subject"] = subject
     if instructor_id:
         payload["instructor_id"] = instructor_id
     if class_id:
@@ -79,12 +82,13 @@ async def query_rag(
     query: str,
     *,
     grade: int | None = None,
+    subject: str | None = None,
     instructor_id: str | None = None,
     class_id: str | None = None,
     student_id: str | None = None,
 ) -> dict[str, Any]:
     """Forward a RAG query to the AI service and return the answer with sources."""
-    payload = _build_query_payload(user_type, query, grade, instructor_id, class_id, student_id)
+    payload = _build_query_payload(user_type, query, grade, subject, instructor_id, class_id, student_id)
     return await ai_post("/rag/query", payload)
 
 

@@ -24,6 +24,9 @@ from app.shared.source_enum import GradeClassification, SubmissionProcessingStat
 
 logger = logging.getLogger(__name__)
 
+# Same root as submission_service: backend/uploads
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+
 _CLASSIFICATION_MAP: dict[str, GradeClassification] = {
     "correct": GradeClassification.CORRECT,
     "partial": GradeClassification.PARTIAL,
@@ -57,21 +60,49 @@ def _read_submission_context(db: Session, sub: Submission) -> tuple[str, str, st
     subject = db.query(Subject).filter(Subject.subject_id == sub.subject_id).first()
     subject_name = subject.subject_name if subject else "Unknown"
     question_text = assignment.title if assignment else "Assignment"
-    expected_answer = (assignment.instructions if assignment and assignment.instructions else "N/A")
+    expected_answer = (
+        (assignment.description or "").strip() or "N/A"
+        if assignment
+        else "N/A"
+    )
     return subject_name, question_text, expected_answer
 
 
+def _first_submission_file_path(image_path: str) -> str:
+    """Use the first stored path when multiple files are comma-separated."""
+    if not image_path:
+        return image_path
+    return image_path.split(",")[0].strip()
+
+
+def _absolute_submission_file_path(stored: str) -> str:
+    """Resolve DB path (relative to uploads/) to an absolute path on disk."""
+    rel = _first_submission_file_path(stored or "").strip()
+    if not rel:
+        return rel
+    if os.path.isabs(rel):
+        return rel
+    rel = rel.replace("\\", os.sep)
+    parts = rel.split(os.sep)
+    if parts and parts[0].lower() == "uploads":
+        rel = os.path.join(*parts[1:]) if len(parts) > 1 else ""
+    return os.path.normpath(os.path.join(UPLOAD_DIR, rel))
+
+
 def _read_image_file(image_path: str) -> tuple[bytes, str, str]:
-    """Read the image file and return (bytes, content_type, filename).
+    """Read the submission file and return (bytes, content_type, filename).
 
     Raises FileNotFoundError when the file does not exist on disk.
     """
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Submission image not found at {image_path}")
-    with open(image_path, "rb") as fh:
+    abs_path = _absolute_submission_file_path(image_path)
+    if not abs_path or not os.path.isfile(abs_path):
+        raise FileNotFoundError(f"Submission file not found at {abs_path} (stored: {image_path!r})")
+    with open(abs_path, "rb") as fh:
         image_bytes = fh.read()
-    content_type, _ = mimetypes.guess_type(image_path)
-    return image_bytes, (content_type or "image/jpeg"), os.path.basename(image_path)
+    content_type, _ = mimetypes.guess_type(abs_path)
+    if abs_path.lower().endswith(".pdf"):
+        content_type = "application/pdf"
+    return image_bytes, (content_type or "image/jpeg"), os.path.basename(abs_path)
 
 
 async def _call_grading_endpoint(
@@ -123,14 +154,26 @@ async def _call_grading_endpoint(
 
 def _write_grading_result(db: Session, sub: Submission, result: dict[str, Any]) -> None:
     """Persist the AI grading result to Submission and SubmissionFeedback rows."""
+    existing = db.query(SubmissionFeedback).filter(
+        SubmissionFeedback.submission_id == sub.submission_id
+    ).first()
+    if existing and existing.graded_by is not None:
+        # Instructor has published a grade — keep official feedback/score; store latest AI run separately.
+        existing.ai_snapshot = {
+            "score_percentage": result.get("score_percentage"),
+            "overall_feedback": result.get("overall_feedback", ""),
+            "step_by_step_corrections": result.get("step_by_step_corrections", []),
+            "strengths": result.get("strengths"),
+            "improvements": result.get("improvements"),
+        }
+        db.commit()
+        return
+
     raw_class = result.get("grade_classification", "incorrect")
     sub.grade_classification = _CLASSIFICATION_MAP.get(raw_class, GradeClassification.INCORRECT)
     sub.score_percentage = result.get("score_percentage")
     sub.processing_status = SubmissionProcessingStatus.DONE
     sub.processing_completed_at = datetime.now(timezone.utc)
-    existing = db.query(SubmissionFeedback).filter(
-        SubmissionFeedback.submission_id == sub.submission_id
-    ).first()
     if existing:
         existing.overall_feedback = result.get("overall_feedback", "")
         existing.step_by_step_corrections = result.get("step_by_step_corrections", [])
@@ -175,24 +218,24 @@ async def process_submission_ocr(db: Session, submission_id: uuid.UUID) -> dict[
         result = await _call_grading_endpoint(
             image_bytes=image_bytes,
             filename=filename,
-            content_type=content_type,
+            content_type=content_type or "image/jpeg",
             submission_id=str(submission_id),
             subject=subject_name,
             question=question_text,
             expected_answer=expected_answer,
         )
-    except HTTPException:
+    except HTTPException as exc:
         sub.processing_status = SubmissionProcessingStatus.QUEUED
         db.commit()
-        raise
+        # Do not re-raise when run as a FastAPI BackgroundTask (response already sent).
+        logger.warning("Grading HTTP error for %s: %s", submission_id, str(exc.detail))
+        return {"error": exc.detail, "status_code": exc.status_code}
     except FileNotFoundError as exc:
         sub.processing_status = SubmissionProcessingStatus.REJECTED
         sub.quality_rejection_reason = str(exc)
         db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+        logger.error("Submission file missing for %s: %s", submission_id, exc)
+        return {"error": str(exc)}
     _write_grading_result(db, sub, result)
     logger.info(
         "Submission %s graded: %s (%.1f%%)",

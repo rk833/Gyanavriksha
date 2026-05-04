@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -39,8 +40,10 @@ class DocumentPreprocessor:
         Initialize the preprocessor using environment variables if arguments are not provided.
         """
         # Load from .env or fallback to defaults
-        self.chunk_size = chunk_size if chunk_size is not None else int(os.getenv('CHUNK_SIZE', '1000'))
-        self.chunk_overlap = chunk_overlap if chunk_overlap is not None else int(os.getenv('CHUNK_OVERLAP', '200'))
+        # 400 chars ≈ 100-130 tokens. Vertex AI text-embedding-005 caps at 20 000 tokens
+        # per request, so keep batches well within that limit.
+        self.chunk_size = chunk_size if chunk_size is not None else int(os.getenv('CHUNK_SIZE', '400'))
+        self.chunk_overlap = chunk_overlap if chunk_overlap is not None else int(os.getenv('CHUNK_OVERLAP', '60'))
         
         if RecursiveCharacterTextSplitter is None:
             raise ImportError("langchain text splitters are required. Please ensure langchain or langchain-text-splitters is installed.")
@@ -115,6 +118,47 @@ class DocumentPreprocessor:
             
         return results
 
-# A convenience function for easy RAG pipeline integration
+    def extract_toc(self, text: str, source_name: str = "") -> Dict[str, Any] | None:
+        """Scan raw document text for unit/chapter headings and return a TOC chunk.
+
+        The TOC chunk is stored as a synthetic document so queries like
+        'list all units' or 'what chapters are in this book' can retrieve
+        the full structure in a single hit.
+        Returns None if fewer than 3 headings are found.
+        """
+        heading_patterns = [
+            r"^(Unit\s+\d+[\s:–\-].{0,80})$",
+            r"^(Chapter\s+\d+[\s:–\-].{0,80})$",
+            r"^(Section\s+\d+[\s:–\-].{0,80})$",
+            r"^(Lesson\s+\d+[\s:–\-].{0,80})$",
+            r"^([A-Z][A-Z\s]{5,60})$",
+        ]
+        seen: set[str] = set()
+        headings: list[str] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or len(line) > 120:
+                continue
+            for pat in heading_patterns:
+                if re.match(pat, line, re.IGNORECASE):
+                    key = line.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        headings.append(line)
+                    break
+
+        if len(headings) < 3:
+            return None
+
+        toc_text = (
+            f"TABLE OF CONTENTS — {source_name}\n\n"
+            + "\n".join(f"• {h}" for h in headings)
+        )
+        return {
+            "text": toc_text,
+            "metadata": {"chunk_type": "toc", "source": source_name, "chunk_id": -1},
+        }
+
+
 def get_document_preprocessor() -> DocumentPreprocessor:
     return DocumentPreprocessor()

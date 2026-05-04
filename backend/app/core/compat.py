@@ -1,8 +1,5 @@
 """Third-party compatibility shims.
 
-Import this module before any library that depends on the patched packages.
+bcrypt 3.x is supported by passlib 1.7.x natively — no patching required.
+This file is kept as an import anchor in app/main.py.
 """
-import bcrypt as _bcrypt
-
-if not hasattr(_bcrypt, "__about__"):
-    _bcrypt.__about__ = type("__about__", (), {"__version__": _bcrypt.__version__})()

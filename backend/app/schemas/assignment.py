@@ -1,7 +1,13 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class SubjectInstructorBrief(BaseModel):
+    user_id: uuid.UUID
+    full_name: str
+    email: str
 
 
 class AssignmentListItem(BaseModel):
@@ -12,8 +18,13 @@ class AssignmentListItem(BaseModel):
     subject_name: str | None = None
     grade_name: str | None = None
     instructor_name: str | None = None
+    subject_instructors: list[SubjectInstructorBrief] = Field(default_factory=list)
     topic_tags: list[str] | None = None
     is_exam_mode: bool = False
+    exam_duration_minutes: int | None = None
+    exam_max_pauses: int | None = None
+    exam_strict_proctor: bool = False
+    max_score: float = 100.0
     due_date: datetime | None = None
     is_published: bool = False
     has_submitted: bool = False

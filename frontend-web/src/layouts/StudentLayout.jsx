@@ -24,7 +24,7 @@ const NAV_ITEMS = [
   { to: '/student/performance', label: 'Progress', icon: TrendingUp },
   { to: '/student/library', label: 'Library', icon: Library },
   { to: '/student/iot-status', label: 'IoT Status', icon: Cpu, disabled: true },
-  { to: '/student/ai-tutor', label: 'AI Tutor', icon: Bot, disabled: true },
+  { to: '/student/ai-tutor', label: 'AI Tutor', icon: Bot },
 ];
 
 export default function StudentLayout() {

@@ -86,6 +86,27 @@ export const getSubmissions = (params = {}) =>
 export const getSubmissionDetail = (id) => api.get(`/api/students/submissions/${id}`);
 
 /**
+ * Download one uploaded file for the student's submission (blob; triggers save in browser).
+ *
+ * @param {string} submissionId
+ * @param {number} fileIndex
+ * @param {string} [filename] - Suggested download name.
+ */
+export const downloadSubmissionFile = (submissionId, fileIndex, filename) =>
+  api.get(`/api/students/submissions/${submissionId}/files/${fileIndex}`, {
+    responseType: 'blob',
+    timeout: 120000,
+  }).then((res) => {
+    const blob = new Blob([res.data]);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `submission-${fileIndex}`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  });
+
+/**
  * Fetch AI-generated grading feedback for a specific submission.
  *
  * @param {string} id - Submission UUID.
@@ -185,3 +206,24 @@ export const getLibraryDocuments = (params = {}) =>
  * @returns {Promise<import('./types').CurriculumDocumentResponse>}
  */
 export const getLibraryDocument = (id) => api.get(`/api/students/library/${id}`);
+
+/**
+ * Download a curriculum document as a file blob (uses auth token automatically).
+ *
+ * @param {string} docId - Document UUID.
+ * @param {string} fileName - Suggested save name.
+ */
+export const downloadDocument = async (docId, fileName) => {
+  const res = await api.get(`/api/students/library/${docId}/download`, {
+    responseType: 'blob',
+    timeout: 180_000,
+  });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};

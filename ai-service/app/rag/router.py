@@ -1,4 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from functools import lru_cache
 from typing import Optional
 import os
 import tempfile
@@ -6,7 +7,9 @@ from app.rag.rag_service import RAGService, DocumentUploadRequest, QueryRequest
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
-def get_rag_service():
+@lru_cache(maxsize=1)
+def get_rag_service() -> RAGService:
+    """Singleton: model is loaded once and reused across all requests."""
     return RAGService()
 
 @router.post("/upload")
@@ -53,10 +56,9 @@ async def upload_document(
 @router.post("/query")
 async def query_rag(
     request: QueryRequest,
-    rag_service: RAGService = Depends(get_rag_service)
+    rag_service: RAGService = Depends(get_rag_service),
 ):
     try:
-        result = rag_service.query(request)
-        return result
+        return rag_service.query(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
