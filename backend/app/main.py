@@ -10,7 +10,10 @@ from app.api.instructor.presentation.router import router as instructors_router
 from app.api.middleware.rate_limiter import rate_limit_middleware
 from app.api.routes.iot_devices import router as iot_router
 from app.api.student.presentation.router import router as students_router
-from app.api.routes.analytics import router as analytics_router
+from app.api.analytics.presentation.router import router as analytics_router
+from app.api.rag.presentation.router import router as rag_router
+from app.api.grading.presentation.router import router as grading_router
+from app.api.quiz.presentation.router import router as quiz_router
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.db.models.system_setting import SystemSetting
@@ -65,6 +68,9 @@ app.include_router(instructors_router)
 app.include_router(students_router)
 app.include_router(analytics_router)
 app.include_router(iot_router)
+app.include_router(rag_router)
+app.include_router(grading_router)
+app.include_router(quiz_router)
 
 
 @app.get("/health")
