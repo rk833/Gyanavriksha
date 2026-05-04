@@ -17,6 +17,7 @@ import {
   Settings,
 } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
+import Footer from '../components/common/Footer';
 
 const NAV_ITEMS = [
   { to: '/instructor/dashboard', label: 'Intelligence', icon: LayoutDashboard },
@@ -162,6 +163,8 @@ export default function InstructorLayout() {
         <main className="flex-1 p-4 lg:p-6">
           <Outlet />
         </main>
+
+        <Footer />
       </div>
     </div>
   );

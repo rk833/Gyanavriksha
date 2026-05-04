@@ -18,7 +18,8 @@ export function useApi() {
 
   const request = useCallback(
     async <T,>(method: Method, url: string, config: RequestConfig = {}) => {
-      const token = await SecureStore.getItemAsync('auth_token');
+      const accessToken = await SecureStore.getItemAsync('access_token');
+      const token = accessToken ?? (await SecureStore.getItemAsync('auth_token'));
       const headers = {
         ...(config.headers as Record<string, string> | undefined),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

@@ -1,0 +1,18 @@
+# PlatformIO build/dependency artifacts
+smart-desk/.pio/
+
+# Local Python/uv environment for IoT tooling
+.venv/
+venv/
+__pycache__/
+
+# Local env and secrets
+.env
+.env.*
+*.local
+
+# Serial/log outputs and temporary captures
+*.tmp
+*.bak
+*.log
+*.csv

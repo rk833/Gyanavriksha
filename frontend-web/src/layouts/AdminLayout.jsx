@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -15,6 +16,7 @@ import {
   Settings,
 } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
+import { getAdminUnreadCount } from '../services/adminService';
 
 const NAV_ITEMS = [
   { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -25,13 +27,18 @@ const NAV_ITEMS = [
   { to: '/admin/curriculum-ingestion', label: 'Curriculum Ingestion', icon: Upload },
   { to: '/admin/audit-logs', label: 'Audit Logs', icon: ScrollText },
   { to: '/admin/security', label: 'Security', icon: ShieldCheck },
-  { to: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function AdminLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { data: unreadData } = useQuery({
+    queryKey: ['admin', 'notifications', 'unread-count'],
+    queryFn: async () => (await getAdminUnreadCount()).data,
+    refetchInterval: 30000,
+  });
+  const unreadCount = unreadData?.count ?? 0;
 
   const handleLogout = async () => {
     await logout();
@@ -108,8 +115,16 @@ export default function AdminLayout() {
           <div className="flex-1" />
 
           <div className="flex items-center gap-2">
-            <button className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600 relative">
+            <button
+              onClick={() => navigate('/admin/notifications')}
+              className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600 relative"
+            >
               <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] leading-[18px] text-center font-bold shadow-sm ring-2 ring-white animate-pulse">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
             <Link to="/admin/settings" className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600 inline-flex">
               <Settings className="w-5 h-5" />

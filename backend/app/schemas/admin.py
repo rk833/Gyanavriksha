@@ -277,6 +277,12 @@ class IoTDeviceResponse(BaseModel):
     status: str
     last_seen_at: Optional[datetime] = None
     created_at: datetime
+    firmware_version: Optional[str] = None
+    device_mac: Optional[str] = None
+    latest_light: Optional[float] = None
+    latest_distance_cm: Optional[float] = None
+    latest_alert: Optional[str] = None
+    latest_telemetry_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -322,6 +328,25 @@ class IoTDeviceDetailResponse(IoTDeviceResponse):
     """Device detail response extended with recent telemetry entries."""
 
     recent_telemetry: list[dict]
+
+
+class IoTAlertEntry(BaseModel):
+    """Single timeline alert/event row for IoT observability."""
+
+    device_id: uuid.UUID
+    node_id: str
+    severity: str
+    event_type: str
+    sensor_type: str
+    message: str
+    recorded_at: datetime
+
+
+class IoTAlertTimelineResponse(BaseModel):
+    """Filtered IoT alert timeline."""
+
+    alerts: list[IoTAlertEntry]
+    total_count: int
 
 
 class AuditLogResponse(BaseModel):
@@ -397,6 +422,25 @@ class AdminSettingsUpdateRequest(BaseModel):
     notification_prefs: Optional[dict] = None
     appearance_prefs: Optional[dict] = None
     webhook_url: Optional[str] = None
+
+
+class IntegrationTestRequest(BaseModel):
+    """Request body for testing external integration connectivity."""
+
+    target: str
+    google_vision_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    mqtt_broker_host: Optional[str] = None
+    webhook_url: Optional[str] = None
+
+
+class IntegrationTestResponse(BaseModel):
+    """Result payload for integration connectivity tests."""
+
+    ok: bool
+    target: str
+    message: str
+    status_code: Optional[int] = None
 
 
 class CurriculumDocDetailResponse(BaseModel):
