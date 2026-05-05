@@ -18,6 +18,7 @@ rank_bm25
 # ocr
 pytesseract
 opencv-python
+pymupdf
 
 # preprocessing
 pandas

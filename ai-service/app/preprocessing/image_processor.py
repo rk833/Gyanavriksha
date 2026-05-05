@@ -4,7 +4,7 @@ from PIL import Image
 # Configuration
 MIN_DIMENSION = 400
 MAX_DIMENSION = 4096
-ALLOWED_FORMATS = {"PNG", "JPEG", "JPG", "WEBP", "BMP"}
+ALLOWED_FORMATS = {"PNG", "JPEG", "JPG", "WEBP", "BMP", "TIFF", "TIF"}
 
 def validate_image(image_bytes: bytes) -> bool:
     """

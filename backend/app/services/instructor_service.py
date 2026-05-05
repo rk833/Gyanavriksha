@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, desc, extract, case, or_
 
 from app.db.models.assignment import Assignment
+from app.db.models.chat_history import ChatHistory
 from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
 from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.grade import Grade
@@ -1291,7 +1292,12 @@ def get_concept_heatmap(
     subject_id: int | None = None,
     timeframe: str = "all",
 ) -> dict:
-    """Get concept heatmap data from knowledge_gaps and concept_heatmap_entries."""
+    """Get concept heatmap from knowledge gaps (submissions and AI tutor chat) and heatmap entries.
+
+    Chat-originated gaps use ``knowledge_gaps.history_id`` → :class:`ChatHistory` and may have
+    no ``submission_id``; those rows are included via ``outerjoin`` on ``Submission``.
+    :class:`ConceptHeatmapEntry` rows are updated from tutor chat via ``heatmap_service``.
+    """
     subject_ids = get_instructor_subject_ids(db, instructor_id)
     if subject_id is not None:
         subject_ids = [sid for sid in subject_ids if sid == subject_id]
@@ -1308,7 +1314,7 @@ def get_concept_heatmap(
         or 0
     )
 
-    # Apply timeframe filter
+    # Knowledge gaps from graded work (submission_id) and from AI tutor chat (history_id → chat_history)
     gap_query = (
         db.query(
             KnowledgeGap.topic_tag,
@@ -1323,7 +1329,8 @@ def get_concept_heatmap(
             ).label("avg_score"),
         )
         .join(Subject, Subject.subject_id == KnowledgeGap.subject_id)
-        .join(Submission, Submission.submission_id == KnowledgeGap.submission_id)
+        .outerjoin(Submission, Submission.submission_id == KnowledgeGap.submission_id)
+        .outerjoin(ChatHistory, ChatHistory.history_id == KnowledgeGap.history_id)
         .filter(KnowledgeGap.subject_id.in_(subject_ids))
     )
 
@@ -1358,27 +1365,52 @@ def get_concept_heatmap(
             "severity_score": struggle_pct,
         })
 
-    # Also check concept_heatmap_entries table for pre-aggregated data
-    heatmap_rows = (
-        db.query(ConceptHeatmapEntry, Subject.subject_name)
+    # Merge rows from concept_heatmap_entries (per-student rows; aggregate by topic/concept)
+    ch_query = (
+        db.query(
+            ConceptHeatmapEntry.topic_tag,
+            ConceptHeatmapEntry.concept_name,
+            Subject.subject_name,
+            func.count(func.distinct(ConceptHeatmapEntry.student_id)).label(
+                "ch_affected_count"
+            ),
+        )
         .join(Subject, Subject.subject_id == ConceptHeatmapEntry.subject_id)
-        .filter(ConceptHeatmapEntry.subject_id.in_(subject_ids))
-        .order_by(desc(ConceptHeatmapEntry.affected_student_count))
+        .filter(
+            ConceptHeatmapEntry.subject_id.in_(subject_ids),
+            ConceptHeatmapEntry.student_id.isnot(None),
+        )
+    )
+    if timeframe == "7d":
+        cutoff_ch = datetime.now(timezone.utc) - timedelta(days=7)
+        ch_query = ch_query.filter(ConceptHeatmapEntry.last_updated_at >= cutoff_ch)
+    elif timeframe == "30d":
+        cutoff_ch = datetime.now(timezone.utc) - timedelta(days=30)
+        ch_query = ch_query.filter(ConceptHeatmapEntry.last_updated_at >= cutoff_ch)
+
+    heatmap_agg_rows = (
+        ch_query.group_by(
+            ConceptHeatmapEntry.topic_tag,
+            ConceptHeatmapEntry.concept_name,
+            Subject.subject_name,
+        )
+        .order_by(desc(func.count(func.distinct(ConceptHeatmapEntry.student_id))))
         .all()
     )
 
     existing_tags = {e["topic_tag"] for e in heatmap_entries}
-    for entry, subject_name in heatmap_rows:
-        if entry.topic_tag not in existing_tags:
-            struggle_pct = round((entry.affected_student_count / total_enrolled) * 100, 1) if total_enrolled > 0 else 0.0
+    for r in heatmap_agg_rows:
+        if r.topic_tag not in existing_tags:
+            affected = r.ch_affected_count or 0
+            struggle_pct = round((affected / total_enrolled) * 100, 1) if total_enrolled > 0 else 0.0
             heatmap_entries.append({
-                "topic_tag": entry.topic_tag,
-                "concept_name": entry.concept_name,
-                "subject_name": subject_name,
+                "topic_tag": r.topic_tag,
+                "concept_name": r.concept_name,
+                "subject_name": r.subject_name,
                 "struggle_percentage": struggle_pct,
-                "affected_student_count": entry.affected_student_count,
+                "affected_student_count": affected,
                 "avg_score": None,
-                "severity_score": entry.severity_score,
+                "severity_score": struggle_pct,
             })
 
     heatmap_entries.sort(key=lambda x: x["struggle_percentage"], reverse=True)
@@ -1451,6 +1483,25 @@ def upload_document(
         "doc_type": doc.doc_type.value,
         "created_at": doc.created_at,
     }
+
+
+def set_document_embedding_status(
+    db: Session,
+    doc_id: uuid.UUID,
+    status_value: EmbeddingStatus,
+    chroma_collection_id: str | None = None,
+) -> None:
+    """Update embedding status metadata for a curriculum document."""
+    doc = db.query(CurriculumDocument).filter(CurriculumDocument.doc_id == doc_id).first()
+    if not doc:
+        return
+
+    doc.embedding_status = status_value
+    if chroma_collection_id:
+        doc.chroma_collection_id = chroma_collection_id
+    if status_value == EmbeddingStatus.DONE:
+        doc.embedded_at = datetime.now(timezone.utc)
+    db.commit()
 
 
 def get_knowledge_base_documents(

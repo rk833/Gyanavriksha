@@ -127,3 +127,49 @@ async def upload_document_to_rag(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service is unavailable. Please try again later.",
         ) from exc
+
+
+async def upload_document_bytes_to_rag(
+    *,
+    file_name: str,
+    file_bytes: bytes,
+    content_type: str | None,
+    user_type: str,
+    submitted_by: str,
+    grade: int | None = None,
+    subject: str | None = None,
+    instructor_id: str | None = None,
+    class_id: str | None = None,
+    student_id: str | None = None,
+) -> dict[str, Any]:
+    """Relay in-memory file bytes to AI service /rag/upload for indexing."""
+    form_data = _build_upload_form(
+        user_type,
+        submitted_by,
+        grade,
+        subject,
+        instructor_id,
+        class_id,
+        student_id,
+    )
+    url = f"{settings.AI_SERVICE_URL}/rag/upload"
+    try:
+        async with httpx.AsyncClient(timeout=settings.AI_SERVICE_LONG_TIMEOUT) as client:
+            response = await client.post(
+                url,
+                data=form_data,
+                files={"file": (file_name, file_bytes, content_type or "application/pdf")},
+            )
+        if not response.is_success:
+            _map_upload_error(response)
+        return response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="AI service timed out while processing the document.",
+        ) from exc
+    except httpx.ConnectError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service is unavailable. Please try again later.",
+        ) from exc

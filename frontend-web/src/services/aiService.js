@@ -16,6 +16,25 @@ import api from './api';
 export const queryRag = (payload) => api.post('/api/rag/query', payload);
 
 /**
+ * Student AI tutor: RAG + persist to chat_history when subject_id is set.
+ *
+ * @param {{ query: string, subject_id?: number|null, history_id?: string|null }} payload
+ */
+export const postAiTutorChat = (payload) => api.post('/api/students/ai-tutor/chat', payload);
+
+/**
+ * @param {{ page?: number, per_page?: number, subject_id?: number|string, search?: string }} params
+ */
+export const getAiTutorSessions = (params = {}) =>
+  api.get('/api/students/ai-tutor/sessions', { params });
+
+/**
+ * @param {string} historyId
+ */
+export const getAiTutorSession = (historyId) =>
+  api.get(`/api/students/ai-tutor/sessions/${historyId}`);
+
+/**
  * Upload a personal note file to the student's RAG namespace.
  *
  * @param {File} file

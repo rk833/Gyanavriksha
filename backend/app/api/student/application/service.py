@@ -33,12 +33,19 @@ from app.schemas.submission import (
 from app.schemas.subject import EnrollmentResponse, SubjectResponse
 from app.schemas.user import MessageResponse, UserResponse
 from app.services import (
+    chat_tutor_service,
     exam_session_service,
     library_service,
     notification_service,
     student_service,
     submission_service,
     quiz_service,
+)
+from app.schemas.chat_tutor import (
+    AiTutorChatRequest,
+    AiTutorChatResponse,
+    AiTutorSessionDetailResponse,
+    AiTutorSessionItem,
 )
 
 
@@ -523,3 +530,76 @@ def submit_micro_quiz(
         total_questions=result["total_questions"],
         knowledge_gap_resolved=result["knowledge_gap_resolved"],
     )
+
+
+def _student_grade_level(db: Session, student_id: uuid.UUID) -> int:
+    user = db.query(User).filter(User.user_id == student_id).first()
+    if not user or not user.grade_id:
+        return 9
+    gr = db.query(Grade).filter(Grade.grade_id == user.grade_id).first()
+    return gr.grade_level if gr else 9
+
+
+async def ai_tutor_chat(
+    db: Session,
+    student_id: uuid.UUID,
+    data: AiTutorChatRequest,
+) -> AiTutorChatResponse:
+    """RAG reply + optional persistence to ``chat_history``."""
+    grade_level = _student_grade_level(db, student_id)
+    try:
+        raw = await chat_tutor_service.tutor_chat_turn(
+            db,
+            student_id,
+            data.query,
+            subject_id=data.subject_id,
+            history_id=data.history_id,
+            grade=grade_level,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return AiTutorChatResponse(**raw)
+
+
+def list_ai_tutor_sessions(
+    db: Session,
+    student_id: uuid.UUID,
+    page: int,
+    per_page: int,
+    subject_id: int | None = None,
+    search: str | None = None,
+) -> PaginatedResponse[AiTutorSessionItem]:
+    items, total = chat_tutor_service.list_tutor_sessions(
+        db,
+        student_id,
+        page,
+        per_page,
+        subject_id=subject_id,
+        search=search,
+    )
+    total_pages = _calculate_total_pages(total, per_page)
+    return PaginatedResponse(
+        items=[AiTutorSessionItem(**x) for x in items],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
+
+
+def get_ai_tutor_session(
+    db: Session,
+    student_id: uuid.UUID,
+    history_id: uuid.UUID,
+) -> AiTutorSessionDetailResponse:
+    try:
+        raw = chat_tutor_service.get_tutor_session_detail(db, student_id, history_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return AiTutorSessionDetailResponse(**raw)

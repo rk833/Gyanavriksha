@@ -7,6 +7,7 @@ mapping all live in the application layer.
 """
 import uuid
 from datetime import date
+from urllib.parse import quote
 
 import mimetypes
 from pathlib import Path
@@ -40,6 +41,12 @@ from app.schemas.submission import (
 )
 from app.schemas.subject import EnrollmentResponse, SubjectResponse
 from app.schemas.user import MessageResponse, UserResponse
+from app.schemas.chat_tutor import (
+    AiTutorChatRequest,
+    AiTutorChatResponse,
+    AiTutorSessionDetailResponse,
+    AiTutorSessionItem,
+)
 from app.shared.source_enum import UserRole
 
 router = APIRouter(prefix="/api/students", tags=["Student"])
@@ -376,6 +383,17 @@ def get_library_document(
 _BACKEND_ROOT = Path(__file__).resolve().parents[4]
 
 
+def _build_download_content_disposition(filename: str) -> str:
+    """Return ASCII-safe Content-Disposition with UTF-8 fallback for unicode filenames."""
+    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").strip()
+    if not ascii_fallback:
+        ascii_fallback = "download"
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
+
+
 @router.get("/library/{doc_id}/download")
 def download_library_document(
     doc_id: uuid.UUID,
@@ -393,9 +411,10 @@ def download_library_document(
     media_type, _ = mimetypes.guess_type(str(file_path))
     return FileResponse(
         path=str(file_path),
-        filename=detail.file_name,
         media_type=media_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{detail.file_name}"'},
+        headers={
+            "Content-Disposition": _build_download_content_disposition(detail.file_name)
+        },
     )
 
 
@@ -442,3 +461,43 @@ async def generate_quiz(
     return await service.generate_quiz(
         db, current_user.user_id, data.subject_id, data.concept, data.num_questions
     )
+
+
+@router.post("/ai-tutor/chat", response_model=AiTutorChatResponse)
+async def ai_tutor_chat(
+    data: AiTutorChatRequest,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Curriculum RAG chat; persists turns to ``chat_history`` when ``subject_id`` is set."""
+    return await service.ai_tutor_chat(db, current_user.user_id, data)
+
+
+@router.get("/ai-tutor/sessions", response_model=PaginatedResponse[AiTutorSessionItem])
+def list_ai_tutor_sessions(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=50),
+    subject_id: int | None = Query(None),
+    search: str | None = Query(None, max_length=200),
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Past AI tutor sessions for the current student (summary metadata + preview)."""
+    return service.list_ai_tutor_sessions(
+        db,
+        current_user.user_id,
+        page,
+        per_page,
+        subject_id=subject_id,
+        search=search,
+    )
+
+
+@router.get("/ai-tutor/sessions/{history_id}", response_model=AiTutorSessionDetailResponse)
+def get_ai_tutor_session(
+    history_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Load one saved chat session (messages for replay)."""
+    return service.get_ai_tutor_session(db, current_user.user_id, history_id)

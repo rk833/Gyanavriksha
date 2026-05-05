@@ -127,66 +127,112 @@ class RAGService:
 
         # Local embeddings have no API quota — process all chunks in one shot.
         langchain_chroma.add_texts(texts=texts, metadatas=metadatas, ids=ids)
-        return {"status": "success", "chunks_added": len(chunks), "collection": collection.name}
+        ocr_summary = self.preprocessor.get_last_ocr_summary()
+        response = {
+            "status": "success",
+            "chunks_added": len(chunks),
+            "collection": collection.name,
+        }
+        if ocr_summary.get("used_ocr"):
+            images_total = int(ocr_summary.get("images_total", 0) or 0)
+            images_failed = int(ocr_summary.get("images_failed", 0) or 0)
+            response["ocr_summary"] = ocr_summary
+            response["partial_ocr"] = images_total > 0 and images_failed > 0
+        return response
 
     def query(self, request: QueryRequest):
-        collection = self.get_collection(
+        from langchain_core.documents import Document
+
+        # Subject filter — keeps cross-subject contamination low.
+        base_filter: dict | None = {"subject": request.subject} if request.subject else None
+
+        # Structural queries benefit from TOC chunks.
+        structural_keywords = (
+            "list", "all units", "all lessons", "all chapters",
+            "how many units", "how many lessons", "curriculum covers",
+            "what chapters", "what units", "what lessons",
+            "table of content", "topics covered",
+        )
+        is_structural = any(kw in request.query.lower() for kw in structural_keywords)
+
+        def _collect_docs_from_collection(collection_name: str) -> list[Document]:
+            langchain_chroma = Chroma(
+                client=chroma_manager.client,
+                collection_name=collection_name,
+                embedding_function=self.embeddings,
+            )
+            docs: list[Document] = []
+            if is_structural:
+                toc_where: dict = {"chunk_type": {"$eq": "toc"}}
+                if request.subject:
+                    toc_where = {
+                        "$and": [
+                            {"chunk_type": {"$eq": "toc"}},
+                            {"subject": {"$eq": request.subject}},
+                        ]
+                    }
+                toc_raw = langchain_chroma._collection.get(where=toc_where, limit=1)
+                if toc_raw and toc_raw.get("documents"):
+                    docs.append(
+                        Document(
+                            page_content=toc_raw["documents"][0],
+                            metadata=(toc_raw.get("metadatas") or [{}])[0],
+                        )
+                    )
+
+            search_kwargs: dict = {"k": 15, "fetch_k": 80}
+            if base_filter:
+                search_kwargs["filter"] = base_filter
+            docs.extend(
+                langchain_chroma.as_retriever(
+                    search_type="mmr",
+                    search_kwargs=search_kwargs,
+                ).invoke(request.query)
+            )
+            return docs
+
+        context_docs: list[Document] = []
+        seen_content: set[str] = set()
+
+        # Primary namespace for the requester.
+        primary = self.get_collection(
             user_type=request.user_type,
             grade=request.grade,
             instructor_id=request.instructor_id,
             class_id=request.class_id,
-            student_id=request.student_id
+            student_id=request.student_id,
         )
-        
-        langchain_chroma = Chroma(
-            client=chroma_manager.client,
-            collection_name=collection.name,
-            embedding_function=self.embeddings
-        )
-        
-        from langchain_core.documents import Document
-
-        # Subject filter — keeps English queries from returning Computer Science chunks.
-        base_filter: dict | None = {"subject": request.subject} if request.subject else None
-
-        # For structural queries fetch the pre-built TOC chunk first so the LLM
-        # sees the full document outline, then append semantic chunks for detail.
-        structural_keywords = ("list", "all units", "all lessons", "all chapters",
-                               "how many units", "how many lessons", "curriculum covers",
-                               "what chapters", "what units", "what lessons",
-                               "table of content", "topics covered")
-        is_structural = any(kw in request.query.lower() for kw in structural_keywords)
-
-        context_docs: list[Document] = []
-
-        if is_structural:
-            toc_where: dict = {"chunk_type": {"$eq": "toc"}}
-            if request.subject:
-                toc_where = {"$and": [{"chunk_type": {"$eq": "toc"}},
-                                      {"subject": {"$eq": request.subject}}]}
-            toc_raw = langchain_chroma._collection.get(where=toc_where, limit=1)
-            if toc_raw and toc_raw.get("documents"):
-                context_docs.append(
-                    Document(page_content=toc_raw["documents"][0],
-                             metadata=(toc_raw.get("metadatas") or [{}])[0])
-                )
-
-        # Always supplement with semantically matched chunks.
-        search_kwargs: dict = {"k": 15, "fetch_k": 80}
-        if base_filter:
-            search_kwargs["filter"] = base_filter
-
-        semantic_docs = langchain_chroma.as_retriever(
-            search_type="mmr",
-            search_kwargs=search_kwargs,
-        ).invoke(request.query)
-
-        # TOC first, then semantic results (deduplicated by content).
-        seen_content: set[str] = {d.page_content for d in context_docs}
-        for doc in semantic_docs:
+        for doc in _collect_docs_from_collection(primary.name):
             if doc.page_content not in seen_content:
                 context_docs.append(doc)
                 seen_content.add(doc.page_content)
+
+        # Student queries can also use the instructor's subject collection when provided.
+        if (
+            request.user_type == "student"
+            and request.instructor_id
+            and request.class_id
+        ):
+            instructor_collection = chroma_manager.get_or_create_instructor_collection(
+                request.instructor_id,
+                request.class_id,
+            )
+            for doc in _collect_docs_from_collection(instructor_collection.name):
+                if doc.page_content not in seen_content:
+                    context_docs.append(doc)
+                    seen_content.add(doc.page_content)
+
+        # Also include grade-level curriculum collection for student queries.
+        if request.user_type == "student" and request.grade:
+            try:
+                curriculum_collection = chroma_manager.get_admin_collection(request.grade)
+                for doc in _collect_docs_from_collection(curriculum_collection.name):
+                    if doc.page_content not in seen_content:
+                        context_docs.append(doc)
+                        seen_content.add(doc.page_content)
+            except Exception:
+                # Keep chat resilient even if grade collection is unavailable.
+                pass
 
         question_answer_chain = create_stuff_documents_chain(self.llm, self.prompt)
         response = question_answer_chain.invoke({"input": request.query, "context": context_docs})

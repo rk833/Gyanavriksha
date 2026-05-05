@@ -3,7 +3,6 @@
 Detects knowledge gaps from a chat session and generates AI-powered micro-quizzes
 targeting those gaps. Also provides read helpers for the student quiz feed.
 """
-import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.ai_client import ai_post
+from app.services import chat_log_io
 from app.db.models.chat_history import ChatHistory
 from app.db.models.knowledge_gap import KnowledgeGap
 from app.db.models.micro_quiz import MicroQuiz
@@ -32,11 +32,8 @@ _MAX_UNIQUE_ATTEMPTS_PER_SLOT = 12
 # Private helpers
 
 def _read_chat_log(file_path: str) -> str:
-    """Read and return the raw chat log text from disk."""
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Chat log file not found: {file_path}")
-    with open(file_path, "r", encoding="utf-8") as fh:
-        return fh.read()
+    """Read chat log as plain text (JSON transcripts are converted)."""
+    return chat_log_io.read_as_plain_text(file_path)
 
 
 def _get_subject_name(db: Session, subject_id: int) -> str:

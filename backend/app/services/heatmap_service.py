@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.ai_client import ai_post
+from app.services import chat_log_io
 from app.db.models.chat_history import ChatHistory
 from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
 from app.db.models.subject import Subject
@@ -19,11 +20,8 @@ from app.db.models.user import User
 # Private helpers
 
 def _read_chat_log(file_path: str) -> str:
-    """Read and return the raw chat log text from disk."""
-    if not __import__("os").path.exists(file_path):
-        raise FileNotFoundError(f"Chat log file not found: {file_path}")
-    with open(file_path, "r", encoding="utf-8") as fh:
-        return fh.read()
+    """Read chat log as plain text (JSON transcripts are converted)."""
+    return chat_log_io.read_as_plain_text(file_path)
 
 
 def _get_subject_name(db: Session, subject_id: int) -> str:
@@ -97,6 +95,11 @@ async def process_chat_heatmap(db: Session, history_id: uuid.UUID) -> dict[str, 
             "chat_log": chat_log,
         },
     )
+    tutor_meta = None
+    if isinstance(chat.summary, dict):
+        tutor_meta = chat.summary.get("tutor_session")
+    if tutor_meta and isinstance(summary_data, dict):
+        summary_data = {**summary_data, "tutor_session": tutor_meta}
     chat.summary = summary_data
     db.commit()
     grade_id = _get_grade_id(db, chat.student_id)

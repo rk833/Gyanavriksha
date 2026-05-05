@@ -1,8 +1,15 @@
 import os
 import re
+import io
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
+from PIL import Image
+from app.ocr import extract_text as ocr_extract_text
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
 
 # Document parsers
 try:
@@ -34,6 +41,8 @@ class DocumentPreprocessor:
     """
     
     ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.doc', '.md'}
+    _MIN_OCR_WIDTH = 400
+    _MIN_OCR_HEIGHT = 400
     
     def __init__(self, chunk_size: Optional[int] = None, chunk_overlap: Optional[int] = None):
         """
@@ -54,11 +63,23 @@ class DocumentPreprocessor:
             length_function=len,
             is_separator_regex=False,
         )
+        self.last_ocr_summary: dict[str, Any] = {
+            "used_ocr": False,
+            "images_total": 0,
+            "images_succeeded": 0,
+            "images_failed": 0,
+        }
 
     def extract_text(self, file_path: str) -> str:
         """
         Extract text from the supported file formats.
         """
+        self.last_ocr_summary = {
+            "used_ocr": False,
+            "images_total": 0,
+            "images_succeeded": 0,
+            "images_failed": 0,
+        }
         path = Path(file_path)
         ext = path.suffix.lower()
         
@@ -78,7 +99,34 @@ class DocumentPreprocessor:
                 extracted = page.extract_text()
                 if extracted:
                     text += extracted + "\n"
-            return text
+            if text.strip():
+                return text
+
+            # Fallback for scanned/image-only PDFs:
+            # 1) Prefer full-page rendering OCR via PyMuPDF (best for scanned books).
+            page_ocr_text = self._extract_text_from_pdf_pages_via_ocr(str(path))
+            if page_ocr_text.strip():
+                return page_ocr_text
+
+            # 2) Secondary fallback: OCR embedded page images.
+            ocr_parts: list[str] = []
+            for page in reader.pages:
+                for image in list(getattr(page, "images", []) or []):
+                    self.last_ocr_summary["images_total"] += 1
+                    data = getattr(image, "data", None)
+                    if not data:
+                        self.last_ocr_summary["images_failed"] += 1
+                        continue
+                    if not self._is_worth_ocr(data):
+                        self.last_ocr_summary["images_failed"] += 1
+                        continue
+                    ocr_text = (ocr_extract_text(data, provider="auto") or "").strip()
+                    if ocr_text:
+                        self.last_ocr_summary["images_succeeded"] += 1
+                        ocr_parts.append(ocr_text)
+                    else:
+                        self.last_ocr_summary["images_failed"] += 1
+            return "\n".join(ocr_parts)
             
         elif ext in {'.docx', '.doc'}:
             if docx is None:
@@ -158,6 +206,45 @@ class DocumentPreprocessor:
             "text": toc_text,
             "metadata": {"chunk_type": "toc", "source": source_name, "chunk_id": -1},
         }
+
+    def get_last_ocr_summary(self) -> dict[str, Any]:
+        """Return OCR usage summary from the most recent extract_text call."""
+        return dict(self.last_ocr_summary)
+
+    def _is_worth_ocr(self, image_bytes: bytes) -> bool:
+        """Skip tiny PDF image fragments that are unlikely to contain useful text."""
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                width, height = img.size
+        except Exception:
+            return False
+        return width >= self._MIN_OCR_WIDTH and height >= self._MIN_OCR_HEIGHT
+
+    def _extract_text_from_pdf_pages_via_ocr(self, file_path: str) -> str:
+        """Render each PDF page to an image and OCR it (PyMuPDF path)."""
+        if fitz is None:
+            return ""
+        parts: list[str] = []
+        self.last_ocr_summary["used_ocr"] = True
+        try:
+            with fitz.open(file_path) as doc:
+                for page in doc:
+                    # 2x render scale to improve OCR quality on scanned pages.
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                    image_bytes = pix.tobytes("png")
+                    self.last_ocr_summary["images_total"] += 1
+                    if not self._is_worth_ocr(image_bytes):
+                        self.last_ocr_summary["images_failed"] += 1
+                        continue
+                    ocr_text = (ocr_extract_text(image_bytes, provider="auto") or "").strip()
+                    if ocr_text:
+                        self.last_ocr_summary["images_succeeded"] += 1
+                        parts.append(ocr_text)
+                    else:
+                        self.last_ocr_summary["images_failed"] += 1
+        except Exception:
+            return ""
+        return "\n".join(parts)
 
 
 def get_document_preprocessor() -> DocumentPreprocessor:

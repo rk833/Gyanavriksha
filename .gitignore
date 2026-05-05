@@ -249,6 +249,7 @@ dist
 
 # Uploaded files
 uploads/
+ai-service/chroma_data/
 
 # claude artefacts
 claude-artefacts/
