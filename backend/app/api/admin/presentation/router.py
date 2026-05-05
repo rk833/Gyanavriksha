@@ -442,13 +442,24 @@ async def upload_curriculum(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     subject_id: int = Form(...),
+    chunk_size: int | None = Form(None),
     doc_type: str = Form(default="curriculum_pdf"),
     current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db),
 ):
     """Upload a curriculum PDF or DOCX and queue it for RAG indexing."""
     file_bytes = await file.read()
-    return service.upload_curriculum(db, background_tasks, file_bytes, file.filename, subject_id, current_user.user_id, doc_type, _ip(request))
+    return service.upload_curriculum(
+        db,
+        background_tasks,
+        file_bytes,
+        file.filename,
+        subject_id,
+        current_user.user_id,
+        doc_type,
+        _ip(request),
+        chunk_size=chunk_size,
+    )
 
 
 @router.get("/ingestion/jobs", response_model=IngestionJobListResponse)

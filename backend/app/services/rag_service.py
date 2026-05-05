@@ -47,6 +47,7 @@ def _build_upload_form(
     instructor_id: str | None,
     class_id: str | None,
     student_id: str | None,
+    chunk_size: int | None = None,
 ) -> dict[str, str]:
     """Assemble the multipart form fields for the AI service /rag/upload endpoint."""
     form: dict[str, str] = {"user_type": user_type, "submitted_by": submitted_by}
@@ -60,6 +61,8 @@ def _build_upload_form(
         form["class_id"] = class_id
     if student_id:
         form["student_id"] = student_id
+    if chunk_size is not None:
+        form["chunk_size"] = str(chunk_size)
     return form
 
 
@@ -102,9 +105,19 @@ async def upload_document_to_rag(
     instructor_id: str | None = None,
     class_id: str | None = None,
     student_id: str | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Relay a document upload to the AI service RAG vector store."""
-    form_data = _build_upload_form(user_type, submitted_by, grade, subject, instructor_id, class_id, student_id)
+    form_data = _build_upload_form(
+        user_type,
+        submitted_by,
+        grade,
+        subject,
+        instructor_id,
+        class_id,
+        student_id,
+        chunk_size,
+    )
     file_bytes = await file.read()
     url = f"{settings.AI_SERVICE_URL}/rag/upload"
     try:
@@ -141,6 +154,7 @@ async def upload_document_bytes_to_rag(
     instructor_id: str | None = None,
     class_id: str | None = None,
     student_id: str | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Relay in-memory file bytes to AI service /rag/upload for indexing."""
     form_data = _build_upload_form(
@@ -151,6 +165,7 @@ async def upload_document_bytes_to_rag(
         instructor_id,
         class_id,
         student_id,
+        chunk_size,
     )
     url = f"{settings.AI_SERVICE_URL}/rag/upload"
     try:

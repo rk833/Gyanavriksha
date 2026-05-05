@@ -7,7 +7,7 @@ from langchain_classic.chains.combine_documents import create_stuff_documents_ch
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from app.rag.chroma_client import chroma_manager
-from app.rag.document_preprocessing import get_document_preprocessor
+from app.rag.document_preprocessing import DocumentPreprocessor, get_document_preprocessor
 from app.core.google_auth import configure_google_credentials
 
 class DocumentUploadRequest(BaseModel):
@@ -18,6 +18,7 @@ class DocumentUploadRequest(BaseModel):
     class_id: Optional[str] = None
     student_id: Optional[str] = None
     submitted_by: str
+    chunk_size: Optional[int] = None
 
 class QueryRequest(BaseModel):
     user_type: str  # admin, instructor, student
@@ -74,13 +75,20 @@ class RAGService:
             raise ValueError(f"Unknown user type: {user_type}")
 
     def upload_document(self, file_path: str, request: DocumentUploadRequest):
-        raw_text = self.preprocessor.extract_text(file_path)
-        chunks = self.preprocessor.process(file_path)
+        preprocessor = self.preprocessor
+        if request.chunk_size is not None:
+            preprocessor = DocumentPreprocessor(
+                chunk_size=max(64, min(2048, int(request.chunk_size))),
+                chunk_overlap=self.preprocessor.chunk_overlap,
+            )
+
+        raw_text = preprocessor.extract_text(file_path)
+        chunks = preprocessor.process(file_path)
         if not chunks:
             raise ValueError("No text could be extracted from the document.")
 
         # Prepend a synthetic TOC chunk so "list all units" queries get full coverage.
-        toc = self.preprocessor.extract_toc(raw_text, source_name=os.path.basename(file_path))
+        toc = preprocessor.extract_toc(raw_text, source_name=os.path.basename(file_path))
         if toc:
             chunks = [toc] + chunks
 
@@ -127,7 +135,7 @@ class RAGService:
 
         # Local embeddings have no API quota — process all chunks in one shot.
         langchain_chroma.add_texts(texts=texts, metadatas=metadatas, ids=ids)
-        ocr_summary = self.preprocessor.get_last_ocr_summary()
+        ocr_summary = preprocessor.get_last_ocr_summary()
         response = {
             "status": "success",
             "chunks_added": len(chunks),
@@ -244,3 +252,56 @@ class RAGService:
                 for doc in context_docs
             ],
         }
+
+    def get_collection_stats(self) -> dict[str, Any]:
+        """Return live Chroma collection stats with per-subject chunk counts."""
+        collections = self._list_collections()
+        total_chunks = sum(item["chunk_count"] for item in collections)
+        return {
+            "collections": collections,
+            "total_collections": len(collections),
+            "total_chunks": total_chunks,
+        }
+
+    def export_collection_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-safe snapshot of live Chroma collections."""
+        return self.get_collection_stats()
+
+    def create_collection(self, name: str, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Create a Chroma collection if absent and return its basic stats."""
+        safe_name = (name or "").strip().replace("-", "_")
+        if not safe_name:
+            raise ValueError("Collection name is required.")
+        col = chroma_manager.client.get_or_create_collection(name=safe_name, metadata=metadata or {})
+        return {
+            "name": col.name,
+            "chunk_count": int(col.count() or 0),
+            "metadata": getattr(col, "metadata", None) or {},
+        }
+
+    def _list_collections(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for col in chroma_manager.client.list_collections():
+            collection = chroma_manager.client.get_collection(col.name)
+            chunk_count = int(collection.count() or 0)
+            subject_counts: dict[str, int] = {}
+            try:
+                raw = collection.get(include=["metadatas"])
+                for meta in raw.get("metadatas") or []:
+                    if not isinstance(meta, dict):
+                        continue
+                    subject = meta.get("subject")
+                    if isinstance(subject, str) and subject.strip():
+                        subject_counts[subject] = subject_counts.get(subject, 0) + 1
+            except Exception:
+                # Keep stats endpoint resilient even if metadata fetch fails.
+                pass
+            rows.append(
+                {
+                    "name": col.name,
+                    "chunk_count": chunk_count,
+                    "metadata": getattr(col, "metadata", None) or {},
+                    "subject_counts": subject_counts,
+                }
+            )
+        return rows

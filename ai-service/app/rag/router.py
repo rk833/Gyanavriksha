@@ -22,6 +22,7 @@ async def upload_document(
     instructor_id: Optional[str] = Form(None),
     class_id: Optional[str] = Form(None),
     student_id: Optional[str] = Form(None),
+    chunk_size: Optional[int] = Form(None),
     rag_service: RAGService = Depends(get_rag_service)
 ):
     try:
@@ -32,6 +33,7 @@ async def upload_document(
             instructor_id=instructor_id,
             class_id=class_id,
             student_id=student_id,
+            chunk_size=chunk_size,
             submitted_by=submitted_by
         )
         
@@ -60,5 +62,36 @@ async def query_rag(
 ):
     try:
         return rag_service.query(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/collections/stats")
+async def collection_stats(
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.get_collection_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/collections/snapshot")
+async def collection_snapshot(
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.export_collection_snapshot()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/collections")
+async def create_collection(
+    name: str = Form(...),
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.create_collection(name=name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

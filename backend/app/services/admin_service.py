@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models.assignment import Assignment
 from app.db.models.audit_log import AuditLog
@@ -1150,6 +1151,21 @@ def requeue_curriculum_doc(db: Session, doc_id: uuid.UUID) -> str | None:
 
 def get_namespaces_from_db(db: Session) -> list[dict]:
     """Build a grade-grouped namespace tree from curriculum documents."""
+    ai_stats = _fetch_ai_collection_stats()
+    subject_chunk_counts: dict[tuple[int, str], int] = {}
+    if ai_stats:
+        for col in ai_stats.get("collections", []):
+            name = str(col.get("name", ""))
+            if not name.startswith("grade_"):
+                continue
+            try:
+                grade_level = int(name.split("_", 1)[1])
+            except Exception:
+                continue
+            for subject_name, count in (col.get("subject_counts") or {}).items():
+                if isinstance(subject_name, str):
+                    subject_chunk_counts[(grade_level, subject_name)] = int(count or 0)
+
     grades = (
         db.query(Grade).filter(Grade.is_active == True).order_by(Grade.grade_level).all()
     )
@@ -1162,22 +1178,25 @@ def get_namespaces_from_db(db: Session) -> list[dict]:
         )
         namespaces = []
         for subj in subjects:
-            done_docs = (
+            all_docs = (
                 db.query(CurriculumDocument)
                 .filter(
                     CurriculumDocument.subject_id == subj.subject_id,
-                    CurriculumDocument.embedding_status == EmbeddingStatus.DONE,
                 )
                 .all()
             )
-            if not done_docs:
+            if not all_docs:
                 continue
+            done_docs = [d for d in all_docs if d.embedding_status == EmbeddingStatus.DONE]
             last_updated = max((d.embedded_at for d in done_docs if d.embedded_at), default=None)
+            if last_updated is None:
+                last_updated = max((d.created_at for d in all_docs if d.created_at), default=None)
+            live_chunk_count = subject_chunk_counts.get((grade.grade_level, subj.subject_name))
             namespaces.append({
                 "name": subj.chroma_namespace,
                 "subject_name": subj.subject_name,
-                "chunk_count": 0,
-                "doc_count": len(done_docs),
+                "chunk_count": live_chunk_count if live_chunk_count is not None else len(done_docs),
+                "doc_count": len(all_docs),
                 "last_updated": last_updated,
             })
         result.append({
@@ -1209,7 +1228,8 @@ def get_vector_store_stats(db: Session) -> dict:
         .scalar()
         or 0
     )
-    namespace_count = (
+    ai_stats = _fetch_ai_collection_stats()
+    namespace_count = int(ai_stats.get("total_collections", 0)) if ai_stats else (
         db.query(func.count(Subject.subject_id))
         .filter(Subject.chroma_namespace.isnot(None))
         .scalar()
@@ -1227,10 +1247,10 @@ def get_vector_store_stats(db: Session) -> dict:
         "total_pending": pending,
         "total_failed": failed,
         "total_namespaces": namespace_count,
-        "total_chunks": done,
+        "total_chunks": int(ai_stats.get("total_chunks", 0)) if ai_stats else done,
         "embedding_success_rate": success_rate,
         "last_indexed_at": last_indexed,
-        "ai_service_status": "stub",
+        "ai_service_status": "live" if ai_stats else "offline",
     }
 
 
@@ -1262,7 +1282,40 @@ def get_export_snapshot(db: Session) -> dict:
     """Return a JSON-serialisable metadata snapshot of all namespaces and doc counts."""
     namespaces = get_namespaces_from_db(db)
     stats = get_vector_store_stats(db)
-    return {"namespaces": namespaces, "stats": stats}
+    ai_stats = _fetch_ai_collection_stats()
+    return {"namespaces": namespaces, "stats": stats, "live_collections": ai_stats.get("collections", []) if ai_stats else []}
+
+
+def _fetch_ai_collection_stats() -> dict | None:
+    """Fetch live collection stats from AI service; return None if unavailable."""
+    try:
+        url = f"{settings.AI_SERVICE_URL}/rag/collections/stats"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            if resp.status < 200 or resp.status >= 300:
+                return None
+            data = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(data)
+            if isinstance(parsed, dict):
+                return parsed
+            return None
+    except Exception:
+        return None
+
+
+def create_live_collection(name: str) -> dict | None:
+    """Create a live collection in AI service; return details or None."""
+    try:
+        url = f"{settings.AI_SERVICE_URL}/rag/collections"
+        data = urllib.parse.urlencode({"name": name}).encode("utf-8")
+        req = urllib.request.Request(url=url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status < 200 or resp.status >= 300:
+                return None
+            body = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(body)
+            return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
 
 
 import hashlib

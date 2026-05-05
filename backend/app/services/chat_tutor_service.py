@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -13,8 +14,12 @@ from app.db.models.chat_history import ChatHistory
 from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.subject import Subject
 from app.services import chat_log_io
+from app.services import heatmap_service
+from app.services import quiz_service
 from app.services import rag_service
 from app.services import student_service
+
+logger = logging.getLogger(__name__)
 
 
 def _update_summary_preview(chat: ChatHistory, answer_preview: str, turn_pairs: int) -> None:
@@ -122,6 +127,14 @@ async def tutor_chat_turn(
 
     db.commit()
     db.refresh(chat)
+    try:
+        await heatmap_service.process_chat_heatmap(db, chat.history_id)
+    except Exception as exc:
+        logger.warning("Heatmap processing failed for chat %s: %s", chat.history_id, exc)
+    try:
+        await quiz_service.detect_gaps_for_quiz(db, chat.history_id)
+    except Exception as exc:
+        logger.warning("Quiz gap detection failed for chat %s: %s", chat.history_id, exc)
 
     return {
         "answer": answer,

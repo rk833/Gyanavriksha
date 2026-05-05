@@ -586,6 +586,7 @@ def upload_curriculum(
     actor_id: uuid.UUID,
     doc_type_str: str,
     ip_address: str | None,
+    chunk_size: int | None = None,
 ) -> IngestionJobResponse:
     """Validate, save, and queue a curriculum file for RAG indexing."""
     try:
@@ -596,7 +597,11 @@ def upload_curriculum(
         db, actor_id, "CURRICULUM_UPLOAD", f"Uploaded '{filename}' for subject {subject_id}", "curriculum_document", str(doc.doc_id), ip_address,
     )
     db.commit()
-    background_tasks.add_task(curriculum_ingestion_service.ingest_curriculum_document, doc.doc_id)
+    background_tasks.add_task(
+        curriculum_ingestion_service.ingest_curriculum_document,
+        doc.doc_id,
+        chunk_size,
+    )
     return IngestionJobResponse(**admin_service._doc_to_job_dict(db, doc))
 
 
@@ -659,12 +664,18 @@ def create_namespace(
     actor_id: uuid.UUID,
     ip_address: str | None,
 ) -> dict:
-    """Register a namespace for a subject (ChromaDB creation deferred to Sprint 6)."""
+    """Register a namespace for a subject and create it in live Chroma when available."""
     subject = admin_service.get_subject_by_id(db, subject_id)
     _raise_if_not_found(subject, "Subject not found")
+    live = admin_service.create_live_collection(subject.chroma_namespace or f"subject_{subject_id}")
     admin_service.log_audit_event(db, actor_id, "NAMESPACE_CREATED", f"Namespace registered for subject {subject_id}", "subject", str(subject_id), ip_address)
     db.commit()
-    return {"namespace": subject.chroma_namespace, "subject_id": subject_id, "grade_id": grade_id}
+    return {
+        "namespace": subject.chroma_namespace,
+        "subject_id": subject_id,
+        "grade_id": grade_id,
+        "live_collection_created": bool(live),
+    }
 
 
 def reindex_documents(
