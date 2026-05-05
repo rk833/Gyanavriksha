@@ -4,6 +4,8 @@ Each function orchestrates one quiz operation: delegates to the service layer,
 maps errors to HTTPExceptions, and keeps the presentation layer clean.
 """
 import uuid
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.quiz.domain.schemas import DetectGapsInput, GenerateQuizInput
 from app.db.models.micro_quiz import MicroQuiz
 from app.services import quiz_service
+from app.schemas.quiz import MicroQuizSchema
 
 
 def _raise_if_not_found(obj: object, detail: str) -> None:
@@ -42,6 +45,21 @@ async def generate_quiz(db: Session, payload: GenerateQuizInput) -> MicroQuiz:
     return quiz
 
 
+async def stream_generate_quiz(
+    db: Session, payload: GenerateQuizInput
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield NDJSON events: one per generated question, then a complete quiz payload."""
+    async for event in quiz_service.stream_generate_quiz_events(
+        db,
+        student_id=payload.student_id,
+        subject_id=payload.subject_id,
+        concept=payload.concept,
+        num_questions=payload.num_questions,
+        gap_id=payload.gap_id,
+    ):
+        yield event
+
+
 def list_quizzes(
     db: Session,
     student_id: uuid.UUID,
@@ -53,11 +71,18 @@ def list_quizzes(
     quizzes, total = quiz_service.get_quizzes_for_student(
         db, student_id, subject_id=subject_id, page=page, per_page=per_page
     )
-    return {"total": total, "page": page, "per_page": per_page, "results": quizzes}
+    payload = [MicroQuizSchema.model_validate(q).model_dump(mode="json") for q in quizzes]
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "items": payload,
+        "results": payload,  # Backward compatibility
+    }
 
 
-def get_quiz(db: Session, student_id: uuid.UUID, quiz_id: uuid.UUID) -> MicroQuiz:
+def get_quiz(db: Session, student_id: uuid.UUID, quiz_id: uuid.UUID) -> dict[str, Any]:
     """Return a specific micro-quiz for a student or raise 404."""
     quiz = quiz_service.get_quiz_detail(db, student_id, quiz_id)
     _raise_if_not_found(quiz, "Quiz not found")
-    return quiz
+    return MicroQuizSchema.model_validate(quiz).model_dump(mode="json")

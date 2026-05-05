@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
+import MarkdownMath from '../../components/MarkdownMath';
 import toast from 'react-hot-toast';
 import {
   getAssignments,
@@ -46,6 +47,9 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
     due_date: assignment?.due_date ? assignment.due_date.slice(0, 16) : '',
     max_score: assignment?.max_score || 100,
     is_exam_mode: assignment?.is_exam_mode || false,
+    exam_duration_minutes: assignment?.exam_duration_minutes ?? 60,
+    exam_max_pauses: assignment?.exam_max_pauses ?? 2,
+    exam_strict_proctor: assignment?.exam_strict_proctor || false,
     topic_tags: assignment?.topic_tags?.join(', ') || '',
   });
 
@@ -76,6 +80,9 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
       max_score: Number(form.max_score),
       due_date: form.due_date ? new Date(form.due_date).toISOString() : null,
       topic_tags: form.topic_tags ? form.topic_tags.split(',').map((t) => t.trim()).filter(Boolean) : null,
+      exam_duration_minutes: form.is_exam_mode ? Number(form.exam_duration_minutes) || null : null,
+      exam_max_pauses: form.is_exam_mode ? Number(form.exam_max_pauses) : null,
+      exam_strict_proctor: form.is_exam_mode ? !!form.exam_strict_proctor : false,
     };
     saveMutation.mutate(payload);
   };
@@ -125,14 +132,18 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Description & questions</label>
             <textarea
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              rows={3}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary resize-none"
-              placeholder="Instructions for students..."
+              rows={6}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary resize-y font-mono"
+              placeholder={'Use Markdown. Math: $x^2 + 1$ inline or block:\n$$\\\\int_0^1 x\\\\,dx$$'}
             />
+            <p className="text-[10px] text-slate-400 mt-1">
+              LaTeX: <code className="bg-slate-100 px-1 rounded">$...$</code> inline,{' '}
+              <code className="bg-slate-100 px-1 rounded">$$...$$</code> display. Line breaks are preserved for students.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -168,15 +179,55 @@ function AssignmentModal({ assignment, subjects, onClose, onSaved }) {
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="exam_mode"
-              checked={form.is_exam_mode}
-              onChange={(e) => setForm({ ...form, is_exam_mode: e.target.checked })}
-              className="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary"
-            />
-            <label htmlFor="exam_mode" className="text-sm text-slate-700">Exam Mode</label>
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="exam_mode"
+                checked={form.is_exam_mode}
+                onChange={(e) => setForm({ ...form, is_exam_mode: e.target.checked })}
+                className="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary"
+              />
+              <label htmlFor="exam_mode" className="text-sm font-medium text-slate-800">Exam mode</label>
+            </div>
+            {form.is_exam_mode && (
+              <div className="grid grid-cols-2 gap-3 pl-6 pt-1 border-t border-slate-200">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Time limit (minutes)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={600}
+                    value={form.exam_duration_minutes}
+                    onChange={(e) => setForm({ ...form, exam_duration_minutes: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Max pauses</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={30}
+                    value={form.exam_max_pauses}
+                    onChange={(e) => setForm({ ...form, exam_max_pauses: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div className="col-span-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="exam_strict"
+                    checked={form.exam_strict_proctor}
+                    onChange={(e) => setForm({ ...form, exam_strict_proctor: e.target.checked })}
+                    className="w-4 h-4 text-primary border-slate-300 rounded"
+                  />
+                  <label htmlFor="exam_strict" className="text-xs text-slate-700">
+                    Strict proctored mode (full-screen / tab tracking when supported)
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
@@ -476,7 +527,24 @@ export default function InstructorAssignments() {
               </div>
               <h3 className="text-xl font-bold text-primary-dark">{detail.title}</h3>
               <p className="text-sm text-slate-500">{detail.subject_name} &middot; {detail.grade_name}</p>
-              {detail.description && <p className="text-sm text-slate-600">{detail.description}</p>}
+              {detail.is_exam_mode && (
+                <div className="text-xs text-slate-600 space-y-1 bg-slate-50 rounded-lg p-3 border border-slate-100">
+                  {detail.exam_duration_minutes != null && (
+                    <p><span className="font-semibold">Time limit:</span> {detail.exam_duration_minutes} min</p>
+                  )}
+                  {detail.exam_max_pauses != null && (
+                    <p><span className="font-semibold">Max pauses:</span> {detail.exam_max_pauses}</p>
+                  )}
+                  {detail.exam_strict_proctor && (
+                    <p className="text-amber-800 font-medium">Strict proctoring enabled</p>
+                  )}
+                </div>
+              )}
+              {detail.description && (
+                <div className="text-sm text-slate-600 max-h-64 overflow-y-auto border border-slate-100 rounded-lg p-3">
+                  <MarkdownMath markdown={detail.description} />
+                </div>
+              )}
               {detail.due_date && (
                 <p className="text-sm text-slate-500">
                   <Calendar className="w-4 h-4 inline mr-1" />

@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   User, ShieldCheck, Bell, Settings, Palette, Link2, HardDrive, Info,
   Database, Cloud, RefreshCw, Loader2, Check, Copy, Eye, EyeOff,
-  Lock, Zap, AlertTriangle, Monitor,
+  Lock, Zap, AlertTriangle, Monitor, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import { getSettings, updateSettings, reindexStore, getVectorStats, testIntegrationConnection, triggerManualBackup } from '../../services/adminService';
 import { applyTheme, applyDensity } from '../../lib/theme';
+import authService from '../../services/authService';
 
 const SIDEBAR_ITEMS = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -17,11 +19,30 @@ const SIDEBAR_ITEMS = [
   { id: 'system', label: 'System Configuration', icon: Settings },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'api', label: 'API and Integration', icon: Link2 },
-  { id: 'backup', label: 'Backup and Maintenance', icon: HardDrive },
+  { id: 'backup', label: 'Backup & Maintenance', icon: HardDrive },
   { id: 'about', label: 'About', icon: Info },
 ];
 
-const OCR_OPTIONS = ['Tesseract 5.0 Optimized', 'Google Vision', 'PaddleOCR'];
+const OCR_OPTIONS = [
+  { value: 'tesseract_5_optimized', label: 'Tesseract 5.0 Optimized' },
+  { value: 'google_vision', label: 'Google Vision' },
+  { value: 'paddleocr', label: 'PaddleOCR' },
+];
+
+function normalizeOcrEngine(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return OCR_OPTIONS[0].value;
+  const key = raw.toLowerCase().replace(/\s+/g, '_');
+  if (key.includes('tesseract')) return 'tesseract_5_optimized';
+  if (key.includes('google') || key.includes('vision')) return 'google_vision';
+  if (key.includes('paddle')) return 'paddleocr';
+  return OCR_OPTIONS.some((o) => o.value === key) ? key : OCR_OPTIONS[0].value;
+}
+
+function getOcrLabel(value) {
+  const normalized = normalizeOcrEngine(value);
+  return OCR_OPTIONS.find((o) => o.value === normalized)?.label ?? OCR_OPTIONS[0].label;
+}
 
 const DEFAULT_NOTIFICATION_PREFS = {
   login_alert: true, user_created: true, audit_alert: true,
@@ -38,7 +59,7 @@ const DEFAULT_APPEARANCE_PREFS = {
 
 function SettingsSidebar({ active, onSelect }) {
   return (
-    <aside className="w-52 shrink-0">
+    <aside className="w-64 shrink-0 bg-white rounded-xl border border-primary-light p-3 h-fit">
       <nav className="space-y-0.5">
         {SIDEBAR_ITEMS.map((item) => (
           <button
@@ -51,7 +72,7 @@ function SettingsSidebar({ active, onSelect }) {
             }`}
           >
             <item.icon className="w-4 h-4 shrink-0" />
-            {item.label}
+            <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>
           </button>
         ))}
       </nav>
@@ -105,7 +126,6 @@ function SaveBar({ onSave, saving, saved }) {
 }
 
 function ProfileSection({ user }) {
-  const [name, setName] = useState(user?.full_name ?? '');
   const email = user?.email ?? '—';
   const role = user?.role ?? 'admin';
 
@@ -128,9 +148,9 @@ function ProfileSection({ user }) {
       <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
         <FieldRow label="Full Name">
           <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            value={user?.full_name ?? ''}
+            disabled
+            className="w-full border border-slate-100 bg-slate-50 rounded-lg px-3 py-2 text-sm text-slate-400 cursor-not-allowed"
           />
         </FieldRow>
         <FieldRow label="Email Address">
@@ -151,24 +171,81 @@ function ProfileSection({ user }) {
 
       <div className="bg-primary-light/40 rounded-xl border border-primary-light p-4 flex items-start gap-3">
         <AlertTriangle className="w-4 h-4 text-primary mt-0.5 shrink-0" />
-        <p className="text-xs text-primary-dark">Profile name changes take effect on next login. Contact your system owner to change your email address.</p>
+        <p className="text-xs text-primary-dark">Profile fields are currently read-only in this panel. Contact your system owner to update account identity fields.</p>
       </div>
     </div>
   );
 }
 
 function SecuritySection({ user }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [twoFa, setTwoFa] = useState(user?.is_2fa_enabled ?? false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [twoFa, setTwoFa] = useState(user?.totp_enabled ?? false);
+  const [showDisable2FA, setShowDisable2FA] = useState(false);
+  const [disableCode, setDisableCode] = useState('');
+  const [disablePassword, setDisablePassword] = useState('');
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [form, setForm] = useState({ current: '', newPass: '', confirm: '' });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  useEffect(() => {
+    setTwoFa(user?.totp_enabled ?? false);
+  }, [user]);
+
+  const disable2FAMutation = useMutation({
+    mutationFn: ({ code, password }) => authService.disable2FA(code, password),
+    onSuccess: () => {
+      toast.success('Two-factor authentication disabled');
+      setShowDisable2FA(false);
+      setDisableCode('');
+      setDisablePassword('');
+      setTwoFa(false);
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || 'Failed to disable 2FA'),
+  });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: ({ current, newPass }) => authService.changePassword(current, newPass),
+    onSuccess: () => {
+      toast.success('Password changed successfully');
+      setShowChangePassword(false);
+      setForm({ current: '', newPass: '', confirm: '' });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || 'Failed to change password'),
+  });
+
   const handleChangePassword = () => {
-    if (!form.current || !form.newPass) { toast.error('Fill in all password fields'); return; }
-    if (form.newPass !== form.confirm) { toast.error('New passwords do not match'); return; }
-    toast.success('Password updated successfully');
-    setForm({ current: '', newPass: '', confirm: '' });
+    if (!form.current || !form.newPass || !form.confirm) {
+      toast.error('Fill in all password fields');
+      return;
+    }
+    if (form.newPass.length < 8) {
+      toast.error('New password must be at least 8 characters');
+      return;
+    }
+    if (form.newPass !== form.confirm) {
+      toast.error('New passwords do not match');
+      return;
+    }
+    changePasswordMutation.mutate({ current: form.current, newPass: form.newPass });
+  };
+
+  const handle2FAToggle = () => {
+    if (twoFa) setShowDisable2FA(true);
+    else navigate('/2fa-setup');
+  };
+
+  const handleDisable2FA = (e) => {
+    e.preventDefault();
+    if (!disableCode || disableCode.length !== 6) {
+      toast.error('Enter a valid 6-digit code');
+      return;
+    }
+    disable2FAMutation.mutate({ code: disableCode, password: disablePassword });
   };
 
   return (
@@ -202,12 +279,17 @@ function SecuritySection({ user }) {
           </div>
         </FieldRow>
         <FieldRow label="Confirm New Password">
-          <input
-            type="password"
-            value={form.confirm}
-            onChange={(e) => set('confirm', e.target.value)}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
+          <div className="relative">
+            <input
+              type={showConfirm ? 'text' : 'password'}
+              value={form.confirm}
+              onChange={(e) => set('confirm', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <button onClick={() => setShowConfirm(!showConfirm)} className="absolute right-3 top-2.5 text-slate-400">
+              {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
         </FieldRow>
         <button
           onClick={handleChangePassword}
@@ -223,7 +305,7 @@ function SecuritySection({ user }) {
           label="Enable 2FA"
           description="Require a TOTP code on every admin login for enhanced security."
           checked={twoFa}
-          onChange={setTwoFa}
+          onChange={handle2FAToggle}
         />
         {twoFa && (
           <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 flex items-center gap-2">
@@ -231,6 +313,7 @@ function SecuritySection({ user }) {
             2FA is enabled. Scan the QR code in your authenticator app on next login.
           </div>
         )}
+        <p className="mt-3 text-xs text-slate-500">Turn on 2FA via setup flow. Disabling requires TOTP code + password.</p>
       </div>
 
       <SectionLabel>Current Session</SectionLabel>
@@ -244,6 +327,59 @@ function SecuritySection({ user }) {
         </div>
         <span className="text-xs bg-green-100 text-green-700 font-semibold px-2 py-0.5 rounded-full">Current</span>
       </div>
+
+      {showDisable2FA && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowDisable2FA(false)} />
+          <div className="relative bg-white rounded-xl border border-primary-light shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-primary-dark">Disable Two-Factor Authentication</h3>
+              <button onClick={() => setShowDisable2FA(false)} className="p-1 rounded-lg hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <form onSubmit={handleDisable2FA} className="space-y-3">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={disableCode}
+                onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="6-digit code"
+                className="w-full text-center text-lg tracking-[0.2em] border border-primary-light rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <input
+                type="password"
+                value={disablePassword}
+                onChange={(e) => setDisablePassword(e.target.value)}
+                placeholder="Account password"
+                className="w-full border border-primary-light rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowDisable2FA(false)} className="flex-1 px-4 py-2 border border-primary-light rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={disable2FAMutation.isPending} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50">
+                  Disable 2FA
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showChangePassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowChangePassword(false)} />
+          <div className="relative bg-white rounded-xl border border-primary-light shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-primary-dark">Change Password</h3>
+              <button onClick={() => setShowChangePassword(false)} className="p-1 rounded-lg hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 mb-3">Use the fields above, then click Update Password to submit.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -651,6 +787,7 @@ function AboutSection() {
 
   const dynamicInfo = [
     { label: 'OCR Engine', value: ocrEngine },
+    { label: 'OCR Engine (Label)', value: getOcrLabel(ocrEngine) },
     { label: 'RAG Chunk Size', value: `${chunkSize} tokens` },
     { label: 'Vector Store', value: `ChromaDB · ${totalChunks} chunks · ${namespaces} namespaces` },
     { label: 'Maintenance Mode', value: maintenanceMode },
@@ -659,31 +796,31 @@ function AboutSection() {
   return (
     <div className="space-y-6">
       <SectionLabel>System Information</SectionLabel>
-      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
         {staticInfo.map((row) => (
-          <div key={row.label} className="flex items-center justify-between px-5 py-3">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{row.label}</span>
-            <span className="text-sm font-medium text-slate-700">{row.value}</span>
+          <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3.5">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{row.label}</span>
+            <span className="text-sm font-semibold text-slate-800 text-right">{row.value}</span>
           </div>
         ))}
       </div>
 
       <SectionLabel>Live Configuration</SectionLabel>
-      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
         {dynamicInfo.map((row) => (
-          <div key={row.label} className="flex items-center justify-between px-5 py-3">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{row.label}</span>
-            <span className="text-sm font-medium text-slate-700">{row.value}</span>
+          <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3.5">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{row.label}</span>
+            <span className="text-sm font-semibold text-slate-800 text-right">{row.value}</span>
           </div>
         ))}
       </div>
 
-      <div className="bg-primary-dark rounded-xl p-5 text-white flex items-center gap-4">
-        <Zap className="w-8 h-8 text-primary-light shrink-0" />
+      <div className="bg-primary-dark rounded-xl p-5 text-white flex items-center gap-4 border border-primary/40">
+        <Zap className="w-8 h-8 text-blue-100 shrink-0" />
         <div>
           <p className="font-bold">Gyanavriksha Knowledge Sanctuary</p>
-          <p className="text-sm text-primary-light mt-0.5">AI-powered adaptive learning platform with IoT integration and vector-based curriculum delivery.</p>
-          <p className="text-xs text-primary-light/60 mt-2">© 2025 Group 4 — System Development Project, Level 5 Sem 2</p>
+          <p className="text-sm text-blue-100/90 mt-0.5">AI-powered adaptive learning platform with IoT integration and vector-based curriculum delivery.</p>
+          <p className="text-xs text-blue-100/70 mt-2">© 2025 Group 4 — System Development Project, Level 5 Sem 2</p>
         </div>
       </div>
     </div>
@@ -714,11 +851,11 @@ function SystemCoreSection({ form, onChange }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
         <FieldRow label="OCR Engine Selector">
           <select
-            value={form.ocr_engine ?? OCR_OPTIONS[0]}
+            value={normalizeOcrEngine(form.ocr_engine)}
             onChange={(e) => onChange('ocr_engine', e.target.value)}
             className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30"
           >
-            {OCR_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+            {OCR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </FieldRow>
         <div>
@@ -792,7 +929,7 @@ export default function AdminSettings() {
   useEffect(() => {
     if (!settingsData) return;
     setForm({
-      ocr_engine: settingsData.ocr_engine ?? 'Tesseract 5.0 Optimized',
+      ocr_engine: normalizeOcrEngine(settingsData.ocr_engine),
       rag_chunk_size: settingsData.rag_chunk_size ?? 512,
       mqtt_broker_host: settingsData.mqtt_broker_host ?? '',
       maintenance_mode: settingsData.maintenance_mode ?? false,
@@ -811,6 +948,12 @@ export default function AdminSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'settings'] });
       toast.success('Settings saved successfully');
+      setForm((f) => ({
+        ...f,
+        google_vision_api_key: '',
+        gemini_api_key: '',
+        mqtt_broker_credentials: '',
+      }));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
@@ -827,7 +970,7 @@ export default function AdminSettings() {
   const buildSystemPayload = () => {
     const p = {
       ocr_engine: form.ocr_engine,
-      rag_chunk_size: parseInt(form.rag_chunk_size),
+      rag_chunk_size: Number.parseInt(form.rag_chunk_size, 10),
       mqtt_broker_host: form.mqtt_broker_host || undefined,
       maintenance_mode: form.maintenance_mode,
     };
@@ -870,7 +1013,7 @@ export default function AdminSettings() {
         <p className="text-sm text-slate-500 mt-0.5">Orchestrate your knowledge sanctuary's core infrastructure.</p>
       </div>
 
-      <div className="flex gap-8">
+      <div className="flex gap-6 items-start">
         <SettingsSidebar active={activeSection} onSelect={setActiveSection} />
 
         <div className="flex-1 space-y-8">

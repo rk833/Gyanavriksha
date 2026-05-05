@@ -4,15 +4,18 @@ Sprint 3 Phase 3: GD-53, GD-54, GD-55
 """
 import os
 import uuid
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import date, datetime, timezone
+from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.db.models.assignment import Assignment
 from app.db.models.grade import Grade
 from app.db.models.knowledge_gap import KnowledgeGap
+from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.submission import Submission
 from app.db.models.submission_feedback import SubmissionFeedback
@@ -20,10 +23,94 @@ from app.db.models.subject import Subject
 from app.db.models.user import User
 from app.shared.source_enum import SubmissionProcessingStatus
 
+from app.services import exam_session_service
+
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_FILES_PER_SUBMISSION = 5
+
+
+def _uploaded_file_entries(image_path: str | None) -> list[dict[str, Any]]:
+    """Human-readable list of uploaded files (from comma-separated relative paths)."""
+    if not image_path or not str(image_path).strip():
+        return []
+    out: list[dict[str, Any]] = []
+    for part in (p.strip() for p in str(image_path).split(",")):
+        if not part:
+            continue
+        norm = part.replace("\\", os.sep)
+        name = os.path.basename(norm)
+        out.append({"index": len(out), "name": name})
+    return out
+
+
+def _absolute_stored_upload_path(stored: str) -> str:
+    rel = (stored or "").strip().replace("\\", os.sep)
+    if not rel:
+        return ""
+    parts = rel.split(os.sep)
+    if parts and parts[0].lower() == "uploads":
+        rel = os.path.join(*parts[1:]) if len(parts) > 1 else ""
+    return os.path.normpath(os.path.join(UPLOAD_DIR, rel))
+
+
+def get_submission_file_for_download(
+    db: Session,
+    submission_id: uuid.UUID,
+    file_index: int,
+) -> tuple[str, str]:
+    """Return (absolute_path, download_filename) for a stored upload index."""
+    sub = db.query(Submission).filter(Submission.submission_id == submission_id).first()
+    if not sub:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+    paths = [p.strip() for p in (sub.image_path or "").split(",") if p.strip()]
+    if file_index < 0 or file_index >= len(paths):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    stored = paths[file_index]
+    abs_path = _absolute_stored_upload_path(stored)
+    if not abs_path or not os.path.isfile(abs_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing on server")
+    return abs_path, os.path.basename(stored)
+
+
+def _instructors_by_subject_id(db: Session, subject_ids: set[int]) -> dict[int, list[dict[str, Any]]]:
+    """Active instructors linked to each subject (for student-facing assignment UI)."""
+    if not subject_ids:
+        return {}
+    rows = (
+        db.query(InstructorSubject.subject_id, User.user_id, User.full_name, User.email)
+        .join(User, InstructorSubject.instructor_id == User.user_id)
+        .filter(
+            InstructorSubject.subject_id.in_(subject_ids),
+            InstructorSubject.is_active == True,
+        )
+        .order_by(User.full_name)
+        .all()
+    )
+    out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for sid, uid, name, email in rows:
+        out[sid].append({"user_id": uid, "full_name": name, "email": email})
+    return dict(out)
+
+
+def _subject_instructors_list(
+    by_subject: dict[int, list[dict[str, Any]]],
+    subject_id: int,
+    primary_instructor: User,
+) -> list[dict[str, Any]]:
+    inst_list = [dict(x) for x in by_subject.get(subject_id, [])]
+    ids = {x["user_id"] for x in inst_list}
+    if primary_instructor.user_id not in ids:
+        inst_list.insert(
+            0,
+            {
+                "user_id": primary_instructor.user_id,
+                "full_name": primary_instructor.full_name,
+                "email": primary_instructor.email,
+            },
+        )
+    return inst_list
 
 
 def get_assignments_for_student(
@@ -31,6 +118,7 @@ def get_assignments_for_student(
     user_id: uuid.UUID,
     subject_id: int | None = None,
     status_filter: str | None = None,
+    due_on: date | None = None,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list, int]:
@@ -74,6 +162,12 @@ def get_assignments_for_student(
     elif status_filter == "closed":
         query = query.filter(Assignment.due_date <= now)
 
+    if due_on is not None:
+        query = query.filter(
+            Assignment.due_date.isnot(None),
+            func.date(Assignment.due_date) == due_on,
+        )
+
     total = query.count()
     query = query.order_by(Assignment.due_date.asc().nullslast())
     assignments = query.offset((page - 1) * per_page).limit(per_page).all()
@@ -92,8 +186,20 @@ def get_assignments_for_student(
         )
         submitted_set = {r[0] for r in submitted}
 
+    exam_flags = exam_session_service.exam_flags_for_assignments(
+        db, user_id, assignment_ids
+    )
+
+    subject_ids = {s.subject_id for _, s, _, _ in assignments}
+    instructors_by_subject = _instructors_by_subject_id(db, subject_ids)
+
     results = []
     for assignment, subject, grade, instructor in assignments:
+        ef = exam_flags.get(assignment.assignment_id, {})
+        has_sub = assignment.assignment_id in submitted_set
+        exam_blocked = has_sub or (
+            bool(assignment.is_exam_mode) and ef.get("exam_closed_without_active", False)
+        )
         results.append({
             "assignment_id": assignment.assignment_id,
             "title": assignment.title,
@@ -102,12 +208,26 @@ def get_assignments_for_student(
             "subject_name": subject.subject_name,
             "grade_name": grade.grade_name,
             "instructor_name": instructor.full_name,
+            "subject_instructors": _subject_instructors_list(
+                instructors_by_subject, subject.subject_id, instructor
+            ),
             "topic_tags": assignment.topic_tags,
             "is_exam_mode": assignment.is_exam_mode,
+            "exam_duration_minutes": assignment.exam_duration_minutes,
+            "exam_max_pauses": assignment.exam_max_pauses,
+            "exam_strict_proctor": assignment.exam_strict_proctor,
+            "max_score": assignment.max_score,
             "due_date": assignment.due_date,
             "is_published": assignment.is_published,
-            "has_submitted": assignment.assignment_id in submitted_set,
+            "has_submitted": has_sub,
             "created_at": assignment.created_at,
+            "exam_slot_blocked": exam_blocked,
+            "exam_active_session_id": ef.get("exam_active_session_id")
+            if assignment.is_exam_mode
+            else None,
+            "exam_session_started_at": ef.get("exam_session_started_at")
+            if assignment.is_exam_mode
+            else None,
         })
 
     return results, total
@@ -162,6 +282,15 @@ def get_assignment_detail(
 
     has_submitted = sub_count > 0
 
+    instructors_by_subject = _instructors_by_subject_id(db, {subject.subject_id})
+
+    ef = exam_session_service.exam_flags_for_assignments(db, user_id, [assignment_id])[
+        assignment_id
+    ]
+    exam_blocked = has_submitted or (
+        bool(assignment.is_exam_mode) and ef.get("exam_closed_without_active", False)
+    )
+
     return {
         "assignment_id": assignment.assignment_id,
         "title": assignment.title,
@@ -170,13 +299,27 @@ def get_assignment_detail(
         "subject_name": subject.subject_name,
         "grade_name": grade.grade_name,
         "instructor_name": instructor.full_name,
+        "subject_instructors": _subject_instructors_list(
+            instructors_by_subject, subject.subject_id, instructor
+        ),
         "topic_tags": assignment.topic_tags,
         "is_exam_mode": assignment.is_exam_mode,
+        "exam_duration_minutes": assignment.exam_duration_minutes,
+        "exam_max_pauses": assignment.exam_max_pauses,
+        "exam_strict_proctor": assignment.exam_strict_proctor,
+        "max_score": assignment.max_score,
         "due_date": assignment.due_date,
         "is_published": assignment.is_published,
         "has_submitted": has_submitted,
         "created_at": assignment.created_at,
         "submission_count": sub_count,
+        "exam_slot_blocked": exam_blocked,
+        "exam_active_session_id": ef.get("exam_active_session_id")
+        if assignment.is_exam_mode
+        else None,
+        "exam_session_started_at": ef.get("exam_session_started_at")
+        if assignment.is_exam_mode
+        else None,
     }
 
 
@@ -186,12 +329,12 @@ async def create_submission(
     assignment_id: uuid.UUID,
     files: list[UploadFile],
 ) -> Submission:
-    """Create a submission with uploaded image files."""
+    """Create a submission with uploaded images and/or PDF files."""
     # Validate file count
     if not files or len(files) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one image file is required",
+            detail="At least one file is required",
         )
     if len(files) > MAX_FILES_PER_SUBMISSION:
         raise HTTPException(
@@ -238,7 +381,7 @@ async def create_submission(
         if ext not in ALLOWED_EXTENSIONS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File '{f.filename}' is not a supported image format. Allowed: JPG, JPEG, PNG",
+                detail=f"File '{f.filename}' is not a supported format. Allowed: JPG, JPEG, PNG, PDF",
             )
 
     submission_id = uuid.uuid4()
@@ -256,7 +399,8 @@ async def create_submission(
             )
 
         ext = os.path.splitext(f.filename or "")[1].lower()
-        filename = f"img_{idx:03d}{ext}"
+        prefix = "file" if ext == ".pdf" else "img"
+        filename = f"{prefix}_{idx:03d}{ext}"
         filepath = os.path.join(user_dir, filename)
 
         with open(filepath, "wb") as out:
@@ -280,6 +424,9 @@ async def create_submission(
     db.commit()
     db.refresh(submission)
 
+    if assignment.is_exam_mode:
+        exam_session_service.complete_active_session(db, user_id, assignment_id)
+
     return submission
 
 
@@ -288,6 +435,7 @@ def get_submissions_for_student(
     user_id: uuid.UUID,
     subject_id: int | None = None,
     status_filter: str | None = None,
+    search: str | None = None,
     page: int = 1,
     per_page: int = 10,
 ) -> tuple[list, int]:
@@ -308,6 +456,16 @@ def get_submissions_for_student(
             query = query.filter(Submission.processing_status == ps)
         except ValueError:
             pass
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                Assignment.title.ilike(term),
+                Subject.subject_name.ilike(term),
+                Assignment.description.ilike(term),
+            )
+        )
 
     total = query.count()
     query = query.order_by(Submission.submitted_at.desc())
@@ -373,6 +531,11 @@ def get_submission_detail(
             "llm_model_used": feedback.llm_model_used,
             "knowledge_gap_detected": feedback.knowledge_gap_detected,
             "created_at": feedback.created_at,
+            "score_percentage": feedback.score_percentage,
+            "strengths": feedback.strengths,
+            "improvements": feedback.improvements,
+            "graded_by": feedback.graded_by,
+            "ai_snapshot": getattr(feedback, "ai_snapshot", None),
         }
 
     # Get knowledge gaps linked to this submission
@@ -394,12 +557,15 @@ def get_submission_detail(
         "submission_id": sub.submission_id,
         "assignment_id": sub.assignment_id,
         "assignment_title": assignment.title,
+        "assignment_description": assignment.description,
+        "assignment_max_score": assignment.max_score,
         "subject_name": subject.subject_name,
         "submitted_at": sub.submitted_at,
         "processing_status": sub.processing_status,
         "grade_classification": sub.grade_classification,
         "score_percentage": sub.score_percentage,
         "image_path": sub.image_path,
+        "uploaded_files": _uploaded_file_entries(sub.image_path),
         "image_quality_score": sub.image_quality_score,
         "is_exam_submission": sub.is_exam_submission,
         "feedback": feedback_data,

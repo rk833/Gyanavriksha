@@ -4,10 +4,14 @@ Route handlers declare HTTP contracts and immediately delegate to the
 application-layer use cases. No business logic, error mapping, or response
 construction occurs in this layer.
 """
+import mimetypes
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+
+from app.services import submission_service as submission_service_mod
 
 from app.api.auth.infrastructure.dependencies import require_role
 from app.api.instructor.application import service
@@ -223,6 +227,26 @@ def get_submission_detail(
     """Return full submission detail including AI-generated and instructor feedback."""
     return service.get_submission_detail(
         db, str(current_user.user_id), submission_id
+    )
+
+
+@router.get("/submissions/{submission_id}/files/{file_index}")
+def download_submission_file(
+    submission_id: uuid.UUID,
+    file_index: int,
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Download one uploaded file for a submission the instructor may access."""
+    service.get_submission_detail(db, str(current_user.user_id), submission_id)
+    abs_path, fname = submission_service_mod.get_submission_file_for_download(
+        db, submission_id, file_index
+    )
+    media, _ = mimetypes.guess_type(fname)
+    return FileResponse(
+        abs_path,
+        filename=fname,
+        media_type=media or "application/octet-stream",
     )
 
 

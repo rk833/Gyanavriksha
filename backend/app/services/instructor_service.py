@@ -7,10 +7,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, extract, case
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, desc, extract, case, or_
 
 from app.db.models.assignment import Assignment
+from app.db.models.chat_history import ChatHistory
 from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
 from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.grade import Grade
@@ -105,6 +106,27 @@ def get_instructor_subject_ids(db: Session, instructor_id: str) -> list[int]:
         .all()
     )
     return [r.subject_id for r in rows]
+
+
+def _assignment_scope_for_instructor(db: Session, instructor_id: str):
+    """Assignments this instructor may manage: owned OR linked via InstructorSubject."""
+    subject_ids = get_instructor_subject_ids(db, instructor_id)
+    owns = Assignment.instructor_id == instructor_id
+    if subject_ids:
+        return or_(owns, Assignment.subject_id.in_(subject_ids))
+    return owns
+
+
+def _uploaded_file_entries(image_path: str | None) -> list[dict]:
+    if not image_path or not str(image_path).strip():
+        return []
+    out: list[dict] = []
+    for part in (p.strip() for p in str(image_path).split(",")):
+        if not part:
+            continue
+        name = os.path.basename(part.replace("\\", os.sep))
+        out.append({"index": len(out), "name": name})
+    return out
 
 
 # Phase 2: GD-84 — Dashboard aggregation
@@ -546,6 +568,9 @@ def get_instructor_assignments(
             "grade_name": grade_name,
             "topic_tags": assignment.topic_tags,
             "is_exam_mode": assignment.is_exam_mode,
+            "exam_duration_minutes": assignment.exam_duration_minutes,
+            "exam_max_pauses": assignment.exam_max_pauses,
+            "exam_strict_proctor": assignment.exam_strict_proctor,
             "due_date": assignment.due_date,
             "is_published": assignment.is_published,
             "max_score": assignment.max_score,
@@ -635,6 +660,9 @@ def get_assignment_detail(
         "grade_name": grade_name,
         "topic_tags": assignment.topic_tags,
         "is_exam_mode": assignment.is_exam_mode,
+        "exam_duration_minutes": assignment.exam_duration_minutes,
+        "exam_max_pauses": assignment.exam_max_pauses,
+        "exam_strict_proctor": assignment.exam_strict_proctor,
         "due_date": assignment.due_date,
         "is_published": assignment.is_published,
         "max_score": assignment.max_score,
@@ -660,6 +688,7 @@ def get_assignment_detail(
 
 def create_assignment(db: Session, instructor_id: str, data: dict) -> Assignment:
     """Create a new draft assignment."""
+    exam_on = bool(data.get("is_exam_mode", False))
     assignment = Assignment(
         subject_id=data["subject_id"],
         instructor_id=instructor_id,
@@ -667,7 +696,10 @@ def create_assignment(db: Session, instructor_id: str, data: dict) -> Assignment
         description=data.get("description"),
         topic_tags=data.get("topic_tags"),
         max_score=data.get("max_score", 100.0),
-        is_exam_mode=data.get("is_exam_mode", False),
+        is_exam_mode=exam_on,
+        exam_duration_minutes=data.get("exam_duration_minutes") if exam_on else None,
+        exam_max_pauses=data.get("exam_max_pauses") if exam_on else None,
+        exam_strict_proctor=bool(data.get("exam_strict_proctor", False)) if exam_on else False,
         due_date=data.get("due_date"),
         is_published=False,
     )
@@ -695,9 +727,24 @@ def update_assignment(
     if not assignment:
         return None
 
-    for field in ["title", "description", "due_date", "max_score", "topic_tags", "is_exam_mode"]:
-        if field in data and data[field] is not None:
+    for field in [
+        "title",
+        "description",
+        "due_date",
+        "max_score",
+        "topic_tags",
+        "is_exam_mode",
+        "exam_duration_minutes",
+        "exam_max_pauses",
+        "exam_strict_proctor",
+    ]:
+        if field in data:
             setattr(assignment, field, data[field])
+
+    if "is_exam_mode" in data and data["is_exam_mode"] is False:
+        assignment.exam_duration_minutes = None
+        assignment.exam_max_pauses = None
+        assignment.exam_strict_proctor = False
 
     db.commit()
     db.refresh(assignment)
@@ -777,17 +824,21 @@ def get_instructor_submissions(
     per_page: int = 20,
 ) -> tuple[list[dict], int]:
     """List submissions for instructor's assignments with filters."""
+    Inst = aliased(User)
     query = (
         db.query(
             Submission,
             User.full_name.label("student_name"),
+            User.email.label("student_email"),
             Assignment.title.label("assignment_title"),
             Subject.subject_name,
+            Inst.full_name.label("assignment_instructor_name"),
         )
         .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
         .join(User, User.user_id == Submission.student_id)
         .join(Subject, Subject.subject_id == Submission.subject_id)
-        .filter(Assignment.instructor_id == instructor_id)
+        .join(Inst, Inst.user_id == Assignment.instructor_id)
+        .filter(_assignment_scope_for_instructor(db, instructor_id))
     )
 
     if assignment_id is not None:
@@ -796,8 +847,13 @@ def get_instructor_submissions(
         query = query.filter(Submission.student_id == student_id)
     if subject_id is not None:
         query = query.filter(Submission.subject_id == subject_id)
-    if status_filter is not None:
-        query = query.filter(Submission.processing_status == status_filter)
+    if status_filter:
+        try:
+            query = query.filter(
+                Submission.processing_status == SubmissionProcessingStatus(status_filter)
+            )
+        except ValueError:
+            pass
 
     total = query.count()
     rows = (
@@ -808,14 +864,16 @@ def get_instructor_submissions(
     )
 
     items = []
-    for sub, student_name, assignment_title, subject_name in rows:
+    for sub, student_name, student_email, assignment_title, subject_name, assignment_instructor_name in rows:
         items.append({
             "submission_id": sub.submission_id,
             "student_id": sub.student_id,
             "student_name": student_name,
+            "student_email": student_email,
             "assignment_id": sub.assignment_id,
             "assignment_title": assignment_title,
             "subject_name": subject_name,
+            "assignment_instructor_name": assignment_instructor_name,
             "submitted_at": sub.submitted_at,
             "processing_status": sub.processing_status,
             "score_percentage": sub.score_percentage,
@@ -831,6 +889,7 @@ def get_submission_detail(
     submission_id: uuid.UUID,
 ) -> dict | None:
     """Get detailed submission view with feedback."""
+    Inst = aliased(User)
     row = (
         db.query(
             Submission,
@@ -838,20 +897,22 @@ def get_submission_detail(
             User.email.label("student_email"),
             Assignment.title.label("assignment_title"),
             Subject.subject_name,
+            Inst.full_name.label("assignment_instructor_name"),
         )
         .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
         .join(User, User.user_id == Submission.student_id)
         .join(Subject, Subject.subject_id == Submission.subject_id)
+        .join(Inst, Inst.user_id == Assignment.instructor_id)
         .filter(
             Submission.submission_id == submission_id,
-            Assignment.instructor_id == instructor_id,
+            _assignment_scope_for_instructor(db, instructor_id),
         )
         .first()
     )
     if not row:
         return None
 
-    sub, student_name, student_email, assignment_title, subject_name = row
+    sub, student_name, student_email, assignment_title, subject_name, assignment_instructor_name = row
 
     # Get feedback if exists
     feedback = (
@@ -871,6 +932,7 @@ def get_submission_detail(
             "instructor_comments": feedback.instructor_comments,
             "graded_by": feedback.graded_by,
             "created_at": feedback.created_at,
+            "ai_snapshot": getattr(feedback, "ai_snapshot", None),
         }
 
     return {
@@ -881,10 +943,12 @@ def get_submission_detail(
         "assignment_id": sub.assignment_id,
         "assignment_title": assignment_title,
         "subject_name": subject_name,
+        "assignment_instructor_name": assignment_instructor_name,
         "submitted_at": sub.submitted_at,
         "processing_status": sub.processing_status,
         "score_percentage": sub.score_percentage,
         "image_path": sub.image_path,
+        "uploaded_files": _uploaded_file_entries(sub.image_path),
         "file_count": len(sub.image_path.split(",")) if sub.image_path else 0,
         "feedback": feedback_data,
     }
@@ -905,7 +969,7 @@ def override_submission_feedback(
         .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
         .filter(
             Submission.submission_id == submission_id,
-            Assignment.instructor_id == instructor_id,
+            _assignment_scope_for_instructor(db, instructor_id),
         )
         .first()
     )
@@ -925,6 +989,15 @@ def override_submission_feedback(
         .first()
     )
     if feedback:
+        snap = getattr(feedback, "ai_snapshot", None)
+        if snap is None and feedback.graded_by is None:
+            feedback.ai_snapshot = {
+                "score_percentage": feedback.score_percentage,
+                "overall_feedback": feedback.overall_feedback,
+                "step_by_step_corrections": list(feedback.step_by_step_corrections or []),
+                "strengths": feedback.strengths,
+                "improvements": feedback.improvements,
+            }
         feedback.score_percentage = data["score_percentage"]
         if data.get("overall_feedback") is not None:
             feedback.overall_feedback = data["overall_feedback"]
@@ -1219,7 +1292,12 @@ def get_concept_heatmap(
     subject_id: int | None = None,
     timeframe: str = "all",
 ) -> dict:
-    """Get concept heatmap data from knowledge_gaps and concept_heatmap_entries."""
+    """Get concept heatmap from knowledge gaps (submissions and AI tutor chat) and heatmap entries.
+
+    Chat-originated gaps use ``knowledge_gaps.history_id`` → :class:`ChatHistory` and may have
+    no ``submission_id``; those rows are included via ``outerjoin`` on ``Submission``.
+    :class:`ConceptHeatmapEntry` rows are updated from tutor chat via ``heatmap_service``.
+    """
     subject_ids = get_instructor_subject_ids(db, instructor_id)
     if subject_id is not None:
         subject_ids = [sid for sid in subject_ids if sid == subject_id]
@@ -1236,7 +1314,7 @@ def get_concept_heatmap(
         or 0
     )
 
-    # Apply timeframe filter
+    # Knowledge gaps from graded work (submission_id) and from AI tutor chat (history_id → chat_history)
     gap_query = (
         db.query(
             KnowledgeGap.topic_tag,
@@ -1251,7 +1329,8 @@ def get_concept_heatmap(
             ).label("avg_score"),
         )
         .join(Subject, Subject.subject_id == KnowledgeGap.subject_id)
-        .join(Submission, Submission.submission_id == KnowledgeGap.submission_id)
+        .outerjoin(Submission, Submission.submission_id == KnowledgeGap.submission_id)
+        .outerjoin(ChatHistory, ChatHistory.history_id == KnowledgeGap.history_id)
         .filter(KnowledgeGap.subject_id.in_(subject_ids))
     )
 
@@ -1286,27 +1365,52 @@ def get_concept_heatmap(
             "severity_score": struggle_pct,
         })
 
-    # Also check concept_heatmap_entries table for pre-aggregated data
-    heatmap_rows = (
-        db.query(ConceptHeatmapEntry, Subject.subject_name)
+    # Merge rows from concept_heatmap_entries (per-student rows; aggregate by topic/concept)
+    ch_query = (
+        db.query(
+            ConceptHeatmapEntry.topic_tag,
+            ConceptHeatmapEntry.concept_name,
+            Subject.subject_name,
+            func.count(func.distinct(ConceptHeatmapEntry.student_id)).label(
+                "ch_affected_count"
+            ),
+        )
         .join(Subject, Subject.subject_id == ConceptHeatmapEntry.subject_id)
-        .filter(ConceptHeatmapEntry.subject_id.in_(subject_ids))
-        .order_by(desc(ConceptHeatmapEntry.affected_student_count))
+        .filter(
+            ConceptHeatmapEntry.subject_id.in_(subject_ids),
+            ConceptHeatmapEntry.student_id.isnot(None),
+        )
+    )
+    if timeframe == "7d":
+        cutoff_ch = datetime.now(timezone.utc) - timedelta(days=7)
+        ch_query = ch_query.filter(ConceptHeatmapEntry.last_updated_at >= cutoff_ch)
+    elif timeframe == "30d":
+        cutoff_ch = datetime.now(timezone.utc) - timedelta(days=30)
+        ch_query = ch_query.filter(ConceptHeatmapEntry.last_updated_at >= cutoff_ch)
+
+    heatmap_agg_rows = (
+        ch_query.group_by(
+            ConceptHeatmapEntry.topic_tag,
+            ConceptHeatmapEntry.concept_name,
+            Subject.subject_name,
+        )
+        .order_by(desc(func.count(func.distinct(ConceptHeatmapEntry.student_id))))
         .all()
     )
 
     existing_tags = {e["topic_tag"] for e in heatmap_entries}
-    for entry, subject_name in heatmap_rows:
-        if entry.topic_tag not in existing_tags:
-            struggle_pct = round((entry.affected_student_count / total_enrolled) * 100, 1) if total_enrolled > 0 else 0.0
+    for r in heatmap_agg_rows:
+        if r.topic_tag not in existing_tags:
+            affected = r.ch_affected_count or 0
+            struggle_pct = round((affected / total_enrolled) * 100, 1) if total_enrolled > 0 else 0.0
             heatmap_entries.append({
-                "topic_tag": entry.topic_tag,
-                "concept_name": entry.concept_name,
-                "subject_name": subject_name,
+                "topic_tag": r.topic_tag,
+                "concept_name": r.concept_name,
+                "subject_name": r.subject_name,
                 "struggle_percentage": struggle_pct,
-                "affected_student_count": entry.affected_student_count,
+                "affected_student_count": affected,
                 "avg_score": None,
-                "severity_score": entry.severity_score,
+                "severity_score": struggle_pct,
             })
 
     heatmap_entries.sort(key=lambda x: x["struggle_percentage"], reverse=True)
@@ -1379,6 +1483,25 @@ def upload_document(
         "doc_type": doc.doc_type.value,
         "created_at": doc.created_at,
     }
+
+
+def set_document_embedding_status(
+    db: Session,
+    doc_id: uuid.UUID,
+    status_value: EmbeddingStatus,
+    chroma_collection_id: str | None = None,
+) -> None:
+    """Update embedding status metadata for a curriculum document."""
+    doc = db.query(CurriculumDocument).filter(CurriculumDocument.doc_id == doc_id).first()
+    if not doc:
+        return
+
+    doc.embedding_status = status_value
+    if chroma_collection_id:
+        doc.chroma_collection_id = chroma_collection_id
+    if status_value == EmbeddingStatus.DONE:
+        doc.embedded_at = datetime.now(timezone.utc)
+    db.commit()
 
 
 def get_knowledge_base_documents(

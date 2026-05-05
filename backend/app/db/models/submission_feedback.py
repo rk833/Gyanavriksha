@@ -19,6 +19,7 @@ class SubmissionFeedback(Base):
     llm_model_used = Column(String(100), nullable=True)
     llm_tokens_used = Column(Integer, nullable=True)
     knowledge_gap_detected = Column(Boolean, nullable=False, default=False, server_default="false")
+    ai_snapshot = Column(JSONB, nullable=True)
     score_percentage = Column(Float, nullable=True)
     strengths = Column(Text, nullable=True)
     improvements = Column(Text, nullable=True)

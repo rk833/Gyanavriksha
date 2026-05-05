@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_password
+from app.db.models.knowledge_gap import KnowledgeGap
 from app.db.models.micro_quiz import MicroQuiz
 from app.db.models.quiz_question import QuizQuestion
 from app.db.models.user import User
@@ -119,6 +120,69 @@ def _create_quiz(student_id: uuid.UUID, subject_id: int = 1, concept: str = "Fra
     db.refresh(quiz)
     db.close()
     return quiz
+
+
+def _create_quiz_for_gap(student_id, gap_id, subject_id: int = 1, concept: str = "Fractions") -> MicroQuiz:
+    """Create a MicroQuiz linked to a knowledge gap (two MCQ questions)."""
+    db = TestSession()
+    quiz = MicroQuiz(
+        student_id=student_id,
+        subject_id=subject_id,
+        gap_id=gap_id,
+        concept_targeted=concept,
+        total_questions=2,
+        status=MicroQuizStatus.ASSIGNED,
+    )
+    db.add(quiz)
+    db.flush()
+    db.add(QuizQuestion(
+        quiz_id=quiz.quiz_id,
+        question_text="What is 1/2 + 1/3?",
+        question_type=QuestionType.MCQ,
+        options=["5/6", "2/5"],
+        correct_answer="5/6",
+        difficulty=QuestionDifficulty.MEDIUM,
+        order_num=1,
+    ))
+    db.add(QuizQuestion(
+        quiz_id=quiz.quiz_id,
+        question_text="Simplify 4/8.",
+        question_type=QuestionType.MCQ,
+        options=["1/2", "2/4"],
+        correct_answer="1/2",
+        difficulty=QuestionDifficulty.EASY,
+        order_num=2,
+    ))
+    db.commit()
+    db.refresh(quiz)
+    db.close()
+    return quiz
+
+
+def _create_gap(student_id: uuid.UUID, subject_id: int = 1) -> uuid.UUID:
+    db = TestSession()
+    gap = KnowledgeGap(
+        student_id=student_id,
+        subject_id=subject_id,
+        concept_name="Flowchart control flow",
+        topic_tag=f"gap_{uuid.uuid4().hex[:10]}",
+        is_resolved=False,
+    )
+    db.add(gap)
+    db.commit()
+    gid = gap.gap_id
+    db.close()
+    return gid
+
+
+def _login_student(email: str) -> str:
+    resp = client.post("/api/auth/login", json={"email": email, "password": "Pass@1234"})
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
+
+
+def _auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _mock_ai_post(return_value: dict):
@@ -240,3 +304,61 @@ class TestGetQuiz:
         quiz = _create_quiz(student_a.user_id)
         resp = client.get(f"/api/quiz/students/{student_b.user_id}/{quiz.quiz_id}")
         assert resp.status_code == 404
+
+
+class TestGenerateQuizStream:
+    def test_generate_stream_ndjson_has_question_and_complete(self):
+        student = _create_student("stream_ndjson")
+        q_one = {"questions": [_QUIZ_AI_RESULT["questions"][0]]}
+        with patch("app.services.quiz_service.ai_post", new=AsyncMock(return_value=q_one)):
+            resp = client.post(
+                "/api/quiz/generate-stream",
+                json={
+                    "student_id": str(student.user_id),
+                    "subject_id": 1,
+                    "concept": "Fractions",
+                    "num_questions": 2,
+                },
+            )
+        assert resp.status_code == 200
+        assert "application/x-ndjson" in (resp.headers.get("content-type") or "")
+        body = resp.text
+        assert "question" in body
+        assert "complete" in body
+        assert "quiz" in body
+
+
+class TestSubmitMicroQuiz:
+    def test_submit_completes_quiz_and_scores(self):
+        student = _create_student("submit_scores")
+        quiz = _create_quiz(student.user_id)
+        token = _login_student(student.email)
+        resp = client.post(
+            f"/api/students/quizzes/{quiz.quiz_id}/submit",
+            json={"answers": [0, 0]},
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["correct_count"] == 2
+        assert data["total_questions"] == 2
+        assert data["quiz"]["status"] == "COMPLETED"
+        assert data["knowledge_gap_resolved"] is False
+
+    def test_submit_resolves_linked_gap_at_60_percent(self):
+        student = _create_student("submit_gap")
+        gap_id = _create_gap(student.user_id)
+        quiz = _create_quiz_for_gap(student.user_id, gap_id)
+        token = _login_student(student.email)
+        resp = client.post(
+            f"/api/students/quizzes/{quiz.quiz_id}/submit",
+            json={"answers": [0, 0]},
+            headers=_auth_headers(token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["knowledge_gap_resolved"] is True
+        db = TestSession()
+        gap = db.query(KnowledgeGap).filter(KnowledgeGap.gap_id == gap_id).first()
+        db.close()
+        assert gap is not None
+        assert gap.is_resolved is True

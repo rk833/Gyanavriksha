@@ -5,6 +5,7 @@ and map domain exceptions to HTTPExceptions. No HTTP-specific concerns from
 FastAPI bleed into this layer beyond the HTTPException type itself.
 """
 import uuid
+from datetime import date
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.db.models.grade import Grade
 from app.db.models.subject import Subject
 from app.db.models.user import User
 from app.schemas.assignment import AssignmentDetailResponse, AssignmentListItem
+from app.schemas.exam_session import ExamSessionResponse
 from app.schemas.common import PaginatedResponse
 from app.schemas.library import CurriculumDocumentResponse
 from app.schemas.notification import NotificationResponse, UnreadCountResponse
@@ -20,10 +22,9 @@ from app.schemas.progress import (
     DashboardResponse,
     KnowledgeGapResponse,
     KnowledgeGapSummary,
-    KnowledgeGapSummary,
     StudentProgressResponse,
 )
-from app.schemas.quiz import MicroQuizSchema, QuizQuestionSchema
+from app.schemas.quiz import MicroQuizSchema, MicroQuizSubmitResponse, QuizQuestionSchema
 from app.schemas.submission import (
     SubmissionDetailResponse,
     SubmissionFeedbackResponse,
@@ -32,11 +33,19 @@ from app.schemas.submission import (
 from app.schemas.subject import EnrollmentResponse, SubjectResponse
 from app.schemas.user import MessageResponse, UserResponse
 from app.services import (
+    chat_tutor_service,
+    exam_session_service,
     library_service,
     notification_service,
     student_service,
     submission_service,
     quiz_service,
+)
+from app.schemas.chat_tutor import (
+    AiTutorChatRequest,
+    AiTutorChatResponse,
+    AiTutorSessionDetailResponse,
+    AiTutorSessionItem,
 )
 
 
@@ -177,6 +186,7 @@ def list_assignments(
     student_id: uuid.UUID,
     subject_id: "int | None",
     status_filter: "str | None",
+    due_on: date | None,
     page: int,
     per_page: int,
 ) -> PaginatedResponse[AssignmentListItem]:
@@ -186,6 +196,7 @@ def list_assignments(
         student_id,
         subject_id=subject_id,
         status_filter=status_filter,
+        due_on=due_on,
         page=page,
         per_page=per_page,
     )
@@ -199,6 +210,22 @@ def get_assignment(
     return AssignmentDetailResponse(
         **submission_service.get_assignment_detail(db, student_id, assignment_id)
     )
+
+
+def start_exam_session(
+    db: Session, student_id: uuid.UUID, assignment_id: uuid.UUID
+) -> ExamSessionResponse:
+    """Persist (or resume) an exam session when the student starts the timer."""
+    data = exam_session_service.start_exam_session(db, student_id, assignment_id)
+    return ExamSessionResponse(**data)
+
+
+def terminate_exam_session(
+    db: Session, student_id: uuid.UUID, session_id: uuid.UUID
+) -> ExamSessionResponse:
+    """Mark an in-progress exam session as abandoned."""
+    data = exam_session_service.terminate_exam_session(db, student_id, session_id)
+    return ExamSessionResponse(**data)
 
 
 async def create_submission(
@@ -226,6 +253,7 @@ def list_submissions(
     student_id: uuid.UUID,
     subject_id: "int | None",
     status_filter: "str | None",
+    search: "str | None",
     page: int,
     per_page: int,
 ) -> PaginatedResponse[SubmissionListItem]:
@@ -235,6 +263,7 @@ def list_submissions(
         student_id,
         subject_id=subject_id,
         status_filter=status_filter,
+        search=search,
         page=page,
         per_page=per_page,
     )
@@ -476,3 +505,101 @@ def get_quiz_detail(
             detail="Quiz not found",
         )
     return MicroQuizSchema.from_orm(quiz)
+
+
+def submit_micro_quiz(
+    db: Session,
+    student_id: uuid.UUID,
+    quiz_id: uuid.UUID,
+    answers: list[int | None],
+) -> MicroQuizSubmitResponse:
+    """Score a micro-quiz from stored questions and optionally resolve the linked knowledge gap."""
+    try:
+        result = quiz_service.submit_micro_quiz_answers(db, student_id, quiz_id, answers)
+    except ValueError as exc:
+        msg = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if msg == "Quiz not found"
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=msg) from exc
+    return MicroQuizSubmitResponse(
+        quiz=MicroQuizSchema.from_orm(result["quiz"]),
+        correct_count=result["correct_count"],
+        total_questions=result["total_questions"],
+        knowledge_gap_resolved=result["knowledge_gap_resolved"],
+    )
+
+
+def _student_grade_level(db: Session, student_id: uuid.UUID) -> int:
+    user = db.query(User).filter(User.user_id == student_id).first()
+    if not user or not user.grade_id:
+        return 9
+    gr = db.query(Grade).filter(Grade.grade_id == user.grade_id).first()
+    return gr.grade_level if gr else 9
+
+
+async def ai_tutor_chat(
+    db: Session,
+    student_id: uuid.UUID,
+    data: AiTutorChatRequest,
+) -> AiTutorChatResponse:
+    """RAG reply + optional persistence to ``chat_history``."""
+    grade_level = _student_grade_level(db, student_id)
+    try:
+        raw = await chat_tutor_service.tutor_chat_turn(
+            db,
+            student_id,
+            data.query,
+            subject_id=data.subject_id,
+            history_id=data.history_id,
+            grade=grade_level,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return AiTutorChatResponse(**raw)
+
+
+def list_ai_tutor_sessions(
+    db: Session,
+    student_id: uuid.UUID,
+    page: int,
+    per_page: int,
+    subject_id: int | None = None,
+    search: str | None = None,
+) -> PaginatedResponse[AiTutorSessionItem]:
+    items, total = chat_tutor_service.list_tutor_sessions(
+        db,
+        student_id,
+        page,
+        per_page,
+        subject_id=subject_id,
+        search=search,
+    )
+    total_pages = _calculate_total_pages(total, per_page)
+    return PaginatedResponse(
+        items=[AiTutorSessionItem(**x) for x in items],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
+
+
+def get_ai_tutor_session(
+    db: Session,
+    student_id: uuid.UUID,
+    history_id: uuid.UUID,
+) -> AiTutorSessionDetailResponse:
+    try:
+        raw = chat_tutor_service.get_tutor_session_detail(db, student_id, history_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return AiTutorSessionDetailResponse(**raw)

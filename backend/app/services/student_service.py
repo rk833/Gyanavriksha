@@ -249,6 +249,15 @@ def get_knowledge_gaps(
 
     results = []
     for gap, subject in rows:
+        mq = (
+            db.query(MicroQuiz)
+            .filter(
+                MicroQuiz.gap_id == gap.gap_id,
+                MicroQuiz.student_id == user_id,
+            )
+            .order_by(MicroQuiz.created_at.desc())
+            .first()
+        )
         results.append({
             "gap_id": gap.gap_id,
             "concept_name": gap.concept_name,
@@ -258,6 +267,8 @@ def get_knowledge_gaps(
             "detected_at": gap.detected_at,
             "subject_id": subject.subject_id,
             "subject_name": subject.subject_name,
+            "quiz_id": mq.quiz_id if mq else None,
+            "quiz_status": mq.status.value if mq else None,
         })
 
     return results, total
@@ -375,6 +386,50 @@ def get_student_progress(
         if previous > 0:
             trend_percentage = round(((recent - previous) / previous) * 100, 1)
 
+    recent_gap_rows = (
+        db.query(KnowledgeGap, Subject)
+        .join(Subject, KnowledgeGap.subject_id == Subject.subject_id)
+        .filter(KnowledgeGap.student_id == user_id)
+        .order_by(KnowledgeGap.detected_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    recent_knowledge_gaps: list[dict] = []
+    for gap, subject in recent_gap_rows:
+        mq = (
+            db.query(MicroQuiz)
+            .filter(
+                MicroQuiz.gap_id == gap.gap_id,
+                MicroQuiz.student_id == user_id,
+            )
+            .order_by(MicroQuiz.created_at.desc())
+            .first()
+        )
+        recent_knowledge_gaps.append({
+            "gap_id": gap.gap_id,
+            "concept_name": gap.concept_name,
+            "topic_tag": gap.topic_tag,
+            "subject_id": gap.subject_id,
+            "subject_name": subject.subject_name,
+            "is_resolved": gap.is_resolved,
+            "recurrence_count": gap.recurrence_count,
+            "detected_at": gap.detected_at,
+            "quiz_id": mq.quiz_id if mq else None,
+            "quiz_status": mq.status.value if mq else None,
+        })
+
+    improvement_tips: list[str] = []
+    for gap, subject in recent_gap_rows:
+        if gap.is_resolved:
+            continue
+        if len(improvement_tips) >= 5:
+            break
+        improvement_tips.append(
+            f'Strengthen "{gap.concept_name}" in {subject.subject_name}. '
+            "Use Micro Quiz for targeted practice when a quiz is linked to this gap."
+        )
+
     return {
         "average_score": round(avg_score, 1) if avg_score else None,
         "trend_percentage": trend_percentage,
@@ -383,5 +438,6 @@ def get_student_progress(
         "score_progression": score_progression,
         "topic_difficulty": topic_difficulty,
         "at_risk_flag": at_risk is not None,
-        "improvement_tips": [],  # populated by AI service in Sprint 6
+        "improvement_tips": improvement_tips,
+        "recent_knowledge_gaps": recent_knowledge_gaps,
     }

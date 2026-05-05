@@ -18,6 +18,9 @@ class AssignmentInput(BaseModel):
     topic_tags: list[str] | None = None
     max_score: float = Field(100.0, gt=0)
     is_exam_mode: bool = False
+    exam_duration_minutes: int | None = Field(None, ge=1, le=600)
+    exam_max_pauses: int | None = Field(None, ge=0, le=30)
+    exam_strict_proctor: bool = False
 
 
 class AssignmentUpdateInput(BaseModel):
@@ -29,6 +32,9 @@ class AssignmentUpdateInput(BaseModel):
     topic_tags: list[str] | None = None
     max_score: float | None = Field(None, gt=0)
     is_exam_mode: bool | None = None
+    exam_duration_minutes: int | None = Field(None, ge=1, le=600)
+    exam_max_pauses: int | None = Field(None, ge=0, le=30)
+    exam_strict_proctor: bool | None = None
 
 
 class FeedbackOverrideInput(BaseModel):

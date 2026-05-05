@@ -14,6 +14,7 @@ class RagQueryInput(BaseModel):
     user_type: str = Field(..., description="'admin' | 'instructor' | 'student'")
     query: str = Field(..., min_length=1)
     grade: int | None = None
+    subject: str | None = None
     instructor_id: str | None = None
     class_id: str | None = None
     student_id: str | None = None

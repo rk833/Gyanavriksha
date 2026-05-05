@@ -66,7 +66,7 @@ function GradeFolder({ grade, open, onToggle }) {
               <FileText className="w-4 h-4 text-slate-400 shrink-0" />
               <span className="flex-1 truncate">{ns.name}</span>
               <span className="text-xs bg-primary-light text-primary px-2 py-0.5 rounded-full font-medium">
-                {ns.chunk_count?.toLocaleString() ?? 0} chunks
+                {(ns.chunk_count ?? 0).toLocaleString()} chunks · {(ns.doc_count ?? 0).toLocaleString()} docs
               </span>
             </div>
           ))}

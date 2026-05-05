@@ -9,6 +9,8 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.db.models.grade import Grade
+from app.db.models.subject import Subject
 from app.schemas.common import PaginatedResponse
 from app.schemas.instructor import (
     AtRiskStudentResponse,
@@ -25,6 +27,8 @@ from app.schemas.instructor import (
     VelocityAnalyticsResponse,
 )
 from app.services import instructor_service
+from app.services import rag_service
+from app.shared.source_enum import EmbeddingStatus
 
 
 def _calculate_total_pages(total: int, per_page: int) -> int:
@@ -388,6 +392,35 @@ async def upload_document(
     result = instructor_service.upload_document(
         db, instructor_id, subject_id, file.filename, content, doc_type
     )
+    doc_id = result["doc_id"]
+
+    grade_level, subject_name = (
+        db.query(Grade.grade_level, Subject.subject_name)
+        .join(Subject, Subject.grade_id == Grade.grade_id)
+        .filter(Subject.subject_id == subject_id)
+        .first()
+        or (None, None)
+    )
+    try:
+        rag_response = await rag_service.upload_document_bytes_to_rag(
+            file_name=file.filename,
+            file_bytes=content,
+            content_type=file.content_type,
+            user_type="instructor",
+            submitted_by=instructor_id,
+            grade=grade_level,
+            subject=subject_name,
+            instructor_id=instructor_id,
+            class_id=str(subject_id),
+        )
+        instructor_service.set_document_embedding_status(
+            db,
+            doc_id,
+            EmbeddingStatus.DONE,
+            chroma_collection_id=rag_response.get("collection"),
+        )
+    except HTTPException:
+        instructor_service.set_document_embedding_status(db, doc_id, EmbeddingStatus.FAILED)
     return KnowledgeBaseDocumentResponse(**result)
 
 

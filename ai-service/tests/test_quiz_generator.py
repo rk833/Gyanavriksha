@@ -1,6 +1,7 @@
+import json
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
-from app.quiz_generator.service import QuizGeneratorService, GeneratedQuiz, GeneratedQuestion
+from app.quiz_generator.service import QuizGeneratorService, GeneratedQuiz, GeneratedQuestion, questions_similar
 from app.quiz_generator.gap_detector import QuizGapDetector, GapAnalysisResult, IdentifiedGap
 
 @pytest.mark.asyncio
@@ -17,36 +18,38 @@ async def test_quiz_generator_service_success():
     ]
 
     with patch('app.quiz_generator.service.ChatVertexAI'), \
-         patch('app.quiz_generator.service.RAGService') as mock_rag_cls, \
-         patch('app.quiz_generator.service.JsonOutputParser') as mock_parser_cls:
-        
-        # Mock RAG service
+         patch('app.quiz_generator.service.RAGService') as mock_rag_cls:
+
         mock_rag_instance = MagicMock()
         mock_rag_instance.query.return_value = {
             "context_sources": [{"text": "Photosynthesis is the process by which plants make food."}]
         }
         mock_rag_cls.return_value = mock_rag_instance
 
-        # Mock parser
-        mock_parser = MagicMock()
-        mock_parser.get_format_instructions.return_value = "{}"
-        mock_parser_cls.return_value = mock_parser
-
         service = QuizGeneratorService()
 
-        # Build a mock chain: prompt | llm | parser → chain.ainvoke(...)
         mock_chain = MagicMock()
-        mock_chain.ainvoke = AsyncMock(return_value=mock_questions)
-        mock_chain.__or__ = MagicMock(return_value=mock_chain)
-
+        mock_chain.ainvoke = AsyncMock(return_value=json.dumps(mock_questions))
+        # chain = (prompt | llm) | str_parser
+        intermediate = MagicMock()
+        intermediate.__or__ = MagicMock(return_value=mock_chain)
         service.prompt = MagicMock()
-        service.prompt.__or__ = MagicMock(return_value=mock_chain)
+        service.prompt.__or__ = MagicMock(return_value=intermediate)
 
         quiz = await service.generate_quiz(concept="Photosynthesis", num_questions=1)
 
         assert quiz.concept_targeted == "Photosynthesis"
         assert len(quiz.questions) == 1
         assert quiz.questions[0].question_text == "What is photosynthesis?"
+
+def test_questions_similar_flowchart_paraphrases():
+    a = "Which symbol is typically used to indicate the termination of a process in a flowchart?"
+    b = "In a flowchart, which symbol is used to indicate the start or end point of a program?"
+    assert questions_similar(a, b)
+
+    c = "What does a parallelogram represent in a standard flowchart?"
+    assert not questions_similar(a, c)
+
 
 @pytest.mark.asyncio
 async def test_gap_detector_success():

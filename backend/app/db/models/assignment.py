@@ -18,6 +18,9 @@ class Assignment(Base):
     topic_tags = Column(ARRAY(String), nullable=True)
     max_score = Column(Float, nullable=False, default=100.0, server_default="100.0")
     is_exam_mode = Column(Boolean, nullable=False, default=False, server_default="false")
+    exam_duration_minutes = Column(Integer, nullable=True)
+    exam_max_pauses = Column(Integer, nullable=True)
+    exam_strict_proctor = Column(Boolean, nullable=False, default=False, server_default="false")
     due_date = Column(DateTime(timezone=True), nullable=True)
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(
