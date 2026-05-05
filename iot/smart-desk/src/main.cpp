@@ -142,7 +142,7 @@ static void publishSensorTelemetry(unsigned long nowMs) {
     lightDoc["source"] = g_ledSource;
     lightDoc["led_on_threshold"] = LDR_LED_ON_THRESHOLD;
     lightDoc["led_off_threshold"] = LDR_LED_OFF_THRESHOLD;
-    char lightPayload[256];
+    char lightPayload[384];
     serializeJson(lightDoc, lightPayload);
     mqttPublish(TOPIC_LIGHT, lightPayload);
 
@@ -159,7 +159,7 @@ static void publishSensorTelemetry(unsigned long nowMs) {
     distDoc["event_type"] = g_distanceEventPending ? g_distanceEventTypePending : "none";
     distDoc["too_close_threshold"] = DISTANCE_TOO_CLOSE_CM;
     distDoc["presence_max_threshold"] = DISTANCE_PRESENT_MAX_CM;
-    char distancePayload[256];
+    char distancePayload[768];
     serializeJson(distDoc, distancePayload);
     mqttPublish(TOPIC_DISTANCE, distancePayload);
 

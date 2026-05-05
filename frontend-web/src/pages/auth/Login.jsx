@@ -28,13 +28,21 @@ export default function Login() {
 
   const from = location.state?.from?.pathname;
 
-  const getRedirectPath = (role) => {
+  const getRoleDashboardPath = (role) => {
     const dashboards = {
       student: '/student/dashboard',
       instructor: '/instructor/dashboard',
       admin: '/admin/dashboard',
     };
-    return from || dashboards[role] || '/login';
+    return dashboards[role] || '/login';
+  };
+
+  const getRedirectPath = (role) => {
+    const dashboard = getRoleDashboardPath(role);
+    if (!from) return dashboard;
+    const rolePrefix = `/${role}`;
+    // Only honor "from" when it belongs to the same role scope.
+    return from.startsWith(rolePrefix) ? from : dashboard;
   };
 
   const validate = () => {
@@ -59,13 +67,13 @@ export default function Login() {
         toast('Enter your 2FA code to continue');
       } else {
         const actualRole = data.user?.role;
-        if (actualRole && actualRole !== selectedRole) {
-          toast.error('Invalid email or password for the selected role.');
+        if (!actualRole) {
+          toast.error('Could not determine account role');
           await logout();
           return;
         }
         toast.success('Welcome back!');
-        navigate(getRedirectPath(actualRole || selectedRole), { replace: true });
+        navigate(getRedirectPath(actualRole), { replace: true });
       }
     } catch (err) {
       const detail = err.response?.data?.detail || 'Login failed';
@@ -85,15 +93,15 @@ export default function Login() {
     try {
       const data = await complete2FA(twoFAUserId, twoFACode);
       const actualRole = data.user?.role;
-      if (actualRole && actualRole !== selectedRole) {
-        toast.error('Invalid email or password for the selected role.');
+      if (!actualRole) {
+        toast.error('Could not determine account role');
         await logout();
         setNeeds2FA(false);
         setTwoFACode('');
         return;
       }
       toast.success('Welcome back!');
-      navigate(getRedirectPath(actualRole || selectedRole), { replace: true });
+      navigate(getRedirectPath(actualRole), { replace: true });
     } catch (err) {
       const detail = err.response?.data?.detail || 'Invalid code';
       toast.error(detail);

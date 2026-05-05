@@ -15,6 +15,7 @@ from app.api.rag.presentation.router import router as rag_router
 from app.api.grading.presentation.router import router as grading_router
 from app.api.quiz.presentation.router import router as quiz_router
 from app.api.ws.student_performance import router as student_performance_ws_router
+from app.api.ws.iot_session import router as iot_session_ws_router
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.db.models.system_setting import SystemSetting
@@ -73,6 +74,29 @@ app.include_router(rag_router)
 app.include_router(grading_router)
 app.include_router(quiz_router)
 app.include_router(student_performance_ws_router)
+app.include_router(iot_session_ws_router)
+
+
+@app.on_event("startup")
+def _startup_mqtt() -> None:
+    """Launch the MQTT subscriber daemon thread on server startup."""
+    try:
+        from app.mqtt.client import start_mqtt_subscriber
+        start_mqtt_subscriber()
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception(
+            "MQTT subscriber failed to start — IoT features will be unavailable"
+        )
+
+
+@app.on_event("shutdown")
+def _shutdown_mqtt() -> None:
+    try:
+        from app.mqtt.client import stop_mqtt_subscriber
+        stop_mqtt_subscriber()
+    except Exception:
+        pass
 
 
 @app.get("/health")

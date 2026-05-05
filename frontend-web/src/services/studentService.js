@@ -159,7 +159,7 @@ export const getProfile = () => api.get('/api/students/profile');
 /**
  * Update the current student's profile (name and/or image URL).
  *
- * @param {{ full_name?: string, profile_image_url?: string }} data
+ * @param {{ full_name?: string, profile_image_url?: string, notification_preferences?: { grading_updates?: boolean, quiz_reminders?: boolean, posture_connection?: boolean } }} data
  * @returns {Promise<import('./types').UserResponse>}
  */
 export const updateProfile = (data) => api.patch('/api/students/profile', data);
@@ -214,6 +214,22 @@ export const getLibraryDocuments = (params = {}) =>
  * @returns {Promise<import('./types').CurriculumDocumentResponse>}
  */
 export const getLibraryDocument = (id) => api.get(`/api/students/library/${id}`);
+
+/**
+ * Resume a paused exam session (e.g. after IoT auto-pause).
+ *
+ * @param {string} sessionId - ExamSession UUID.
+ * @returns {Promise<import('./types').ExamSessionResponse>}
+ */
+export const resumeExamSession = (sessionId) =>
+  api.post(`/api/students/exam-sessions/${sessionId}/resume`);
+
+/**
+ * Fetch IoT device status and latest sensor readings for the current student.
+ *
+ * @returns {Promise<{devices: object[], latest_distance_cm: number|null, latest_ldr_value: number|null}>}
+ */
+export const getIotStatus = () => api.get('/api/students/iot/status');
 
 /**
  * Download a curriculum document as a file blob (uses auth token automatically).

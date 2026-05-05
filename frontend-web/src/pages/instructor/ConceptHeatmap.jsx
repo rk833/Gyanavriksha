@@ -1,13 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Grid3X3,
   Loader2,
   Lightbulb,
-  AlertCircle,
   Users,
+  ListFilter,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getConceptHeatmap, getSubjects } from '../../services/instructorService';
+
+function matchesStruggleBand(pct, band) {
+  if (band === 'all') return true;
+  if (band === 'high') return pct >= 60;
+  if (band === 'medium') return pct >= 40 && pct < 60;
+  if (band === 'low') return pct > 0 && pct < 40;
+  if (band === 'none') return pct === 0;
+  return true;
+}
 
 function SeverityCell({ percentage }) {
   const intensity =
@@ -29,6 +38,9 @@ export default function ConceptHeatmapPage() {
   const [subjects, setSubjects] = useState([]);
   const [subjectId, setSubjectId] = useState('');
   const [timeframe, setTimeframe] = useState('all');
+  const [tableSubject, setTableSubject] = useState('');
+  const [struggleBand, setStruggleBand] = useState('all');
+  const [tableQuery, setTableQuery] = useState('');
 
   useEffect(() => {
     getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {});
@@ -43,6 +55,50 @@ export default function ConceptHeatmapPage() {
       .catch(() => toast.error('Failed to load heatmap'))
       .finally(() => setLoading(false));
   }, [subjectId, timeframe]);
+
+  useEffect(() => {
+    setTableSubject('');
+    setStruggleBand('all');
+    setTableQuery('');
+  }, [subjectId, timeframe]);
+
+  const subjectOptionsInData = useMemo(() => {
+    const names = new Set(
+      (data?.heatmap_entries ?? []).map((e) => e.subject_name).filter(Boolean),
+    );
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [data?.heatmap_entries]);
+
+  const filteredHeatmapEntries = useMemo(() => {
+    const rows = data?.heatmap_entries ?? [];
+    const q = tableQuery.trim().toLowerCase();
+    return rows.filter((entry) => {
+      if (tableSubject && entry.subject_name !== tableSubject) return false;
+      if (!matchesStruggleBand(Number(entry.struggle_percentage) || 0, struggleBand)) return false;
+      if (q) {
+        const blob = `${entry.topic_tag ?? ''} ${entry.concept_name ?? ''} ${entry.subject_name ?? ''}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [data?.heatmap_entries, tableSubject, struggleBand, tableQuery]);
+
+  const filteredEmergingFriction = useMemo(() => {
+    const items = data?.emerging_friction ?? [];
+    const q = tableQuery.trim().toLowerCase();
+    return items.filter((item) => {
+      if (tableSubject && item.subject !== tableSubject) return false;
+      if (!matchesStruggleBand(Number(item.percentage) || 0, struggleBand)) return false;
+      if (q) {
+        const blob = `${item.topic ?? ''} ${item.subject ?? ''}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [data?.emerging_friction, tableSubject, struggleBand, tableQuery]);
+
+  const hasActiveTableFilters =
+    Boolean(tableSubject) || struggleBand !== 'all' || Boolean(tableQuery.trim());
 
   if (loading) {
     return (
@@ -101,14 +157,20 @@ export default function ConceptHeatmapPage() {
 
       {/* Emerging Friction */}
       {data?.emerging_friction?.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-          {data.emerging_friction.map((item, idx) => (
-            <div key={idx} className="bg-primary-dark rounded-xl p-5 text-white">
-              <span className="text-3xl font-bold">{item.percentage.toFixed(0)}%</span>
-              <p className="text-white/90 text-sm font-medium mt-2">{item.topic}</p>
-              <p className="text-white/50 text-xs">{item.subject}</p>
+        <div className="mb-8">
+          {filteredEmergingFriction.length === 0 && hasActiveTableFilters ? (
+            <p className="text-sm text-slate-500 mb-4">No emerging friction cards match the current filters.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {filteredEmergingFriction.map((item, idx) => (
+                <div key={`${item.topic}-${item.subject}-${idx}`} className="bg-primary-dark rounded-xl p-5 text-white">
+                  <span className="text-3xl font-bold">{item.percentage.toFixed(0)}%</span>
+                  <p className="text-white/90 text-sm font-medium mt-2">{item.topic}</p>
+                  <p className="text-white/50 text-xs">{item.subject}</p>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -117,59 +179,119 @@ export default function ConceptHeatmapPage() {
         <div className="bg-white rounded-xl border border-primary-light p-6">
           <h2 className="text-lg font-bold text-primary-dark mb-4">All Concept Areas</h2>
 
+          <div className="mb-4 flex flex-col lg:flex-row flex-wrap items-stretch lg:items-center gap-2 lg:gap-3 p-3 bg-slate-50/80 rounded-lg border border-slate-100">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
+              <ListFilter className="w-3.5 h-3.5" />
+              Filter
+            </div>
+            {!subjectId && subjectOptionsInData.length > 1 ? (
+              <select
+                value={tableSubject}
+                onChange={(e) => setTableSubject(e.target.value)}
+                className="flex-1 min-w-[140px] lg:max-w-[220px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white text-primary-dark focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+                aria-label="Filter by subject"
+              >
+                <option value="">All subjects (in data)</option>
+                {subjectOptionsInData.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            ) : null}
+            <select
+              value={struggleBand}
+              onChange={(e) => setStruggleBand(e.target.value)}
+              className="flex-1 min-w-[140px] lg:max-w-[200px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white text-primary-dark focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Filter by struggle level"
+            >
+              <option value="all">All struggle levels</option>
+              <option value="high">High (60%+)</option>
+              <option value="medium">Medium (40–59%)</option>
+              <option value="low">Lower (1–39%)</option>
+              <option value="none">No struggle (0%)</option>
+            </select>
+            <input
+              type="search"
+              value={tableQuery}
+              onChange={(e) => setTableQuery(e.target.value)}
+              placeholder="Search topic, concept, subject…"
+              className="flex-1 min-w-[180px] border border-primary-light rounded-lg px-3 py-2 text-sm bg-white text-primary-dark placeholder:text-slate-400 focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Search heatmap rows"
+            />
+            {hasActiveTableFilters ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTableSubject('');
+                  setStruggleBand('all');
+                  setTableQuery('');
+                }}
+                className="text-xs font-medium text-primary hover:underline whitespace-nowrap px-1 py-2 lg:py-0"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-primary-light">
-                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Topic</th>
-                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Concept</th>
-                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Struggle %</th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Affected</th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Avg Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.heatmap_entries.map((entry, idx) => {
-                  const rowColor =
-                    entry.struggle_percentage >= 60 ? 'bg-red-50' :
-                    entry.struggle_percentage >= 40 ? 'bg-amber-50' :
-                    '';
-                  return (
-                    <tr key={idx} className={`border-b border-slate-50 hover:bg-slate-50/50 ${rowColor}`}>
-                      <td className="py-3 px-3">
-                        <span className="text-sm font-semibold text-primary-dark">{entry.topic_tag}</span>
-                      </td>
-                      <td className="py-3 px-3 text-sm text-slate-600">{entry.concept_name}</td>
-                      <td className="py-3 px-3 text-sm text-slate-500">{entry.subject_name}</td>
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                entry.struggle_percentage >= 60 ? 'bg-red-500' :
-                                entry.struggle_percentage >= 40 ? 'bg-amber-500' :
-                                'bg-yellow-400'
-                              }`}
-                              style={{ width: `${Math.min(entry.struggle_percentage, 100)}%` }}
-                            />
+            {filteredHeatmapEntries.length === 0 ? (
+              <p className="py-10 text-center text-sm text-slate-500">No rows match your filters.</p>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-primary-light">
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Topic</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Concept</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
+                    <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Struggle %</th>
+                    <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Affected</th>
+                    <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Avg Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredHeatmapEntries.map((entry, idx) => {
+                    const rowColor =
+                      entry.struggle_percentage >= 60 ? 'bg-red-50' :
+                      entry.struggle_percentage >= 40 ? 'bg-amber-50' :
+                      '';
+                    return (
+                      <tr key={`${entry.subject_name}-${entry.topic_tag}-${entry.concept_name}-${idx}`} className={`border-b border-slate-50 hover:bg-slate-50/50 ${rowColor}`}>
+                        <td className="py-3 px-3">
+                          <span className="text-sm font-semibold text-primary-dark">{entry.topic_tag}</span>
+                        </td>
+                        <td className="py-3 px-3 text-sm text-slate-600">{entry.concept_name}</td>
+                        <td className="py-3 px-3 text-sm text-slate-500">{entry.subject_name}</td>
+                        <td className="py-3 px-3 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${
+                                  entry.struggle_percentage >= 60 ? 'bg-red-500' :
+                                  entry.struggle_percentage >= 40 ? 'bg-amber-500' :
+                                  'bg-yellow-400'
+                                }`}
+                                style={{ width: `${Math.min(entry.struggle_percentage, 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-semibold text-slate-600">{entry.struggle_percentage.toFixed(1)}%</span>
                           </div>
-                          <span className="text-xs font-semibold text-slate-600">{entry.struggle_percentage.toFixed(1)}%</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        <span className="flex items-center justify-center gap-1 text-sm text-slate-600">
-                          <Users className="w-3.5 h-3.5" /> {entry.affected_student_count}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 text-center text-sm font-semibold text-primary-dark">
-                        {entry.avg_score != null ? `${entry.avg_score}%` : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <span className="flex items-center justify-center gap-1 text-sm text-slate-600">
+                            <Users className="w-3.5 h-3.5" /> {entry.affected_student_count}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center text-sm font-semibold text-primary-dark">
+                          {entry.avg_score != null ? `${entry.avg_score}%` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="mt-3 text-[11px] text-slate-400">
+            Showing {filteredHeatmapEntries.length} of {data.heatmap_entries.length} concept{data.heatmap_entries.length === 1 ? '' : 's'}
           </div>
         </div>
       ) : (

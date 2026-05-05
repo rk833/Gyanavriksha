@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   TrendingUp,
   TrendingDown,
   Minus,
   BarChart3,
   Loader2,
-  AlertCircle,
+  ListFilter,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getVelocityAnalytics, getSubjects } from '../../services/instructorService';
@@ -34,6 +34,10 @@ export default function VelocityAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [subjects, setSubjects] = useState([]);
   const [subjectId, setSubjectId] = useState('');
+  const [assignQuery, setAssignQuery] = useState('');
+  const [studentQuery, setStudentQuery] = useState('');
+  const [trendFilter, setTrendFilter] = useState('all');
+  const [velocityBand, setVelocityBand] = useState('all');
 
   useEffect(() => {
     getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {});
@@ -48,6 +52,40 @@ export default function VelocityAnalyticsPage() {
       .catch(() => toast.error('Failed to load analytics'))
       .finally(() => setLoading(false));
   }, [subjectId]);
+
+  useEffect(() => {
+    setAssignQuery('');
+    setStudentQuery('');
+    setTrendFilter('all');
+    setVelocityBand('all');
+  }, [subjectId]);
+
+  const filteredCompletion = useMemo(() => {
+    const rows = data?.completion_distribution ?? [];
+    const q = assignQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((item) => (item.assignment_title || '').toLowerCase().includes(q));
+  }, [data?.completion_distribution, assignQuery]);
+
+  const filteredVelocities = useMemo(() => {
+    const rows = data?.student_velocities ?? [];
+    const q = studentQuery.trim().toLowerCase();
+    return rows.filter((s) => {
+      const vs = Number(s.velocity_score) || 0;
+      if (velocityBand === 'high' && vs < 7) return false;
+      if (velocityBand === 'mid' && (vs < 4 || vs >= 7)) return false;
+      if (velocityBand === 'low' && vs >= 4) return false;
+      const tr = s.trend || 'stable';
+      if (trendFilter === 'up' && tr !== 'up') return false;
+      if (trendFilter === 'down' && tr !== 'down') return false;
+      if (trendFilter === 'stable' && tr !== 'stable') return false;
+      if (q && !(s.student_name || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [data?.student_velocities, studentQuery, trendFilter, velocityBand]);
+
+  const hasVelocityFilters =
+    Boolean(studentQuery.trim()) || trendFilter !== 'all' || velocityBand !== 'all';
 
   if (loading) {
     return (
@@ -105,22 +143,52 @@ export default function VelocityAnalyticsPage() {
       {data?.completion_distribution?.length > 0 && (
         <div className="bg-white rounded-xl border border-primary-light p-6 mb-8">
           <h2 className="text-lg font-bold text-primary-dark mb-4">Assignment Completion Rate</h2>
-          <div className="space-y-3">
-            {data.completion_distribution.map((item, idx) => (
-              <div key={idx} className="flex items-center gap-4">
-                <span className="text-sm text-primary-dark w-48 truncate">{item.assignment_title}</span>
-                <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-primary rounded-full transition-all"
-                    style={{ width: `${item.completion_percentage}%` }}
-                  />
-                </div>
-                <span className="text-xs font-semibold text-slate-600 w-20 text-right">
-                  {item.submitted}/{item.total} ({item.completion_percentage}%)
-                </span>
-              </div>
-            ))}
+          <div className="mb-4 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 p-3 bg-slate-50/80 rounded-lg border border-slate-100">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
+              <ListFilter className="w-3.5 h-3.5" />
+              Filter
+            </div>
+            <input
+              type="search"
+              value={assignQuery}
+              onChange={(e) => setAssignQuery(e.target.value)}
+              placeholder="Search assignment title…"
+              className="flex-1 min-w-[200px] border border-primary-light rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Filter completion list"
+            />
+            {assignQuery.trim() ? (
+              <button
+                type="button"
+                onClick={() => setAssignQuery('')}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Clear
+              </button>
+            ) : null}
           </div>
+          {filteredCompletion.length === 0 ? (
+            <p className="text-sm text-slate-500 py-4 text-center">No assignments match your search.</p>
+          ) : (
+            <div className="space-y-3">
+              {filteredCompletion.map((item, idx) => (
+                <div key={`${item.assignment_title}-${idx}`} className="flex items-center gap-4">
+                  <span className="text-sm text-primary-dark w-48 truncate" title={item.assignment_title}>{item.assignment_title}</span>
+                  <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all"
+                      style={{ width: `${item.completion_percentage}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-semibold text-slate-600 w-20 text-right">
+                    {item.submitted}/{item.total} ({item.completion_percentage}%)
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] text-slate-400 mt-3">
+            Showing {filteredCompletion.length} of {data.completion_distribution.length} assignments
+          </p>
         </div>
       )}
 
@@ -129,7 +197,60 @@ export default function VelocityAnalyticsPage() {
         <h2 className="text-lg font-bold text-primary-dark mb-4">Student Velocity Rankings</h2>
 
         {data?.student_velocities?.length > 0 ? (
-          <div className="overflow-x-auto">
+          <>
+            <div className="mb-4 flex flex-col lg:flex-row flex-wrap items-stretch lg:items-center gap-2 lg:gap-3 p-3 bg-slate-50/80 rounded-lg border border-slate-100">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
+                <ListFilter className="w-3.5 h-3.5" />
+                Filter
+              </div>
+              <input
+                type="search"
+                value={studentQuery}
+                onChange={(e) => setStudentQuery(e.target.value)}
+                placeholder="Search student name…"
+                className="flex-1 min-w-[160px] border border-primary-light rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+                aria-label="Search students"
+              />
+              <select
+                value={trendFilter}
+                onChange={(e) => setTrendFilter(e.target.value)}
+                className="flex-1 min-w-[120px] lg:max-w-[160px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white focus:ring-2 focus:ring-primary/25 outline-none"
+                aria-label="Trend"
+              >
+                <option value="all">All trends</option>
+                <option value="up">Up</option>
+                <option value="down">Down</option>
+                <option value="stable">Stable</option>
+              </select>
+              <select
+                value={velocityBand}
+                onChange={(e) => setVelocityBand(e.target.value)}
+                className="flex-1 min-w-[120px] lg:max-w-[180px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white focus:ring-2 focus:ring-primary/25 outline-none"
+                aria-label="Velocity band"
+              >
+                <option value="all">All velocity</option>
+                <option value="high">High (7–10)</option>
+                <option value="mid">Mid (4–6.9)</option>
+                <option value="low">Low (&lt;4)</option>
+              </select>
+              {hasVelocityFilters ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStudentQuery('');
+                    setTrendFilter('all');
+                    setVelocityBand('all');
+                  }}
+                  className="text-xs font-medium text-primary hover:underline whitespace-nowrap px-1"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
+            <div className="overflow-x-auto">
+              {filteredVelocities.length === 0 ? (
+                <p className="text-sm text-slate-500 py-8 text-center">No students match your filters.</p>
+              ) : (
             <table className="w-full">
               <thead>
                 <tr className="border-b border-primary-light">
@@ -142,7 +263,7 @@ export default function VelocityAnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.student_velocities.map((s, idx) => (
+                {filteredVelocities.map((s, idx) => (
                   <tr key={s.student_id} className="border-b border-slate-50 hover:bg-slate-50/50">
                     <td className="py-3 px-3">
                       <span className={`w-6 h-6 rounded-full inline-flex items-center justify-center text-xs font-bold ${
@@ -184,7 +305,12 @@ export default function VelocityAnalyticsPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-3">
+              Showing {filteredVelocities.length} of {data.student_velocities.length} students (rank is within filtered list)
+            </p>
+          </>
         ) : (
           <div className="py-8 text-center">
             <BarChart3 className="w-12 h-12 text-slate-300 mx-auto mb-4" />

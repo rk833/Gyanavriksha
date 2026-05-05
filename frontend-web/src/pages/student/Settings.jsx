@@ -73,6 +73,12 @@ export default function StudentSettings() {
     if (profile) {
       setFullName(profile.full_name || '');
       setTwoFaEnabled(profile.totp_enabled || false);
+      const p = profile.notification_preferences || {};
+      setAlerts({
+        grading_updates: p.grading_updates !== false,
+        quiz_reminders: p.quiz_reminders !== false,
+        posture_connection: p.posture_connection === true,
+      });
     }
   }, [profile]);
 
@@ -123,10 +129,20 @@ export default function StudentSettings() {
     },
   });
 
-  const handleSave = () => updateProfileMutation.mutate({ full_name: fullName });
+  const handleSave = () =>
+    updateProfileMutation.mutate({
+      full_name: fullName,
+      notification_preferences: { ...alerts },
+    });
 
   const handleDiscard = () => {
     setFullName(profile?.full_name || '');
+    const p = profile?.notification_preferences || {};
+    setAlerts({
+      grading_updates: p.grading_updates !== false,
+      quiz_reminders: p.quiz_reminders !== false,
+      posture_connection: p.posture_connection === true,
+    });
     toast('Changes discarded');
   };
 
@@ -330,11 +346,24 @@ export default function StudentSettings() {
               checked={alerts.quiz_reminders}
               onChange={(v) => setAlerts((p) => ({ ...p, quiz_reminders: v }))}
             />
-            <Toggle
-              label="Posture Connection (IoT)"
-              checked={alerts.posture_connection}
-              onChange={(v) => setAlerts((p) => ({ ...p, posture_connection: v }))}
-            />
+            <div>
+              <Toggle
+                label="Posture Connection (IoT)"
+                checked={alerts.posture_connection}
+                onChange={(v) => setAlerts((p) => ({ ...p, posture_connection: v }))}
+              />
+              <p className="text-[11px] text-slate-500 mt-1.5 pl-0 leading-snug">
+                When on, ultrasonic &ldquo;too close&rdquo; readings send in-app posture alerts while your desk device is assigned to you. Your ESP32 desk still adjusts its LED from the LDR automatically in firmware &mdash; use{' '}
+                <button
+                  type="button"
+                  onClick={() => navigate('/student/iot-status')}
+                  className="text-primary hover:underline font-medium"
+                >
+                  IoT Status
+                </button>{' '}
+                to verify readings. Click <span className="font-medium text-slate-600">Save Settings</span> after changing toggles.
+              </p>
+            </div>
           </div>
         </div>
       </div>

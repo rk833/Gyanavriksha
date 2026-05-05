@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   AlertTriangle,
   Loader2,
@@ -6,6 +6,7 @@ import {
   ChevronRight,
   AlertCircle,
   BookOpen,
+  ListFilter,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getAtRiskStudents, getSubjects } from '../../services/instructorService';
@@ -28,6 +29,8 @@ export default function AtRiskStudentsPage() {
   const [subjects, setSubjects] = useState([]);
   const [subjectId, setSubjectId] = useState('');
   const [page, setPage] = useState(1);
+  const [riskBand, setRiskBand] = useState('all');
+  const [tableQuery, setTableQuery] = useState('');
   const perPage = 20;
   const totalPages = Math.ceil(data.total / perPage);
 
@@ -44,6 +47,31 @@ export default function AtRiskStudentsPage() {
       .catch(() => toast.error('Failed to load at-risk students'))
       .finally(() => setLoading(false));
   }, [page, subjectId]);
+
+  useEffect(() => {
+    setRiskBand('all');
+    setTableQuery('');
+  }, [subjectId]);
+
+  const filteredItems = useMemo(() => {
+    const items = data.items || [];
+    const q = tableQuery.trim().toLowerCase();
+    return items.filter((student) => {
+      const score = Number(student.risk_score) || 0;
+      if (riskBand === 'high' && score < 70) return false;
+      if (riskBand === 'elevated' && (score < 50 || score >= 70)) return false;
+      if (riskBand === 'watch' && (score < 30 || score >= 50)) return false;
+      if (q) {
+        const factors = (student.risk_factors || []).join(' ');
+        const subs = (student.subjects_at_risk || []).join(' ');
+        const blob = `${student.full_name ?? ''} ${student.email ?? ''} ${factors} ${subs}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [data.items, riskBand, tableQuery]);
+
+  const hasListFilters = riskBand !== 'all' || Boolean(tableQuery.trim());
 
   return (
     <div>
@@ -93,7 +121,51 @@ export default function AtRiskStudentsPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {data.items.map((student) => (
+          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-100">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
+              <ListFilter className="w-3.5 h-3.5" />
+              Filter
+            </div>
+            <select
+              value={riskBand}
+              onChange={(e) => setRiskBand(e.target.value)}
+              className="flex-1 min-w-[140px] sm:max-w-[200px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white text-primary-dark focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Filter by risk level"
+            >
+              <option value="all">All risk levels</option>
+              <option value="high">High (70%+)</option>
+              <option value="elevated">Elevated (50–69%)</option>
+              <option value="watch">Watch (30–49%)</option>
+            </select>
+            <input
+              type="search"
+              value={tableQuery}
+              onChange={(e) => setTableQuery(e.target.value)}
+              placeholder="Search name, email, factors, subjects…"
+              className="flex-1 min-w-[180px] border border-primary-light rounded-lg px-3 py-2 text-sm bg-white text-primary-dark placeholder:text-slate-400 focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Search at-risk students"
+            />
+            {hasListFilters ? (
+              <button
+                type="button"
+                onClick={() => { setRiskBand('all'); setTableQuery(''); }}
+                className="text-xs font-medium text-primary hover:underline whitespace-nowrap px-1 py-2 sm:py-0"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+          <p className="text-[11px] text-slate-400 px-0.5">
+            Filters apply to students on page {page}. Use the subject control above to narrow the roster from the server.
+          </p>
+
+          {filteredItems.length === 0 ? (
+            <div className="bg-white border border-primary-light rounded-xl p-10 text-center text-sm text-slate-500">
+              No students on this page match your filters.
+            </div>
+          ) : null}
+
+          {filteredItems.map((student) => (
             <div
               key={student.student_id}
               className="bg-white rounded-xl border border-primary-light p-5 hover:shadow-md transition"
@@ -161,6 +233,10 @@ export default function AtRiskStudentsPage() {
               )}
             </div>
           ))}
+          <div className="text-[11px] text-slate-400">
+            Showing {filteredItems.length} of {data.items.length} on this page
+            {data.total != null ? ` · ${data.total} total matching subject` : ''}
+          </div>
         </div>
       )}
 

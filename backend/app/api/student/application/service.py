@@ -404,25 +404,39 @@ def get_profile(user: User) -> UserResponse:
 def update_profile(
     db: Session,
     user: User,
-    full_name: "str | None",
-    profile_image_url: "str | None",
+    *,
+    full_name: "str | None" = None,
+    profile_image_url: "str | None" = None,
+    notification_preferences: "dict | None" = None,
 ) -> UserResponse:
     """Apply non-None field updates to the student's profile and persist the changes."""
-    _apply_profile_updates(user, full_name, profile_image_url)
+    _apply_profile_updates(user, full_name, profile_image_url, notification_preferences)
     _persist_user(db, user)
     return UserResponse.model_validate(user)
+
+
+_DEFAULT_ALERT_PREFS: dict[str, bool] = {
+    "grading_updates": True,
+    "quiz_reminders": True,
+    "posture_connection": False,
+}
 
 
 def _apply_profile_updates(
     user: User,
     full_name: "str | None",
     profile_image_url: "str | None",
+    notification_preferences: "dict | None",
 ) -> None:
     """Mutate the user entity for each provided non-None field."""
     if full_name is not None:
         user.full_name = full_name
     if profile_image_url is not None:
         user.profile_image_url = profile_image_url
+    if notification_preferences is not None:
+        merged = {**_DEFAULT_ALERT_PREFS, **(user.notification_preferences or {})}
+        merged.update(notification_preferences)
+        user.notification_preferences = merged
 
 
 def _persist_user(db: Session, user: User) -> None:
@@ -603,3 +617,88 @@ def get_ai_tutor_session(
             detail=str(exc),
         ) from exc
     return AiTutorSessionDetailResponse(**raw)
+
+
+# ── IoT use cases ──────────────────────────────────────────────────────────────
+
+def get_iot_status(db: Session, student_id: uuid.UUID) -> dict:
+    """Return latest sensor readings and IoT devices linked to the current student."""
+    from app.db.models.iot_device import IotDevice
+    from app.db.models.sensor_log import SensorLog
+
+    devices = (
+        db.query(IotDevice)
+        .filter(IotDevice.assigned_student_id == student_id, IotDevice.is_active == True)
+        .all()
+    )
+
+    device_ids = [d.device_id for d in devices]
+
+    # Latest distance reading per device
+    latest_distance: dict = {}
+    latest_light: dict = {}
+
+    for did in device_ids:
+        dist = (
+            db.query(SensorLog)
+            .filter(SensorLog.device_id == did, SensorLog.sensor_type == "ultrasonic")
+            .order_by(SensorLog.recorded_at.desc())
+            .first()
+        )
+        if dist:
+            latest_distance[str(did)] = {
+                "distance_cm": dist.distance_cm,
+                "recorded_at": dist.recorded_at.isoformat() if dist.recorded_at else None,
+            }
+        ldr = (
+            db.query(SensorLog)
+            .filter(SensorLog.device_id == did, SensorLog.sensor_type == "ldr")
+            .order_by(SensorLog.recorded_at.desc())
+            .first()
+        )
+        if ldr:
+            latest_light[str(did)] = {
+                "ldr_value": ldr.ldr_value,
+                "led_activated": ldr.led_activated,
+                "recorded_at": ldr.recorded_at.isoformat() if ldr.recorded_at else None,
+            }
+
+    device_list = []
+    for d in devices:
+        did_str = str(d.device_id)
+        device_list.append({
+            "device_id": did_str,
+            "node_id": d.node_id,
+            "device_label": d.device_label,
+            "device_type": d.device_type,
+            "status": d.status,
+            "is_active": d.is_active,
+            "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+            "firmware_version": d.firmware_version,
+            "location": d.location,
+            "latest_distance": latest_distance.get(did_str),
+            "latest_light": latest_light.get(did_str),
+        })
+
+    # Aggregate latest readings across all devices
+    all_dist = [v for v in latest_distance.values() if v.get("distance_cm") is not None]
+    all_ldr = [v for v in latest_light.values() if v.get("ldr_value") is not None]
+
+    agg_distance = max(all_dist, key=lambda x: x["recorded_at"] or "") if all_dist else None
+    agg_ldr = max(all_ldr, key=lambda x: x["recorded_at"] or "") if all_ldr else None
+
+    return {
+        "devices": device_list,
+        "device_count": len(device_list),
+        "latest_distance_cm": agg_distance["distance_cm"] if agg_distance else None,
+        "latest_ldr_value": agg_ldr["ldr_value"] if agg_ldr else None,
+        "latest_led_activated": agg_ldr["led_activated"] if agg_ldr else None,
+        "latest_distance_at": agg_distance["recorded_at"] if agg_distance else None,
+        "latest_ldr_at": agg_ldr["recorded_at"] if agg_ldr else None,
+    }
+
+
+def resume_exam_session(db: Session, student_id: uuid.UUID, session_id: uuid.UUID) -> dict:
+    """Resume a paused exam session on behalf of the student."""
+    from app.services.iot_exam_service import handle_resume
+    return handle_resume(session_id, student_id, db)

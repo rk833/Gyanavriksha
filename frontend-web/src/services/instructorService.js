@@ -190,6 +190,14 @@ export const deleteDocument = (id) =>
   api.delete(`/api/instructors/knowledge-base/${id}`);
 
 /**
+ * Live exam monitor: roster, session states, IoT telemetry, posture alert feed.
+ *
+ * @param {{ assignment_id?: string }} params
+ */
+export const getExamMonitor = (params = {}) =>
+  api.get('/api/instructors/exam-monitor', { params });
+
+/**
  * Fetch the current instructor's profile including assigned subjects.
  *
  * @returns {Promise<import('./types').InstructorProfileResponse>}

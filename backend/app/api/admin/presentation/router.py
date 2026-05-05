@@ -650,8 +650,8 @@ def update_iot_device(
     current_user: User = Depends(require_role([UserRole.ADMIN])),
     db: Session = Depends(get_db),
 ):
-    """Update a device's location or description."""
-    return service.update_iot_device(db, device_id, body.location, body.description)
+    """Update a device's location, description, or assigned student."""
+    return service.update_iot_device(db, device_id, body.location, body.description, body.assigned_student_id)
 
 
 @router.delete("/iot/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)

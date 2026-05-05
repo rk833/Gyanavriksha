@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, desc, extract, case, or_
 
 from app.db.models.assignment import Assignment
+from app.db.models.exam_session import ExamSession
+from app.db.models.iot_device import IotDevice
+from app.db.models.notification import Notification
+from app.db.models.sensor_log import SensorLog
 from app.db.models.chat_history import ChatHistory
 from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
 from app.db.models.curriculum_document import CurriculumDocument
@@ -22,7 +26,13 @@ from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.submission_feedback import SubmissionFeedback
 from app.db.models.user import User
-from app.shared.source_enum import DocumentType, EmbeddingStatus, SubmissionProcessingStatus
+from app.shared.source_enum import (
+    DocumentType,
+    EmbeddingStatus,
+    ExamSessionStatus,
+    NotificationType,
+    SubmissionProcessingStatus,
+)
 
 
 def get_instructor_subjects(db: Session, instructor_id: str) -> list[dict]:
@@ -1584,6 +1594,317 @@ def delete_document(
     db.delete(doc)
     db.commit()
     return None
+
+
+def _device_for_student_telemetry(db: Session, student_id: uuid.UUID, session: ExamSession | None) -> uuid.UUID | None:
+    if session is not None and session.device_id is not None:
+        return session.device_id
+    desk = (
+        db.query(IotDevice)
+        .filter(
+            IotDevice.assigned_student_id == student_id,
+            IotDevice.is_active == True,
+        )
+        .order_by(IotDevice.last_seen_at.desc().nullslast())
+        .first()
+    )
+    return desk.device_id if desk else None
+
+
+def _latest_ultrasonic_cm(db: Session, device_id: uuid.UUID):
+    row = (
+        db.query(SensorLog)
+        .filter(SensorLog.device_id == device_id, SensorLog.sensor_type == "ultrasonic")
+        .order_by(desc(SensorLog.recorded_at))
+        .first()
+    )
+    if row is None or row.distance_cm is None:
+        return None, None
+    return float(row.distance_cm), row.recorded_at
+
+
+def _latest_ldr_raw(db: Session, device_id: uuid.UUID):
+    row = (
+        db.query(SensorLog)
+        .filter(SensorLog.device_id == device_id, SensorLog.sensor_type == "ldr")
+        .order_by(desc(SensorLog.recorded_at))
+        .first()
+    )
+    if row is None:
+        return None
+    return float(row.ldr_value) if row.ldr_value is not None else None
+
+
+def _presence_posture_labels(distance_cm: float | None) -> tuple[str, str]:
+    if distance_cm is None or distance_cm < 0:
+        return "Unknown", "N/A"
+    # Match IoT absence threshold (>80 cm); omit "too close" as an instructor alert.
+    if distance_cm > 150:
+        return "Absent", "Away"
+    if distance_cm > 80:
+        return "Present", "Away"
+    return "Present", "N/A"
+
+
+def get_exam_monitor_snapshot(
+    db: Session,
+    instructor_id: str,
+    assignment_id: uuid.UUID | None,
+) -> dict | None:
+    """Live exam cockpit: enrollees + session state + IoT telemetry for one exam assignment."""
+    instructor_uuid = uuid.UUID(str(instructor_id))
+
+    aa_rows = (
+        db.query(Assignment, Subject.subject_name, Grade.grade_name)
+        .join(Subject, Subject.subject_id == Assignment.subject_id)
+        .join(Grade, Grade.grade_id == Subject.grade_id)
+        .filter(
+            Assignment.instructor_id == instructor_uuid,
+            Assignment.is_exam_mode == True,
+            Assignment.is_published == True,
+        )
+        .order_by(
+            Assignment.due_date.desc().nullslast(),
+            desc(Assignment.created_at),
+        )
+        .all()
+    )
+
+    def _assignment_options(rows):
+        return [
+            {
+                "assignment_id": a.assignment_id,
+                "title": a.title,
+                "subject_name": sn,
+                "grade_name": gn,
+                "due_date": a.due_date,
+            }
+            for a, sn, gn in rows
+        ]
+
+    if not aa_rows:
+        return {
+            "assignments": [],
+            "selected_assignment_id": None,
+            "assignment_title": None,
+            "subject_name": None,
+            "grade_name": None,
+            "due_date": None,
+            "exam_duration_minutes": None,
+            "enrolled_total": 0,
+            "active_count": 0,
+            "paused_count": 0,
+            "submitted_count": 0,
+            "avg_seconds_remaining": None,
+            "students": [],
+            "events": [],
+        }
+
+    sel_tuple = None
+    if assignment_id is not None:
+        for tup in aa_rows:
+            if tup[0].assignment_id == assignment_id:
+                sel_tuple = tup
+                break
+        if sel_tuple is None:
+            return None
+    else:
+        sel_tuple = aa_rows[0]
+
+    assign, subject_name, grade_name = sel_tuple
+    aid = assign.assignment_id
+    now = datetime.now(timezone.utc)
+    dur_sec = int(assign.exam_duration_minutes * 60) if assign.exam_duration_minutes else None
+
+    enrolled_rows = (
+        db.query(User.user_id, User.full_name)
+        .join(StudentEnrollment, StudentEnrollment.student_id == User.user_id)
+        .filter(
+            StudentEnrollment.subject_id == assign.subject_id,
+            StudentEnrollment.is_active == True,
+        )
+        .order_by(User.full_name.asc())
+        .all()
+    )
+    enrolled_total = len(enrolled_rows)
+    student_lookup_name = {
+        uuid.UUID(str(r[0])): r[1] or "Student" for r in enrolled_rows
+    }
+
+    sub_rows = (
+        db.query(Submission)
+        .filter(Submission.assignment_id == aid)
+        .order_by(desc(Submission.submitted_at))
+        .all()
+    )
+    latest_sub_by_student: dict[uuid.UUID, Submission] = {}
+    for sb in sub_rows:
+        if sb.student_id not in latest_sub_by_student:
+            latest_sub_by_student[sb.student_id] = sb
+
+    sess_rows = (
+        db.query(ExamSession)
+        .filter(ExamSession.assignment_id == aid)
+        .order_by(desc(ExamSession.started_at))
+        .all()
+    )
+    sess_by_student: dict[uuid.UUID, ExamSession] = {}
+    for s in sess_rows:
+        if s.student_id not in sess_by_student:
+            sess_by_student[s.student_id] = s
+
+    student_rows: list[dict] = []
+    active_cnt = paused_cnt = submitted_cnt = 0
+    sec_remain_samples: list[int] = []
+
+    for uid, fname in enrolled_rows:
+        uid = uuid.UUID(str(uid))
+        fname = fname or "Student"
+        sub = latest_sub_by_student.get(uid)
+        sess = sess_by_student.get(uid)
+
+        session_id = sess.session_id if sess else None
+        pause_count = sess.pause_count if sess else None
+        absence_alert_count = sess.absence_alert_count if sess else None
+        ui_status = "not_started"
+        progress_pct = 0
+        seconds_remaining: int | None = None
+
+        if sub is not None or (
+            sess
+            and sess.status == ExamSessionStatus.COMPLETED.value
+            and sess.ended_at is not None
+        ):
+            ui_status = "submitted"
+            progress_pct = 100
+            submitted_cnt += 1
+        elif sess is not None:
+            if sess.status == ExamSessionStatus.TERMINATED.value:
+                ui_status = "ended"
+                progress_pct = 0
+            elif sess.status == ExamSessionStatus.PAUSED.value:
+                ui_status = "paused"
+                paused_cnt += 1
+                if dur_sec is not None and sess.started_at is not None:
+                    elapsed = int((now - sess.started_at).total_seconds()) - (
+                        sess.total_paused_seconds or 0
+                    )
+                    seconds_remaining = max(0, dur_sec - max(0, elapsed))
+                    sec_remain_samples.append(seconds_remaining)
+                    progress_pct = int(max(5, min(99, round(100 * max(0, elapsed) / dur_sec))))
+                else:
+                    progress_pct = 30
+            elif sess.status == ExamSessionStatus.ACTIVE.value:
+                ui_status = "active"
+                active_cnt += 1
+                if dur_sec is not None and sess.started_at is not None:
+                    elapsed = int((now - sess.started_at).total_seconds()) - (
+                        sess.total_paused_seconds or 0
+                    )
+                    seconds_remaining = max(0, dur_sec - max(0, elapsed))
+                    sec_remain_samples.append(seconds_remaining)
+                    progress_pct = int(max(5, min(99, round(100 * max(0, elapsed) / dur_sec))))
+                else:
+                    progress_pct = 25
+
+        dev_id = _device_for_student_telemetry(db, uid, sess)
+        presence_label, posture_label = "Unknown", "N/A"
+        light_raw: float | None = None
+        device_online = False
+        if dev_id:
+            dev = db.query(IotDevice).filter(IotDevice.device_id == dev_id).first()
+            if dev:
+                if dev.last_seen_at:
+                    dt = dev.last_seen_at
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    device_online = (
+                        dev.status == "online"
+                        and (now - dt).total_seconds() < 180
+                    )
+                cm, _dist_at = _latest_ultrasonic_cm(db, dev_id)
+                presence_label, posture_label = _presence_posture_labels(cm)
+                light_raw = _latest_ldr_raw(db, dev_id)
+
+        student_rows.append({
+            "student_id": uid,
+            "full_name": fname,
+            "session_id": session_id,
+            "session_status": ui_status,
+            "progress_pct": progress_pct,
+            "seconds_remaining": seconds_remaining,
+            "presence_label": presence_label,
+            "posture_label": posture_label,
+            "light_raw": light_raw,
+            "device_online": device_online,
+            "pause_count": pause_count,
+            "absence_alerts": absence_alert_count,
+            "session_end_reason": sess.ended_reason if sess else None,
+        })
+
+    avg_sec = None
+    if sec_remain_samples:
+        avg_sec = round(sum(sec_remain_samples) / len(sec_remain_samples))
+
+    student_ids = [r[0] for r in enrolled_rows]
+    events: list[dict] = []
+    if student_ids:
+        sid_strings = [str(sid) for sid in student_ids]
+        nid_rows = (
+            db.query(Notification)
+            .filter(
+                Notification.recipient_id == instructor_uuid,
+                Notification.sent_at.isnot(None),
+                Notification.sent_at >= now - timedelta(days=7),
+                Notification.type == NotificationType.IOT_DESK_ABSENCE,
+                Notification.related_resource_id.in_(sid_strings),
+            )
+            .order_by(desc(Notification.sent_at))
+            .limit(40)
+            .all()
+        )
+        for n in nid_rows:
+            rid = n.related_resource_id
+            if not rid:
+                continue
+            try:
+                stu_sid = uuid.UUID(str(rid))
+            except (ValueError, TypeError):
+                continue
+            nm = student_lookup_name.get(stu_sid, "Student")
+            title_l = (n.title or "").lower()
+            event_kind = (
+                "exam_ended" if "attempt ended" in title_l else "auto_pause"
+            )
+            category = (
+                "Attempt ended" if event_kind == "exam_ended" else "Auto-pause"
+            )
+            events.append({
+                "sent_at": n.sent_at,
+                "student_id": stu_sid,
+                "student_name": nm,
+                "category": category,
+                "description": n.body[:500] if n.body else n.title,
+                "status_label": "Recorded",
+                "event_kind": event_kind,
+            })
+
+    return {
+        "assignments": _assignment_options(aa_rows),
+        "selected_assignment_id": aid,
+        "assignment_title": assign.title,
+        "subject_name": subject_name,
+        "grade_name": grade_name,
+        "due_date": assign.due_date,
+        "exam_duration_minutes": assign.exam_duration_minutes,
+        "enrolled_total": enrolled_total,
+        "active_count": active_cnt,
+        "paused_count": paused_cnt,
+        "submitted_count": submitted_cnt,
+        "avg_seconds_remaining": avg_sec,
+        "students": student_rows,
+        "events": events,
+    }
 
 
 # Phase 5: GD-96 — Instructor profile

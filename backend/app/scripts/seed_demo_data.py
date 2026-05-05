@@ -43,7 +43,7 @@ DEMO_ADMIN_NAME = "System Administrator"
 
 # Grade 9 English / CS cohort (5+ students enrolled in ENG-09 and CS-09)
 G9_COHORT_STUDENTS = [
-    ("g9student01@gyanavriksha.edu.np", "Aarav Thapa"),
+    ("image.png", "Aarav Thapa"),
     ("g9student02@gyanavriksha.edu.np", "Mina Gurung"),
     ("g9student03@gyanavriksha.edu.np", "Kiran Shah"),
     ("g9student04@gyanavriksha.edu.np", "Puja Magar"),

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.assignment import Assignment
 from app.db.models.exam_session import ExamSession
+from app.db.models.iot_device import IotDevice
 from app.db.models.student_enrollment import StudentEnrollment
 from app.shared.source_enum import ExamSessionStatus
 
@@ -125,10 +126,20 @@ def start_exam_session(db: Session, student_id: uuid.UUID, assignment_id: uuid.U
             detail="Exam attempt already used for this assignment. Contact your instructor if you need help.",
         )
 
+    desk = (
+        db.query(IotDevice)
+        .filter(
+            IotDevice.assigned_student_id == student_id,
+            IotDevice.is_active == True,
+        )
+        .order_by(IotDevice.last_seen_at.desc().nullslast())
+        .first()
+    )
     now = datetime.now(timezone.utc)
     sess = ExamSession(
         student_id=student_id,
         assignment_id=assignment_id,
+        device_id=desk.device_id if desk else None,
         started_at=now,
         ended_at=None,
         status=ExamSessionStatus.ACTIVE.value,
@@ -153,6 +164,7 @@ def terminate_exam_session(db: Session, student_id: uuid.UUID, session_id: uuid.
     now = datetime.now(timezone.utc)
     sess.ended_at = now
     sess.status = ExamSessionStatus.TERMINATED.value
+    sess.ended_reason = "The student exited the exam before submitting."
     db.add(sess)
     db.commit()
     db.refresh(sess)
@@ -178,6 +190,7 @@ def complete_active_session(db: Session, student_id: uuid.UUID, assignment_id: u
     now = datetime.now(timezone.utc)
     sess.ended_at = now
     sess.status = ExamSessionStatus.COMPLETED.value
+    sess.ended_reason = "The student submitted the exam."
     db.add(sess)
     db.commit()
 

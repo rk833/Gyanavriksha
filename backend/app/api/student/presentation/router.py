@@ -340,9 +340,13 @@ def update_profile(
     current_user: User = Depends(require_role([UserRole.STUDENT])),
     db: Session = Depends(get_db),
 ):
-    """Update the current student's profile name and/or profile image URL."""
+    """Update the current student's profile and learning-alert preferences."""
     return service.update_profile(
-        db, current_user, data.full_name, data.profile_image_url
+        db,
+        current_user,
+        full_name=data.full_name,
+        profile_image_url=data.profile_image_url,
+        notification_preferences=data.notification_preferences,
     )
 
 
@@ -501,3 +505,27 @@ def get_ai_tutor_session(
 ):
     """Load one saved chat session (messages for replay)."""
     return service.get_ai_tutor_session(db, current_user.user_id, history_id)
+
+
+# ── IoT endpoints ─────────────────────────────────────────────────────────────
+
+@router.get("/iot/status")
+def get_iot_status(
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Return latest sensor readings and linked IoT devices for the current student."""
+    return service.get_iot_status(db, current_user.user_id)
+
+
+@router.post(
+    "/exam-sessions/{session_id}/resume",
+    response_model=ExamSessionResponse,
+)
+def resume_exam_session(
+    session_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Resume a paused exam session (e.g. after IoT auto-pause)."""
+    return service.resume_exam_session(db, current_user.user_id, session_id)

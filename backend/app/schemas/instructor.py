@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -291,3 +292,57 @@ class InstructorSubjectDetailResponse(BaseModel):
     students_total_pages: int = 0
 
     model_config = {"from_attributes": True}
+
+
+# ── Live exam monitor (IoT + sessions) ──────────────────────────────────────
+
+
+class ExamMonitorAssignmentOption(BaseModel):
+    assignment_id: uuid.UUID
+    title: str
+    subject_name: str
+    grade_name: str | None = None
+    due_date: datetime | None = None
+
+
+class ExamMonitorStudentRow(BaseModel):
+    student_id: uuid.UUID
+    full_name: str
+    session_id: uuid.UUID | None = None
+    session_status: str
+    progress_pct: int
+    seconds_remaining: int | None = None
+    presence_label: str
+    posture_label: str
+    light_raw: float | None = None
+    device_online: bool
+    pause_count: int | None = None
+    absence_alerts: int | None = None
+    session_end_reason: str | None = None
+
+
+class ExamMonitorEventRow(BaseModel):
+    sent_at: datetime
+    student_id: uuid.UUID
+    student_name: str
+    category: str
+    description: str
+    status_label: str
+    event_kind: Literal["auto_pause", "exam_ended"] = "auto_pause"
+
+
+class ExamMonitorResponse(BaseModel):
+    assignments: list[ExamMonitorAssignmentOption]
+    selected_assignment_id: uuid.UUID | None = None
+    assignment_title: str | None = None
+    subject_name: str | None = None
+    grade_name: str | None = None
+    due_date: datetime | None = None
+    exam_duration_minutes: int | None = None
+    enrolled_total: int = 0
+    active_count: int = 0
+    paused_count: int = 0
+    submitted_count: int = 0
+    avg_seconds_remaining: float | None = None
+    students: list[ExamMonitorStudentRow] = []
+    events: list[ExamMonitorEventRow] = []
