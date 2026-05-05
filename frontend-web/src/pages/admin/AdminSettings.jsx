@@ -796,31 +796,31 @@ function AboutSection() {
   return (
     <div className="space-y-6">
       <SectionLabel>System Information</SectionLabel>
-      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
         {staticInfo.map((row) => (
-          <div key={row.label} className="flex items-center justify-between px-5 py-3">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{row.label}</span>
-            <span className="text-sm font-medium text-slate-700">{row.value}</span>
+          <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3.5">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{row.label}</span>
+            <span className="text-sm font-semibold text-slate-800 text-right">{row.value}</span>
           </div>
         ))}
       </div>
 
       <SectionLabel>Live Configuration</SectionLabel>
-      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
         {dynamicInfo.map((row) => (
-          <div key={row.label} className="flex items-center justify-between px-5 py-3">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{row.label}</span>
-            <span className="text-sm font-medium text-slate-700">{row.value}</span>
+          <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3.5">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{row.label}</span>
+            <span className="text-sm font-semibold text-slate-800 text-right">{row.value}</span>
           </div>
         ))}
       </div>
 
-      <div className="bg-primary-dark rounded-xl p-5 text-white flex items-center gap-4">
-        <Zap className="w-8 h-8 text-primary-light shrink-0" />
+      <div className="bg-primary-dark rounded-xl p-5 text-white flex items-center gap-4 border border-primary/40">
+        <Zap className="w-8 h-8 text-blue-100 shrink-0" />
         <div>
           <p className="font-bold">Gyanavriksha Knowledge Sanctuary</p>
-          <p className="text-sm text-primary-light mt-0.5">AI-powered adaptive learning platform with IoT integration and vector-based curriculum delivery.</p>
-          <p className="text-xs text-primary-light/60 mt-2">© 2025 Group 4 — System Development Project, Level 5 Sem 2</p>
+          <p className="text-sm text-blue-100/90 mt-0.5">AI-powered adaptive learning platform with IoT integration and vector-based curriculum delivery.</p>
+          <p className="text-xs text-blue-100/70 mt-2">© 2025 Group 4 — System Development Project, Level 5 Sem 2</p>
         </div>
       </div>
     </div>

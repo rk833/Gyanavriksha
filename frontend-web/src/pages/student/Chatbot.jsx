@@ -469,8 +469,7 @@ export default function AiTutorPage() {
         </div>
 
         {/* Messages area */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4"
-          style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)' }}>
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 chat-surface">
           {messages.map((msg) =>
             msg.role === 'user' ? (
               <UserBubble key={msg.id} text={msg.text} timestamp={msg.timestamp} />

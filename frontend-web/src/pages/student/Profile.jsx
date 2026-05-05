@@ -6,7 +6,6 @@ import {
   BookOpen,
   TrendingUp,
   FileText,
-  Award,
   MessageSquare,
   Zap,
 } from 'lucide-react';
@@ -172,10 +171,8 @@ export default function StudentProfile() {
             </div>
           </div>
 
-          {/* Recent activity & achievements */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Recent Activity */}
-            <div className="bg-white rounded-xl border border-primary-light p-5">
+          {/* Recent activity */}
+          <div className="bg-white rounded-xl border border-primary-light p-5">
               <h3 className="font-semibold text-primary-dark mb-3">Recent Activity</h3>
               <div className="space-y-3">
                 {dashboard?.recent_submissions?.length > 0 ? (
@@ -194,23 +191,6 @@ export default function StudentProfile() {
                   <p className="text-sm text-slate-400 text-center py-4">No recent activity</p>
                 )}
               </div>
-            </div>
-
-            {/* Achievements */}
-            <div className="bg-white rounded-xl border border-primary-light p-5">
-              <h3 className="font-semibold text-primary-dark mb-3">Achievements</h3>
-              <div className="grid grid-cols-4 gap-3">
-                {[...Array(8)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-12 h-12 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto"
-                  >
-                    <Award className="w-5 h-5 text-slate-300" />
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-slate-400 text-center mt-3">Achievements coming soon</p>
-            </div>
           </div>
         </div>
       </div>
