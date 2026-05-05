@@ -21,6 +21,7 @@ from app.api.student.domain.schemas import StudentProfileUpdateInput
 from app.core.database import get_db
 from app.db.models.user import User
 from app.schemas.assignment import AssignmentDetailResponse, AssignmentListItem
+from app.schemas.exam_session import ExamSessionResponse
 from app.schemas.common import PaginatedResponse
 from app.schemas.library import CurriculumDocumentResponse
 from app.schemas.notification import NotificationResponse, UnreadCountResponse
@@ -110,6 +111,33 @@ def get_assignment(
 ):
     """Return full assignment detail for the authenticated student."""
     return service.get_assignment(db, current_user.user_id, assignment_id)
+
+
+@router.post(
+    "/assignments/{assignment_id}/exam-session/start",
+    response_model=ExamSessionResponse,
+    status_code=201,
+)
+def start_exam_session(
+    assignment_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Create or return the active persisted exam session for this assignment."""
+    return service.start_exam_session(db, current_user.user_id, assignment_id)
+
+
+@router.post(
+    "/exam-sessions/{session_id}/terminate",
+    response_model=ExamSessionResponse,
+)
+def terminate_exam_session(
+    session_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Abandon an in-progress exam (counts as attempt used)."""
+    return service.terminate_exam_session(db, current_user.user_id, session_id)
 
 
 @router.post("/submissions", response_model=SubmissionListItem, status_code=201)

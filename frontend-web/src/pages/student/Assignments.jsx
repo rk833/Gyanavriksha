@@ -7,7 +7,13 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import MarkdownMath from '../../components/MarkdownMath';
-import { getAssignments, getSubjects, uploadSubmission } from '../../services/studentService';
+import {
+  getAssignments,
+  getSubjects,
+  uploadSubmission,
+  postExamSessionStart,
+  postExamSessionTerminate,
+} from '../../services/studentService';
 import { queryClient } from '../../lib/queryClient';
 import useAuth from '../../hooks/useAuth';
 
@@ -21,19 +27,6 @@ function formatCountdown(totalSec) {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-function examConsumedStorageKey(userId, assignmentId) {
-  return `gyan_exam_consumed_${userId}_${assignmentId}`;
-}
-
-function isExamSessionConsumed(userId, assignmentId) {
-  if (!userId || !assignmentId) return false;
-  try {
-    return !!localStorage.getItem(examConsumedStorageKey(userId, assignmentId));
-  } catch {
-    return false;
-  }
 }
 
 function isAllowedSubmissionFile(file) {
@@ -57,6 +50,8 @@ export default function StudentAssignments() {
   const [examRemainSec, setExamRemainSec] = useState(0);
   const [examPauseActive, setExamPauseActive] = useState(false);
   const [examPausesUsed, setExamPausesUsed] = useState(0);
+  const [activeExamSessionId, setActiveExamSessionId] = useState(null);
+  const [examStartLoading, setExamStartLoading] = useState(false);
 
   const { data: subjects = [] } = useQuery({
     queryKey: ['student', 'subjects'],
@@ -87,6 +82,7 @@ export default function StudentAssignments() {
       setExamSessionStarted(false);
       setExamPauseActive(false);
       setExamPausesUsed(0);
+      setActiveExamSessionId(null);
       queryClient.invalidateQueries({ queryKey: ['student', 'assignments'] });
       queryClient.invalidateQueries({ queryKey: ['student', 'dashboard'] });
     },
@@ -104,18 +100,20 @@ export default function StudentAssignments() {
     return 'open';
   };
 
-  const closeModal = () => {
+  const closeModal = async () => {
     if (uploadMutation.isPending) return;
     if (
       uploadModal?.is_exam_mode
       && examSessionStarted
       && !submittedSuccessRef.current
-      && user?.user_id
+      && activeExamSessionId
     ) {
       try {
-        localStorage.setItem(examConsumedStorageKey(user.user_id, uploadModal.assignment_id), '1');
+        await postExamSessionTerminate(activeExamSessionId);
+        queryClient.invalidateQueries({ queryKey: ['student', 'assignments'] });
       } catch {
-        /* ignore */
+        toast.error('Could not record exam exit — try again or contact support.');
+        return;
       }
     }
     setUploadModal(null);
@@ -123,6 +121,7 @@ export default function StudentAssignments() {
     setExamSessionStarted(false);
     setExamPauseActive(false);
     setExamPausesUsed(0);
+    setActiveExamSessionId(null);
   };
 
   const handleFileSelect = (e) => {
@@ -156,27 +155,57 @@ export default function StudentAssignments() {
   useEffect(() => () => previewUrls.forEach((u) => u && URL.revokeObjectURL(u)), [previewUrls]);
 
   const openSubmit = (a) => {
-    if (a.is_exam_mode && user?.user_id && isExamSessionConsumed(user.user_id, a.assignment_id)) {
+    if (a.is_exam_mode && a.exam_slot_blocked) {
       toast.error('You already used your exam session for this assignment. Contact your instructor if you need help.');
       return;
     }
     submittedSuccessRef.current = false;
     setUploadModal(a);
     setFiles([]);
-    setExamSessionStarted(!a.is_exam_mode);
-    const mins = a.exam_duration_minutes;
-    setExamRemainSec(mins && a.is_exam_mode ? Math.round(Number(mins) * 60) : 0);
+    setActiveExamSessionId(null);
+    const resume =
+      a.is_exam_mode
+      && a.exam_active_session_id
+      && a.exam_session_started_at
+      && !a.exam_slot_blocked;
+    if (resume) {
+      setExamSessionStarted(true);
+      setActiveExamSessionId(a.exam_active_session_id);
+      const totalSec = Math.round(Number(a.exam_duration_minutes || 0) * 60);
+      const startedMs = new Date(a.exam_session_started_at).getTime();
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+      setExamRemainSec(Math.max(0, totalSec - elapsed));
+    } else {
+      setExamSessionStarted(!a.is_exam_mode);
+      const mins = a.exam_duration_minutes;
+      setExamRemainSec(mins && a.is_exam_mode ? Math.round(Number(mins) * 60) : 0);
+    }
     setExamPauseActive(false);
     setExamPausesUsed(0);
   };
 
-  const startExamSession = () => {
-    if (!uploadModal?.is_exam_mode) return;
-    setExamSessionStarted(true);
-    const mins = uploadModal.exam_duration_minutes;
-    setExamRemainSec(mins ? Math.round(Number(mins) * 60) : 0);
-    setExamPauseActive(false);
-    setExamPausesUsed(0);
+  const startExamSession = async () => {
+    if (!uploadModal?.is_exam_mode || !uploadModal.assignment_id) return;
+    setExamStartLoading(true);
+    try {
+      const res = await postExamSessionStart(uploadModal.assignment_id);
+      const { session_id, started_at, exam_duration_seconds } = res.data;
+      setActiveExamSessionId(session_id);
+      setExamSessionStarted(true);
+      const totalSec = exam_duration_seconds != null
+        ? exam_duration_seconds
+        : Math.round(Number(uploadModal.exam_duration_minutes || 0) * 60);
+      const startedMs = new Date(started_at).getTime();
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+      setExamRemainSec(Math.max(0, totalSec - elapsed));
+      setExamPauseActive(false);
+      setExamPausesUsed(0);
+      queryClient.invalidateQueries({ queryKey: ['student', 'assignments'] });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not start exam session');
+    } finally {
+      setExamStartLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -281,7 +310,7 @@ export default function StudentAssignments() {
           {assignments.map((a) => {
             const st = getStatus(a);
             const desc = a.description?.trim();
-            const examBlocked = a.is_exam_mode && user?.user_id && isExamSessionConsumed(user.user_id, a.assignment_id);
+            const examBlocked = a.is_exam_mode && a.exam_slot_blocked;
             return (
               <article
                 key={a.assignment_id}
@@ -430,7 +459,9 @@ export default function StudentAssignments() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => !uploadMutation.isPending && closeModal()}
+            onClick={() => {
+              if (!uploadMutation.isPending) void closeModal();
+            }}
           />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
             <div className="p-6">
@@ -462,7 +493,7 @@ export default function StudentAssignments() {
                   <div className="flex flex-wrap gap-2 justify-end">
                     <button
                       type="button"
-                      onClick={closeModal}
+                      onClick={() => void closeModal()}
                       disabled={uploadMutation.isPending}
                       className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-200/80"
                     >
@@ -470,11 +501,11 @@ export default function StudentAssignments() {
                     </button>
                     <button
                       type="button"
-                      onClick={startExamSession}
-                      disabled={uploadMutation.isPending}
-                      className="px-5 py-2 rounded-xl text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800"
+                      onClick={() => void startExamSession()}
+                      disabled={uploadMutation.isPending || examStartLoading}
+                      className="px-5 py-2 rounded-xl text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
                     >
-                      Start exam
+                      {examStartLoading ? 'Starting…' : 'Start exam'}
                     </button>
                   </div>
                 </div>
@@ -517,7 +548,9 @@ export default function StudentAssignments() {
                     </h2>
                     <button
                       type="button"
-                      onClick={() => !uploadMutation.isPending && closeModal()}
+                      onClick={() => {
+              if (!uploadMutation.isPending) void closeModal();
+            }}
                       className="p-2 rounded-xl hover:bg-slate-100"
                     >
                       <X className="w-5 h-5 text-slate-400" />
@@ -608,7 +641,9 @@ export default function StudentAssignments() {
                   <div className="flex items-center justify-between gap-3">
                     <button
                       type="button"
-                      onClick={() => !uploadMutation.isPending && closeModal()}
+                      onClick={() => {
+              if (!uploadMutation.isPending) void closeModal();
+            }}
                       disabled={uploadMutation.isPending}
                       className="text-sm text-slate-500 hover:text-slate-800"
                     >

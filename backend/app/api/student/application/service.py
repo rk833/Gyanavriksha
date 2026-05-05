@@ -13,13 +13,13 @@ from app.db.models.grade import Grade
 from app.db.models.subject import Subject
 from app.db.models.user import User
 from app.schemas.assignment import AssignmentDetailResponse, AssignmentListItem
+from app.schemas.exam_session import ExamSessionResponse
 from app.schemas.common import PaginatedResponse
 from app.schemas.library import CurriculumDocumentResponse
 from app.schemas.notification import NotificationResponse, UnreadCountResponse
 from app.schemas.progress import (
     DashboardResponse,
     KnowledgeGapResponse,
-    KnowledgeGapSummary,
     KnowledgeGapSummary,
     StudentProgressResponse,
 )
@@ -32,6 +32,7 @@ from app.schemas.submission import (
 from app.schemas.subject import EnrollmentResponse, SubjectResponse
 from app.schemas.user import MessageResponse, UserResponse
 from app.services import (
+    exam_session_service,
     library_service,
     notification_service,
     student_service,
@@ -199,6 +200,22 @@ def get_assignment(
     return AssignmentDetailResponse(
         **submission_service.get_assignment_detail(db, student_id, assignment_id)
     )
+
+
+def start_exam_session(
+    db: Session, student_id: uuid.UUID, assignment_id: uuid.UUID
+) -> ExamSessionResponse:
+    """Persist (or resume) an exam session when the student starts the timer."""
+    data = exam_session_service.start_exam_session(db, student_id, assignment_id)
+    return ExamSessionResponse(**data)
+
+
+def terminate_exam_session(
+    db: Session, student_id: uuid.UUID, session_id: uuid.UUID
+) -> ExamSessionResponse:
+    """Mark an in-progress exam session as abandoned."""
+    data = exam_session_service.terminate_exam_session(db, student_id, session_id)
+    return ExamSessionResponse(**data)
 
 
 async def create_submission(

@@ -29,6 +29,10 @@ class AssignmentListItem(BaseModel):
     is_published: bool = False
     has_submitted: bool = False
     created_at: datetime
+    # Exam mode: server-backed `exam_sessions` (see POST …/exam-session/start)
+    exam_slot_blocked: bool = False
+    exam_active_session_id: uuid.UUID | None = None
+    exam_session_started_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

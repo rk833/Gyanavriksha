@@ -23,6 +23,8 @@ from app.db.models.subject import Subject
 from app.db.models.user import User
 from app.shared.source_enum import SubmissionProcessingStatus
 
+from app.services import exam_session_service
+
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -177,11 +179,20 @@ def get_assignments_for_student(
         )
         submitted_set = {r[0] for r in submitted}
 
+    exam_flags = exam_session_service.exam_flags_for_assignments(
+        db, user_id, assignment_ids
+    )
+
     subject_ids = {s.subject_id for _, s, _, _ in assignments}
     instructors_by_subject = _instructors_by_subject_id(db, subject_ids)
 
     results = []
     for assignment, subject, grade, instructor in assignments:
+        ef = exam_flags.get(assignment.assignment_id, {})
+        has_sub = assignment.assignment_id in submitted_set
+        exam_blocked = has_sub or (
+            bool(assignment.is_exam_mode) and ef.get("exam_closed_without_active", False)
+        )
         results.append({
             "assignment_id": assignment.assignment_id,
             "title": assignment.title,
@@ -201,8 +212,15 @@ def get_assignments_for_student(
             "max_score": assignment.max_score,
             "due_date": assignment.due_date,
             "is_published": assignment.is_published,
-            "has_submitted": assignment.assignment_id in submitted_set,
+            "has_submitted": has_sub,
             "created_at": assignment.created_at,
+            "exam_slot_blocked": exam_blocked,
+            "exam_active_session_id": ef.get("exam_active_session_id")
+            if assignment.is_exam_mode
+            else None,
+            "exam_session_started_at": ef.get("exam_session_started_at")
+            if assignment.is_exam_mode
+            else None,
         })
 
     return results, total
@@ -259,6 +277,13 @@ def get_assignment_detail(
 
     instructors_by_subject = _instructors_by_subject_id(db, {subject.subject_id})
 
+    ef = exam_session_service.exam_flags_for_assignments(db, user_id, [assignment_id])[
+        assignment_id
+    ]
+    exam_blocked = has_submitted or (
+        bool(assignment.is_exam_mode) and ef.get("exam_closed_without_active", False)
+    )
+
     return {
         "assignment_id": assignment.assignment_id,
         "title": assignment.title,
@@ -281,6 +306,13 @@ def get_assignment_detail(
         "has_submitted": has_submitted,
         "created_at": assignment.created_at,
         "submission_count": sub_count,
+        "exam_slot_blocked": exam_blocked,
+        "exam_active_session_id": ef.get("exam_active_session_id")
+        if assignment.is_exam_mode
+        else None,
+        "exam_session_started_at": ef.get("exam_session_started_at")
+        if assignment.is_exam_mode
+        else None,
     }
 
 
@@ -384,6 +416,9 @@ async def create_submission(
     db.add(submission)
     db.commit()
     db.refresh(submission)
+
+    if assignment.is_exam_mode:
+        exam_session_service.complete_active_session(db, user_id, assignment_id)
 
     return submission
 

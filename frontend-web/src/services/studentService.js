@@ -53,6 +53,14 @@ export const getAssignments = (params = {}) =>
  */
 export const getAssignmentDetail = (id) => api.get(`/api/students/assignments/${id}`);
 
+/** Start or resume a persisted exam session (server `exam_sessions` row). */
+export const postExamSessionStart = (assignmentId) =>
+  api.post(`/api/students/assignments/${assignmentId}/exam-session/start`);
+
+/** Abandon in-progress exam (counts as attempt used). */
+export const postExamSessionTerminate = (sessionId) =>
+  api.post(`/api/students/exam-sessions/${sessionId}/terminate`);
+
 /**
  * Upload handwritten work images as a new submission.
  *
