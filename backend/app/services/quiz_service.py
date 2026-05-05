@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
 from app.core.ai_client import ai_post
 from app.services import chat_log_io
@@ -439,10 +440,15 @@ def get_quizzes_for_student(
 
 def get_quiz_detail(db: Session, student_id: uuid.UUID, quiz_id: uuid.UUID) -> MicroQuiz | None:
     """Return the MicroQuiz row for a specific student and quiz ID, or None."""
-    return db.query(MicroQuiz).filter(
-        MicroQuiz.quiz_id == quiz_id,
-        MicroQuiz.student_id == student_id,
-    ).first()
+    return (
+        db.query(MicroQuiz)
+        .options(selectinload(MicroQuiz.questions))
+        .filter(
+            MicroQuiz.quiz_id == quiz_id,
+            MicroQuiz.student_id == student_id,
+        )
+        .first()
+    )
 
 
 def _option_text_at(options: Any, idx: int) -> str | None:
