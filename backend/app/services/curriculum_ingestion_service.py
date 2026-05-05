@@ -18,7 +18,9 @@ from app.core.database import SessionLocal
 from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.grade import Grade
 from app.db.models.subject import Subject
+from app.services import admin_service
 from app.services import rag_service
+from app.shared.source_enum import NotificationType
 from app.shared.source_enum import EmbeddingStatus
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,13 @@ def _get_doc(db: Session, doc_id: uuid.UUID) -> CurriculumDocument | None:
 def _mark_processing(db: Session, doc: CurriculumDocument) -> None:
     """Set embedding_status to PROCESSING and commit."""
     doc.embedding_status = EmbeddingStatus.PROCESSING
+    admin_service.notify_admins(
+        db,
+        NotificationType.HEATMAP_UPDATED,
+        "Curriculum ingestion started",
+        f"{doc.file_name} is now processing for vector embedding.",
+        str(doc.doc_id),
+    )
     db.commit()
 
 
@@ -43,12 +52,26 @@ def _mark_done(db: Session, doc: CurriculumDocument, collection_name: str) -> No
     doc.embedding_status = EmbeddingStatus.DONE
     doc.embedded_at = datetime.now(timezone.utc)
     doc.chroma_collection_id = collection_name
+    admin_service.notify_admins(
+        db,
+        NotificationType.HEATMAP_UPDATED,
+        "Curriculum ingestion completed",
+        f"{doc.file_name} finished embedding successfully.",
+        str(doc.doc_id),
+    )
     db.commit()
 
 
 def _mark_failed(db: Session, doc: CurriculumDocument, reason: str) -> None:
     """Set embedding_status to FAILED and commit."""
     doc.embedding_status = EmbeddingStatus.FAILED
+    admin_service.notify_admins(
+        db,
+        NotificationType.AT_RISK_FLAG,
+        "Curriculum ingestion failed",
+        f"{doc.file_name} failed to embed: {reason[:180]}",
+        str(doc.doc_id),
+    )
     db.commit()
     logger.error("Curriculum ingestion failed for doc %s: %s", doc.doc_id, reason)
 

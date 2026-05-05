@@ -97,6 +97,17 @@ def _broadcast_admin_notification(
         )
 
 
+def notify_admins(
+    db: Session,
+    notif_type: NotificationType,
+    title: str,
+    body: str,
+    related_resource_id: str | None = None,
+) -> None:
+    """Public wrapper to create in-app notifications for all active admins."""
+    _broadcast_admin_notification(db, notif_type, title, body, related_resource_id)
+
+
 def _notify_for_audit_action(db: Session, action: str, description: str, resource_id: str | None) -> None:
     mapping: dict[str, tuple[NotificationType, str]] = {
         "USER_CREATED": (NotificationType.QUIZ_ASSIGNED, "New user account created"),
