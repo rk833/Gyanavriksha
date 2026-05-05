@@ -42,7 +42,9 @@ Evaluate the submission and respond ONLY with valid JSON in this exact structure
   "strengths": "<what the student did well>",
   "improvements": "<what the student needs to work on>",
   "knowledge_gap_detected": true | false,
-  "failed_at_step": "<step name if a critical step failed, else null>"
+  "failed_at_step": "<step name if a critical step failed, else null>",
+  "gap_concept": "<short label for the weak concept if knowledge_gap_detected, else null>",
+  "gap_topic_tag": "<snake_case tag unique within subject if knowledge_gap_detected, else null>"
 }}
 """.strip()
 

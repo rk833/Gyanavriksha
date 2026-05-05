@@ -1,8 +1,13 @@
+import logging
+from functools import lru_cache
+
 from fastapi import APIRouter, HTTPException, Depends
 from app.quiz_generator.service import QuizGeneratorService, GeneratedQuiz
 from app.quiz_generator.gap_detector import QuizGapDetector, GapAnalysisResult
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/quiz", tags=["Quiz Generator"])
 
@@ -14,14 +19,18 @@ class QuizGenerateRequest(BaseModel):
     instructor_id: Optional[str] = None
     class_id: Optional[str] = None
     student_id: Optional[str] = None
+    avoid_question_texts: list[str] = Field(default_factory=list)
 
 class GapDetectRequest(BaseModel):
     student_id: str
     subject: str
     chat_log: str
 
-def get_quiz_service():
+@lru_cache(maxsize=1)
+def get_quiz_service() -> QuizGeneratorService:
+    """Reuse one generator + one RAG/embeddings stack across requests (avoid reloading BERT each call)."""
     return QuizGeneratorService()
+
 
 def get_gap_detector():
     return QuizGapDetector()
@@ -42,10 +51,12 @@ async def generate_quiz_endpoint(
             grade=request.grade,
             instructor_id=request.instructor_id,
             class_id=request.class_id,
-            student_id=request.student_id
+            student_id=request.student_id,
+            avoid_question_texts=request.avoid_question_texts or [],
         )
         return quiz
     except Exception as e:
+        logger.exception("Quiz /generate failed")
         raise HTTPException(status_code=500, detail=f"Failed to generate quiz: {str(e)}")
 
 @router.post("/detect-gaps", response_model=GapAnalysisResult)

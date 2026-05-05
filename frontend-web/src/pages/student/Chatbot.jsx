@@ -4,7 +4,7 @@ import {
   CloudUpload, Lock, Sparkles, ChevronDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import ReactMarkdown from 'react-markdown';
+import MarkdownMath from '../../components/MarkdownMath';
 import useAuth from '../../hooks/useAuth';
 import { queryRag, uploadPersonalNote } from '../../services/aiService';
 import { getSubjects } from '../../services/studentService';
@@ -58,20 +58,10 @@ function BotBubble({ text, citation, timestamp, loading }) {
         )}
         <div className="bg-white border border-slate-100 rounded-2xl rounded-bl-sm px-4 py-3 text-sm leading-relaxed text-slate-700 shadow-sm">
           {loading ? <TypingDots /> : (
-            <ReactMarkdown
-              components={{
-                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-1">{children}</ul>,
-                ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-1">{children}</ol>,
-                li: ({ children }) => <li className="leading-snug">{children}</li>,
-                strong: ({ children }) => <strong className="font-semibold text-slate-800">{children}</strong>,
-                h1: ({ children }) => <h1 className="font-bold text-base mb-1 mt-1">{children}</h1>,
-                h2: ({ children }) => <h2 className="font-semibold text-sm mb-1 mt-1">{children}</h2>,
-                h3: ({ children }) => <h3 className="font-medium text-sm mb-0.5">{children}</h3>,
-              }}
-            >
-              {text}
-            </ReactMarkdown>
+            <MarkdownMath
+              markdown={text}
+              className="text-sm [&_p]:text-slate-700 [&_li]:text-slate-700 [&_strong]:text-slate-800"
+            />
           )}
         </div>
         {!loading && (

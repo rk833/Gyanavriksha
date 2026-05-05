@@ -5,11 +5,11 @@ Sprint 3 Phase 3: GD-53, GD-54, GD-55
 import os
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.db.models.assignment import Assignment
@@ -118,6 +118,7 @@ def get_assignments_for_student(
     user_id: uuid.UUID,
     subject_id: int | None = None,
     status_filter: str | None = None,
+    due_on: date | None = None,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list, int]:
@@ -160,6 +161,12 @@ def get_assignments_for_student(
         query = query.filter((Assignment.due_date > now) | (Assignment.due_date.is_(None)))
     elif status_filter == "closed":
         query = query.filter(Assignment.due_date <= now)
+
+    if due_on is not None:
+        query = query.filter(
+            Assignment.due_date.isnot(None),
+            func.date(Assignment.due_date) == due_on,
+        )
 
     total = query.count()
     query = query.order_by(Assignment.due_date.asc().nullslast())
@@ -428,6 +435,7 @@ def get_submissions_for_student(
     user_id: uuid.UUID,
     subject_id: int | None = None,
     status_filter: str | None = None,
+    search: str | None = None,
     page: int = 1,
     per_page: int = 10,
 ) -> tuple[list, int]:
@@ -448,6 +456,16 @@ def get_submissions_for_student(
             query = query.filter(Submission.processing_status == ps)
         except ValueError:
             pass
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                Assignment.title.ilike(term),
+                Subject.subject_name.ilike(term),
+                Assignment.description.ilike(term),
+            )
+        )
 
     total = query.count()
     query = query.order_by(Submission.submitted_at.desc())
@@ -539,6 +557,7 @@ def get_submission_detail(
         "submission_id": sub.submission_id,
         "assignment_id": sub.assignment_id,
         "assignment_title": assignment.title,
+        "assignment_description": assignment.description,
         "assignment_max_score": assignment.max_score,
         "subject_name": subject.subject_name,
         "submitted_at": sub.submitted_at,

@@ -6,6 +6,7 @@ application-layer use cases. Business logic, response construction, and error
 mapping all live in the application layer.
 """
 import uuid
+from datetime import date
 
 import mimetypes
 from pathlib import Path
@@ -31,7 +32,7 @@ from app.schemas.progress import (
     KnowledgeGapSummary,
     StudentProgressResponse,
 )
-from app.schemas.quiz import MicroQuizSchema, QuizGenerateRequest
+from app.schemas.quiz import MicroQuizSchema, MicroQuizSubmitResponse, QuizGenerateRequest, SubmitMicroQuizInput
 from app.schemas.submission import (
     SubmissionDetailResponse,
     SubmissionFeedbackResponse,
@@ -87,6 +88,7 @@ def get_dashboard(
 def list_assignments(
     subject_id: int | None = Query(None),
     status: str | None = Query(None, pattern="^(open|closed|all)$"),
+    due_on: date | None = Query(None, description="Calendar due date (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: User = Depends(require_role([UserRole.STUDENT])),
@@ -98,6 +100,7 @@ def list_assignments(
         current_user.user_id,
         subject_id=subject_id,
         status_filter=status if status != "all" else None,
+        due_on=due_on,
         page=page,
         per_page=per_page,
     )
@@ -157,6 +160,7 @@ async def upload_submission(
 def list_submissions(
     subject_id: int | None = Query(None),
     status: str | None = Query(None),
+    search: str | None = Query(None, max_length=200),
     page: int = Query(1, ge=1),
     per_page: int = Query(10, ge=1, le=100),
     current_user: User = Depends(require_role([UserRole.STUDENT])),
@@ -168,6 +172,7 @@ def list_submissions(
         current_user.user_id,
         subject_id=subject_id,
         status_filter=status,
+        search=search,
         page=page,
         per_page=per_page,
     )
@@ -414,6 +419,17 @@ def get_quiz_detail(
 ):
     """Return full detail for a specific quiz, including questions."""
     return service.get_quiz_detail(db, current_user.user_id, quiz_id)
+
+
+@router.post("/quizzes/{quiz_id}/submit", response_model=MicroQuizSubmitResponse)
+def submit_micro_quiz(
+    quiz_id: uuid.UUID,
+    data: SubmitMicroQuizInput,
+    current_user: User = Depends(require_role([UserRole.STUDENT])),
+    db: Session = Depends(get_db),
+):
+    """Submit answers; server scores against stored keys and may mark the linked knowledge gap resolved."""
+    return service.submit_micro_quiz(db, current_user.user_id, quiz_id, list(data.answers))
 
 
 @router.post("/quizzes/generate", response_model=MicroQuizSchema, status_code=201)

@@ -43,6 +43,7 @@ export default function StudentAssignments() {
   const submittedSuccessRef = useRef(false);
   const [subjectFilter, setSubjectFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [dueDateFilter, setDueDateFilter] = useState('');
   const [page, setPage] = useState(1);
   const [uploadModal, setUploadModal] = useState(null);
   const [examSessionStarted, setExamSessionStarted] = useState(false);
@@ -62,11 +63,12 @@ export default function StudentAssignments() {
   });
 
   const { data: assignmentsData, isPending: loading } = useQuery({
-    queryKey: ['student', 'assignments', { page, subjectFilter, statusFilter }],
+    queryKey: ['student', 'assignments', { page, subjectFilter, statusFilter, dueDateFilter }],
     queryFn: async () => {
       const params = { page, per_page: 10 };
       if (subjectFilter) params.subject_id = subjectFilter;
       if (statusFilter !== 'all') params.status = statusFilter;
+      if (dueDateFilter) params.due_on = dueDateFilter;
       const res = await getAssignments(params);
       return res.data;
     },
@@ -291,6 +293,27 @@ export default function StudentAssignments() {
           <option value="open">Open</option>
           <option value="closed">Closed</option>
         </select>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white shadow-sm">
+            <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+            <span className="text-slate-500 whitespace-nowrap">Due on</span>
+            <input
+              type="date"
+              value={dueDateFilter}
+              onChange={(e) => { setDueDateFilter(e.target.value); setPage(1); }}
+              className="bg-transparent outline-none text-slate-800 min-w-0"
+            />
+          </label>
+          {dueDateFilter ? (
+            <button
+              type="button"
+              onClick={() => { setDueDateFilter(''); setPage(1); }}
+              className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1 rounded-lg hover:bg-slate-50"
+            >
+              Clear date
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {loading ? (

@@ -46,6 +46,52 @@ export const uploadPersonalNote = (file, meta) => {
 export const generateQuiz = (payload) => api.post('/api/quiz/generate', payload, { timeout: 120_000 });
 
 /**
+ * Stream adaptive quiz generation (NDJSON). Events: { type: 'question', index, total, question },
+ * then { type: 'complete', quiz }. Errors as { type: 'error', detail }.
+ *
+ * @param {object} payload - Same shape as generateQuiz (student_id, subject_id, concept, num_questions?, gap_id?)
+ * @param {(ev: object) => void} onEvent
+ * @param {AbortSignal} [signal]
+ */
+export async function generateQuizStream(payload, onEvent, signal) {
+  const token = localStorage.getItem('access_token');
+  const base = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const res = await fetch(`${base}/api/quiz/generate-stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `Quiz stream failed (${res.status})`);
+  }
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('No response body');
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const s = line.trim();
+      if (!s) continue;
+      const ev = JSON.parse(s);
+      onEvent(ev);
+      if (ev.type === 'error') {
+        throw new Error(ev.detail || 'Quiz generation failed');
+      }
+    }
+  }
+}
+
+/**
  * Fetch the paginated list of micro-quizzes assigned to a student.
  *
  * @param {string} studentId
@@ -64,6 +110,15 @@ export const getStudentQuizzes = (studentId, params = {}) =>
  */
 export const getStudentQuiz = (studentId, quizId) =>
   api.get(`/api/quiz/students/${studentId}/${quizId}`);
+
+/**
+ * Submit micro-quiz answers (indices per question; null = skipped). Server scores and may resolve the gap.
+ *
+ * @param {string} quizId
+ * @param {(number|null|undefined)[]} answers
+ */
+export const submitMicroQuiz = (quizId, answers) =>
+  api.post(`/api/students/quizzes/${quizId}/submit`, { answers });
 
 // Grading
 

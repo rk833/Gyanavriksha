@@ -48,12 +48,12 @@ export default function StudentLayout() {
     <>
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-4 border-b border-primary-light">
-        <img src="/images/logo-icon.png" alt="Gyanavriksha" className="w-8 h-8" />
+        <img src="/images/logo-icon.png" alt="Gyanavriksha" className="w-9 h-9 rounded-lg" />
         <div>
-          <span className="font-bold text-primary-dark text-sm">Gyanavriksha</span>
-          {user && (
-            <p className="text-xs text-slate-500 truncate max-w-[140px]">{user.full_name}</p>
-          )}
+          <span className="font-bold text-primary-dark text-sm tracking-tight">Gyanavriksha</span>
+          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500 font-medium">
+            Student Portal
+          </p>
         </div>
       </div>
 

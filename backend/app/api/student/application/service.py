@@ -5,6 +5,7 @@ and map domain exceptions to HTTPExceptions. No HTTP-specific concerns from
 FastAPI bleed into this layer beyond the HTTPException type itself.
 """
 import uuid
+from datetime import date
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -23,7 +24,7 @@ from app.schemas.progress import (
     KnowledgeGapSummary,
     StudentProgressResponse,
 )
-from app.schemas.quiz import MicroQuizSchema, QuizQuestionSchema
+from app.schemas.quiz import MicroQuizSchema, MicroQuizSubmitResponse, QuizQuestionSchema
 from app.schemas.submission import (
     SubmissionDetailResponse,
     SubmissionFeedbackResponse,
@@ -178,6 +179,7 @@ def list_assignments(
     student_id: uuid.UUID,
     subject_id: "int | None",
     status_filter: "str | None",
+    due_on: date | None,
     page: int,
     per_page: int,
 ) -> PaginatedResponse[AssignmentListItem]:
@@ -187,6 +189,7 @@ def list_assignments(
         student_id,
         subject_id=subject_id,
         status_filter=status_filter,
+        due_on=due_on,
         page=page,
         per_page=per_page,
     )
@@ -243,6 +246,7 @@ def list_submissions(
     student_id: uuid.UUID,
     subject_id: "int | None",
     status_filter: "str | None",
+    search: "str | None",
     page: int,
     per_page: int,
 ) -> PaginatedResponse[SubmissionListItem]:
@@ -252,6 +256,7 @@ def list_submissions(
         student_id,
         subject_id=subject_id,
         status_filter=status_filter,
+        search=search,
         page=page,
         per_page=per_page,
     )
@@ -493,3 +498,28 @@ def get_quiz_detail(
             detail="Quiz not found",
         )
     return MicroQuizSchema.from_orm(quiz)
+
+
+def submit_micro_quiz(
+    db: Session,
+    student_id: uuid.UUID,
+    quiz_id: uuid.UUID,
+    answers: list[int | None],
+) -> MicroQuizSubmitResponse:
+    """Score a micro-quiz from stored questions and optionally resolve the linked knowledge gap."""
+    try:
+        result = quiz_service.submit_micro_quiz_answers(db, student_id, quiz_id, answers)
+    except ValueError as exc:
+        msg = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if msg == "Quiz not found"
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=msg) from exc
+    return MicroQuizSubmitResponse(
+        quiz=MicroQuizSchema.from_orm(result["quiz"]),
+        correct_count=result["correct_count"],
+        total_questions=result["total_questions"],
+        knowledge_gap_resolved=result["knowledge_gap_resolved"],
+    )

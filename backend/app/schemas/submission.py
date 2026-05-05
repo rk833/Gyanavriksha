@@ -27,6 +27,7 @@ class SubmissionDetailResponse(SubmissionListItem):
     image_path: str
     image_quality_score: float | None = None
     is_exam_submission: bool = False
+    assignment_description: str | None = None
     assignment_max_score: float = 100.0
     uploaded_files: list[dict] = []
     feedback: "SubmissionFeedbackResponse | None" = None

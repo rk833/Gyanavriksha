@@ -39,7 +39,7 @@ export const getEnrollments = (params = {}) =>
 /**
  * Fetch paginated published assignments for the student's enrolled subjects.
  *
- * @param {{ subject_id?: number, status?: 'open'|'closed'|'all', page?: number, per_page?: number }} params
+ * @param {{ subject_id?: number, status?: 'open'|'closed'|'all', due_on?: string, page?: number, per_page?: number }} params
  * @returns {Promise<import('./types').PaginatedResponse>}
  */
 export const getAssignments = (params = {}) =>

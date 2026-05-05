@@ -4,6 +4,8 @@ Each function orchestrates one quiz operation: delegates to the service layer,
 maps errors to HTTPExceptions, and keeps the presentation layer clean.
 """
 import uuid
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
@@ -40,6 +42,21 @@ async def generate_quiz(db: Session, payload: GenerateQuizInput) -> MicroQuiz:
         gap_id=payload.gap_id,
     )
     return quiz
+
+
+async def stream_generate_quiz(
+    db: Session, payload: GenerateQuizInput
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield NDJSON events: one per generated question, then a complete quiz payload."""
+    async for event in quiz_service.stream_generate_quiz_events(
+        db,
+        student_id=payload.student_id,
+        subject_id=payload.subject_id,
+        concept=payload.concept,
+        num_questions=payload.num_questions,
+        gap_id=payload.gap_id,
+    ):
+        yield event
 
 
 def list_quizzes(

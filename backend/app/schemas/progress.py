@@ -13,6 +13,9 @@ class KnowledgeGapResponse(BaseModel):
     detected_at: datetime
     subject_id: int
     subject_name: str | None = None
+    # Latest micro-quiz linked to this gap (auto-created when the gap is detected)
+    quiz_id: uuid.UUID | None = None
+    quiz_status: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -34,6 +37,21 @@ class TopicDifficulty(BaseModel):
     difficulty_score: float
 
 
+class ProgressGapItem(BaseModel):
+    """One knowledge gap with optional linked micro-quiz (latest for that gap)."""
+
+    gap_id: uuid.UUID
+    concept_name: str
+    topic_tag: str
+    subject_id: int
+    subject_name: str | None = None
+    is_resolved: bool
+    recurrence_count: int
+    detected_at: datetime | None = None
+    quiz_id: uuid.UUID | None = None
+    quiz_status: str | None = None
+
+
 class StudentProgressResponse(BaseModel):
     average_score: float | None = None
     trend_percentage: float | None = None
@@ -43,6 +61,7 @@ class StudentProgressResponse(BaseModel):
     topic_difficulty: list[TopicDifficulty] = []
     at_risk_flag: bool = False
     improvement_tips: list[str] = []
+    recent_knowledge_gaps: list[ProgressGapItem] = []
 
 
 class DashboardResponse(BaseModel):

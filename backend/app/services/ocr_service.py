@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models.assignment import Assignment
+from app.db.models.knowledge_gap import KnowledgeGap
 from app.db.models.submission import Submission
 from app.db.models.submission_feedback import SubmissionFeedback
 from app.db.models.subject import Subject
@@ -152,8 +153,12 @@ async def _call_grading_endpoint(
         ) from exc
 
 
-def _write_grading_result(db: Session, sub: Submission, result: dict[str, Any]) -> None:
-    """Persist the AI grading result to Submission and SubmissionFeedback rows."""
+def _write_grading_result(db: Session, sub: Submission, result: dict[str, Any]) -> KnowledgeGap | None:
+    """Persist the AI grading result to Submission and SubmissionFeedback rows.
+
+    When ``knowledge_gap_detected`` is true (and the row is not instructor-overridden),
+    upserts a ``KnowledgeGap`` row before commit and returns it so callers can enqueue a micro-quiz.
+    """
     existing = db.query(SubmissionFeedback).filter(
         SubmissionFeedback.submission_id == sub.submission_id
     ).first()
@@ -167,7 +172,7 @@ def _write_grading_result(db: Session, sub: Submission, result: dict[str, Any]) 
             "improvements": result.get("improvements"),
         }
         db.commit()
-        return
+        return None
 
     raw_class = result.get("grade_classification", "incorrect")
     sub.grade_classification = _CLASSIFICATION_MAP.get(raw_class, GradeClassification.INCORRECT)
@@ -194,7 +199,13 @@ def _write_grading_result(db: Session, sub: Submission, result: dict[str, Any]) 
             knowledge_gap_detected=result.get("knowledge_gap_detected", False),
             llm_model_used="gemini-2.5-flash",
         ))
+    gap_row: KnowledgeGap | None = None
+    if result.get("knowledge_gap_detected"):
+        from app.services import quiz_service
+
+        gap_row = quiz_service.upsert_gap_from_grading(db, sub, result)
     db.commit()
+    return gap_row
 
 
 # Public API
@@ -236,7 +247,12 @@ async def process_submission_ocr(db: Session, submission_id: uuid.UUID) -> dict[
         db.commit()
         logger.error("Submission file missing for %s: %s", submission_id, exc)
         return {"error": str(exc)}
-    _write_grading_result(db, sub, result)
+    gap = _write_grading_result(db, sub, result)
+    if gap:
+        from app.services import quiz_service
+
+        db.refresh(gap)
+        await quiz_service.generate_quiz_if_eligible(db, gap)
     logger.info(
         "Submission %s graded: %s (%.1f%%)",
         submission_id,

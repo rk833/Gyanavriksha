@@ -8,6 +8,16 @@ from app.db.base import Base
 
 
 class KnowledgeGap(Base):
+    """Weak concepts per student, keyed by (student_id, topic_tag).
+
+    Rows are created when:
+    - AI scans the tutor chat log (`quiz_service.detect_gaps_for_quiz` → AI `/quiz/detect-gaps`), or
+    - Submission grading marks `knowledge_gap_detected` (`quiz_service.upsert_gap_from_grading`).
+
+    ``micro_quizzes.gap_id`` links an auto-generated practice quiz when the backend runs
+    ``generate_quiz_if_eligible`` after detection (grading or chat); rows persist until deleted.
+    """
+
     __tablename__ = "knowledge_gaps"
 
     gap_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)

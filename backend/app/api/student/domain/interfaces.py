@@ -5,6 +5,7 @@ underlying service implementations, enabling dependency inversion so that the
 application layer never depends directly on a concrete infrastructure module.
 """
 import uuid
+from datetime import date
 from typing import Protocol
 
 from sqlalchemy.orm import Session
@@ -71,6 +72,7 @@ class ISubmissionService(Protocol):
         student_id: uuid.UUID,
         subject_id: "int | None",
         status_filter: "str | None",
+        due_on: date | None,
         page: int,
         per_page: int,
     ) -> "tuple[list, int]":
@@ -89,6 +91,7 @@ class ISubmissionService(Protocol):
         student_id: uuid.UUID,
         subject_id: "int | None",
         status_filter: "str | None",
+        search: "str | None",
         page: int,
         per_page: int,
     ) -> "tuple[list, int]":

@@ -147,10 +147,15 @@ export default function StudentKnowledgeGaps() {
                       </div>
                     </div>
                     <button
+                      type="button"
                       onClick={() => {
                         if (gap.is_resolved) {
                           navigate('/student/submissions');
+                        } else if (gap.quiz_id) {
+                          // Open the auto-saved micro-quiz from the database (no regeneration)
+                          navigate(`/student/micro-quiz?quiz_id=${gap.quiz_id}`);
                         } else {
+                          // Gap exists but quiz creation failed or is pending — generate on demand
                           navigate(
                             `/student/micro-quiz?gap_id=${gap.gap_id}&concept=${encodeURIComponent(gap.concept_name)}&subject_id=${gap.subject_id || ''}`
                           );
@@ -158,7 +163,13 @@ export default function StudentKnowledgeGaps() {
                       }}
                       className="text-xs bg-primary-dark text-white px-3 py-1.5 rounded-lg hover:bg-primary transition-colors"
                     >
-                      {gap.is_resolved ? 'Review Results' : 'Linked Quiz'}
+                      {gap.is_resolved
+                        ? 'Review Results'
+                        : gap.quiz_id
+                          ? gap.quiz_status === 'COMPLETED'
+                            ? 'View Quiz'
+                            : 'Open saved quiz'
+                          : 'Generate quiz'}
                     </button>
                   </div>
                 ))}

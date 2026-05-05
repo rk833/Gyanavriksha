@@ -3,9 +3,11 @@
 Route handlers declare HTTP contracts and immediately delegate to the
 application-layer use cases. No business logic occurs here.
 """
+import json
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.quiz.application import service
@@ -32,6 +34,23 @@ async def generate_quiz(
 ):
     """Generate an AI micro-quiz for a concept and return the saved quiz."""
     return await service.generate_quiz(db, payload)
+
+
+@router.post("/generate-stream")
+async def generate_quiz_stream(
+    payload: GenerateQuizInput,
+    db: Session = Depends(get_db),
+):
+    """Stream quiz generation as NDJSON: ``question`` events, then ``complete`` with saved quiz."""
+
+    async def ndjson():
+        try:
+            async for ev in service.stream_generate_quiz(db, payload):
+                yield (json.dumps(ev, default=str) + "\n").encode("utf-8")
+        except Exception as exc:
+            yield (json.dumps({"type": "error", "detail": str(exc)}) + "\n").encode("utf-8")
+
+    return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
 
 @router.get("/students/{student_id}")
