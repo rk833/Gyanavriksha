@@ -63,19 +63,15 @@ export function mergeIotTelemetryIntoStatus<T extends IoTStatusShape | null>(pre
       if (msg.last_seen_at) u.last_seen_at = msg.last_seen_at;
       if (msg.latest_distance_cm != null || msg.latest_distance_at) {
         u.latest_distance = {
-          ...(u.latest_distance || {}),
-          ...(msg.latest_distance_cm != null ? { distance_cm: msg.latest_distance_cm } : {}),
-          ...(msg.latest_distance_at ? { recorded_at: msg.latest_distance_at } : {}),
+          distance_cm: msg.latest_distance_cm != null ? msg.latest_distance_cm : (u.latest_distance?.distance_cm ?? null),
+          recorded_at: msg.latest_distance_at ? msg.latest_distance_at : (u.latest_distance?.recorded_at ?? null),
         };
       }
       if (msg.latest_ldr_value != null || msg.latest_ldr_at) {
         u.latest_light = {
-          ...(u.latest_light || {}),
-          ...(msg.latest_ldr_value != null ? { ldr_value: msg.latest_ldr_value } : {}),
-          ...(msg.latest_led_activated !== undefined && msg.latest_led_activated !== null
-            ? { led_activated: msg.latest_led_activated }
-            : {}),
-          ...(msg.latest_ldr_at ? { recorded_at: msg.latest_ldr_at } : {}),
+          ldr_value: msg.latest_ldr_value != null ? msg.latest_ldr_value : (u.latest_light?.ldr_value ?? null),
+          led_activated: msg.latest_led_activated != null ? msg.latest_led_activated : (u.latest_light?.led_activated ?? null),
+          recorded_at: msg.latest_ldr_at ? msg.latest_ldr_at : (u.latest_light?.recorded_at ?? null),
         };
       }
       return u;

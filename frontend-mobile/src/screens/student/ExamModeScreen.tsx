@@ -544,7 +544,7 @@ export default function ExamModeScreen({ navigation, route }: ExamModeScreenProp
               </View>
               {(assignmentDetail?.due_date ?? null) && sessionStatus !== 'TERMINATED' && sessionStatus !== 'COMPLETED' ? (
                 <Text style={[styles.timerDue, { color: 'rgba(255,255,255,0.85)' }]}>
-                  Due {formatShortDate(assignmentDetail.due_date)}
+                  Due {formatShortDate(assignmentDetail?.due_date)}
                 </Text>
               ) : null}
             </View>
@@ -678,7 +678,7 @@ export default function ExamModeScreen({ navigation, route }: ExamModeScreenProp
                 </TouchableOpacity>
               )}
 
-              {isEnded && sessionStatus !== 'error' && (
+              {isEnded && (
                 <TouchableOpacity
                   style={[styles.doneButton, { borderColor: theme.colors.border }]}
                   activeOpacity={0.85}
@@ -693,7 +693,7 @@ export default function ExamModeScreen({ navigation, route }: ExamModeScreenProp
                 </TouchableOpacity>
               )}
 
-              {(isActive || isPaused) && sessionStatus !== 'TERMINATED' && sessionStatus !== 'COMPLETED' && (
+              {(isActive || isPaused) && (
                 <TouchableOpacity
                   style={[styles.exitButton, { borderColor: '#FECACA' }]}
                   activeOpacity={0.85}

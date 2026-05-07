@@ -340,7 +340,7 @@ export default function ChatbotScreen() {
       try {
         const speechPkg = await import('expo-speech-recognition');
         const speech = speechPkg.ExpoSpeechRecognitionModule;
-        speechModuleRef.current = speech;
+        speechModuleRef.current = speech as unknown as typeof speechModuleRef.current;
         if (!mounted) return;
         setSpeechAvailable(true);
         // Register native listeners when available (dev build). In Expo Go this module is absent.

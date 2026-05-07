@@ -19,6 +19,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import axios from 'axios';
 import { File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
+import * as Sharing from 'expo-sharing';
 import WebView from 'react-native-webview';
 
 import { useApi } from '../../hooks/useApi';
@@ -287,32 +288,41 @@ export default function LibraryScreen() {
     void load(next, false);
   }, [isLoadingMore, load, page, total]);
 
-  const downloadDoc = useCallback(
-    async (doc: LibraryDoc) => {
-      setDownloading(doc.doc_id);
-      try {
-        const token = await SecureStore.getItemAsync('access_token');
-        const url = `${API_BASE_URL}/api/students/library/${doc.doc_id}/download`;
-        const res = await axios.get(url, {
-          headers: { Authorization: `Bearer ${token}` },
-          responseType: 'blob',
-        });
-        // On mobile we can't open blobs directly, so just show success
-        const size = formatSize(
-          typeof res.data?.size === 'number' ? res.data.size : doc.file_size_bytes
-        );
-        Alert.alert(
-          'Download ready',
-          `${doc.file_name}${size ? ` (${size})` : ''}\n\nFile downloaded successfully.`
-        );
-      } catch (err) {
-        Alert.alert('Download failed', parseApiError(err, 'Could not download this document.'));
-      } finally {
-        setDownloading(null);
+  const downloadDoc = useCallback(async (doc: LibraryDoc) => {
+    setDownloading(doc.doc_id);
+    try {
+      const token = await SecureStore.getItemAsync('access_token');
+      if (!token) {
+        Alert.alert('Session expired', 'Please log in again.');
+        return;
       }
-    },
-    []
-  );
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert('Not supported', 'Sharing/saving files is not available on this device.');
+        return;
+      }
+
+      const ext = resolvePreviewExtension(doc);
+      const safeExt = ext === 'jpeg' ? 'jpg' : ext;
+      const url = `${API_BASE_URL}/api/students/library/${doc.doc_id}/download`;
+      const outfile = new File(Paths.cache, `dl_${doc.doc_id}.${safeExt}`);
+
+      const downloaded = await File.downloadFileAsync(url, outfile, {
+        headers: { Authorization: `Bearer ${token}` },
+        idempotent: false,
+      });
+
+      await Sharing.shareAsync(downloaded.uri, {
+        dialogTitle: `Save ${doc.file_name}`,
+        UTI: safeExt === 'pdf' ? 'com.adobe.pdf' : undefined,
+      });
+    } catch (err) {
+      Alert.alert('Download failed', parseApiError(err, 'Could not download this document.'));
+    } finally {
+      setDownloading(null);
+    }
+  }, []);
 
   const viewDoc = useCallback(async (doc: LibraryDoc) => {
     if (Platform.OS === 'web') {

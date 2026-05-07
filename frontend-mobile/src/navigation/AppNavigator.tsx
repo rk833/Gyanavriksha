@@ -346,7 +346,7 @@ function AppTabs({ onLogout }: { onLogout: () => void | Promise<void> }) {
           options={{
             title: 'CameraScreen',
             unmountOnBlur: true,
-          }}
+          } as any}
         >
           {(props) => <CameraScreen {...props} />}
         </Tab.Screen>
@@ -376,13 +376,13 @@ function AppTabs({ onLogout }: { onLogout: () => void | Promise<void> }) {
         </Tab.Screen>
         <Tab.Screen
           name="IoTStatusScreen"
-          options={{ title: 'IoT Status', unmountOnBlur: true }}
+          options={{ title: 'IoT Status', unmountOnBlur: true } as any}
         >
           {() => <IoTStatusScreen />}
         </Tab.Screen>
         <Tab.Screen
           name="ExamModeScreen"
-          options={{ title: 'Exam Mode', unmountOnBlur: true }}
+          options={{ title: 'Exam Mode', unmountOnBlur: true } as any}
         >
           {(props) => <ExamModeScreen {...props} />}
         </Tab.Screen>
@@ -418,7 +418,7 @@ function AppTabs({ onLogout }: { onLogout: () => void | Promise<void> }) {
         </Tab.Screen>
         <Tab.Screen
           name="QRLoginScreen"
-          options={{ title: 'Scan QR for web', unmountOnBlur: true }}
+          options={{ title: 'Scan QR for web', unmountOnBlur: true } as any}
         >
           {(props) => (
             <QRLoginScreen
