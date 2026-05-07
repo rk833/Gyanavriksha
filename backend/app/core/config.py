@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM_EMAIL: str = "noreply@gyanavriksha.com"
 
+    # Contact form receiver
+    CONTACT_RECEIVER_EMAIL: str = "aayushshah817@gmail.com"
+
     # Frontend URL (for email verification/reset links)
     FRONTEND_URL: str = "http://localhost:5173"
 

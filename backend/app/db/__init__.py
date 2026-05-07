@@ -43,3 +43,4 @@ from app.db.models import exam_session
 # Domain 8: System & Security 
 from app.db.models import audit_log
 from app.db.models import notification
+from app.db.models import support_ticket
