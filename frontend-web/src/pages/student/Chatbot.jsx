@@ -251,9 +251,13 @@ export default function AiTutorPage() {
             : m
         )
       );
-    } catch {
+    } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== thinkingId));
-      toast.error('Failed to get a response. Please try again.');
+      if (err?.code === 'ECONNABORTED') {
+        toast.error('AI response is taking too long. Please try again in a moment.');
+      } else {
+        toast.error('Failed to get a response. Please try again.');
+      }
     } finally {
       setSending(false);
     }

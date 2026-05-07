@@ -492,12 +492,23 @@ export default function StudentAssignments() {
                         </button>
                       )
                     ) : st === 'submitted' ? (
-                      <button
-                        onClick={() => navigate('/student/submissions')}
-                        className="text-sm font-semibold text-primary hover:underline"
-                      >
-                        View my submission
-                      </button>
+                      <>
+                        {!examBlocked && a.due_date && new Date(a.due_date) >= new Date() && (
+                          <button
+                            onClick={() => openSubmit(a)}
+                            className="inline-flex items-center gap-2 bg-slate-900 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-slate-800 transition-colors"
+                          >
+                            <Upload className="w-4 h-4" />
+                            Submit again
+                          </button>
+                        )}
+                        <button
+                          onClick={() => navigate('/student/submissions')}
+                          className="text-sm font-semibold text-primary hover:underline"
+                        >
+                          View my submission
+                        </button>
+                      </>
                     ) : (
                       <span className="text-sm text-slate-400">Deadline passed — contact your instructor.</span>
                     )}

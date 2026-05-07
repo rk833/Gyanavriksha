@@ -3,7 +3,6 @@ import * as SecureStore from 'expo-secure-store';
 import { DeviceEventEmitter } from 'react-native';
 
 import { API_BASE_URL } from '../config/api';
-import { clearTwoFactorTrustUsingLastLoginEmail } from '../utils/twoFactorTrust';
 
 const AUTH_SESSION_EXPIRED = 'auth:session-expired';
 
@@ -43,11 +42,6 @@ export async function clearStoredAuthTokens(preserveRefreshToken = false) {
   if (!preserveRefreshToken) {
     try {
       await SecureStore.deleteItemAsync('refresh_token');
-    } catch {
-      /* ignore */
-    }
-    try {
-      await clearTwoFactorTrustUsingLastLoginEmail();
     } catch {
       /* ignore */
     }

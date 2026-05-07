@@ -125,13 +125,6 @@ export function AuthProvider({ children }) {
     }
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-    if (user?.email) {
-      try {
-        localStorage.removeItem(authService.twoFactorTrustStorageKey(user.email));
-      } catch {
-        /* no-op */
-      }
-    }
     setUser(null);
   };
 

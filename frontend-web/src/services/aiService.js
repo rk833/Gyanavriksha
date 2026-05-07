@@ -20,7 +20,8 @@ export const queryRag = (payload) => api.post('/api/rag/query', payload);
  *
  * @param {{ query: string, subject_id?: number|null, history_id?: string|null }} payload
  */
-export const postAiTutorChat = (payload) => api.post('/api/students/ai-tutor/chat', payload);
+export const postAiTutorChat = (payload) =>
+  api.post('/api/students/ai-tutor/chat', payload, { timeout: 120_000 });
 
 /**
  * @param {{ page?: number, per_page?: number, subject_id?: number|string, search?: string }} params

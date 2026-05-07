@@ -261,7 +261,6 @@ def logout_user(db: Session, user_id: str, refresh_token_str: str | None = None)
     else:
         # Delete all refresh tokens for this user
         db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete()
-        revoke_two_factor_trusted_devices(db, uuid.UUID(str(user_id)))
     db.commit()
 
 
