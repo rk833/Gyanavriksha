@@ -16,6 +16,9 @@ import Features from './pages/Features';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import CookiePolicy from './pages/CookiePolicy';
+import SupportTicket from './pages/SupportTicket';
+import Contact from './pages/Contact';
+import FAQ from './pages/FAQ';
 
 // Student Pages
 import StudentLayout from './layouts/StudentLayout';
@@ -64,6 +67,7 @@ import AdminSettings from './pages/admin/AdminSettings';
 import AdminAcademicManagement from './pages/admin/AcademicManagement';
 import AdminNotifications from './pages/admin/Notifications';
 import AdminProfile from './pages/admin/Profile';
+import AdminSupportTickets from './pages/admin/SupportTickets';
 
 // Common
 import ProtectedRoute from './components/common/ProtectedRoute';
@@ -79,6 +83,7 @@ function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/terms-of-service" element={<TermsOfService />} />
           <Route path="/cookie-policy" element={<CookiePolicy />} />
+          <Route path="/support-ticket" element={<SupportTicket />} />
 
           {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
@@ -117,6 +122,9 @@ function App() {
             <Route path="terms-of-service" element={<TermsOfService />} />
             <Route path="cookie-policy" element={<CookiePolicy />} />
             <Route path="about" element={<About />} />
+            <Route path="support-ticket" element={<SupportTicket />} />
+            <Route path="contact" element={<Contact />} />
+            <Route path="faq" element={<FAQ />} />
           </Route>
 
           {/* Instructor Routes */}
@@ -148,6 +156,9 @@ function App() {
             <Route path="terms-of-service" element={<TermsOfService />} />
             <Route path="cookie-policy" element={<CookiePolicy />} />
             <Route path="about" element={<About />} />
+            <Route path="support-ticket" element={<SupportTicket />} />
+            <Route path="contact" element={<Contact />} />
+            <Route path="faq" element={<FAQ />} />
             <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
 
@@ -177,6 +188,10 @@ function App() {
             <Route path="terms-of-service" element={<TermsOfService />} />
             <Route path="cookie-policy" element={<CookiePolicy />} />
             <Route path="about" element={<About />} />
+            <Route path="support-ticket" element={<SupportTicket />} />
+            <Route path="support-tickets" element={<AdminSupportTickets />} />
+            <Route path="contact" element={<Contact />} />
+            <Route path="faq" element={<FAQ />} />
           </Route>
         </Routes>
       </AuthProvider>

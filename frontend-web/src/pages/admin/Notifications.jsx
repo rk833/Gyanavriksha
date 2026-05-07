@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Bell, CheckCircle2, AlertTriangle, ShieldCheck, Cpu, UserCog } from 'lucide-react';
+import { Bell, CheckCircle2, AlertTriangle, ShieldCheck, Cpu, UserCog, TicketCheck } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   getAdminNotifications,
@@ -13,6 +14,7 @@ const TYPE_ICONS = {
   iot_key_regenerated: ShieldCheck,
   user_created: UserCog,
   role_change: UserCog,
+  support_ticket: TicketCheck,
 };
 
 const TYPE_COLORS = {
@@ -21,16 +23,19 @@ const TYPE_COLORS = {
   iot_key_regenerated: 'bg-amber-100 text-amber-600',
   user_created: 'bg-green-100 text-green-600',
   role_change: 'bg-purple-100 text-purple-600',
+  support_ticket: 'bg-violet-100 text-violet-600',
 };
 
 const TABS = [
   { key: '', label: 'All' },
   { key: 'unread', label: 'Unread' },
+  { key: 'support', label: 'Support Tickets' },
   { key: 'iot', label: 'IoT Alerts' },
   { key: 'security', label: 'Security/System' },
 ];
 
 export default function AdminNotifications() {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('');
@@ -58,6 +63,9 @@ export default function AdminNotifications() {
   }, [tab, page]);
 
   const filteredNotifications = notifications.filter((n) => {
+    if (tab === 'support') {
+      return String(n.type || '').toLowerCase() === 'support_ticket';
+    }
     if (tab === 'iot') {
       const t = String(n.type || '').toLowerCase();
       return t.includes('posture') || (n.title || '').toLowerCase().includes('iot');
@@ -114,7 +122,7 @@ export default function AdminNotifications() {
         </button>
       </div>
       <p className="text-sm text-slate-500 mb-6">
-        Monitor admin events, IoT integrity signals, and security-related activity.
+        Monitor admin events, support requests, IoT integrity signals, and security-related activity.
       </p>
 
       <div className="flex gap-2 mb-5 overflow-x-auto">
@@ -150,19 +158,25 @@ export default function AdminNotifications() {
             const typeKey = String(n.type || '').toLowerCase();
             const Icon = TYPE_ICONS[typeKey] || Bell;
             const color = TYPE_COLORS[typeKey] || 'bg-slate-100 text-slate-600';
-            const typeLabel = typeKey === 'posture_alert'
-              ? 'IoT'
-              : typeKey === 'at_risk_flag'
-                ? 'Security'
-                : typeKey === 'heatmap_updated'
-                  ? 'System'
-                  : typeKey === 'quiz_assigned'
-                    ? 'User'
-                    : 'General';
+            const typeLabel = typeKey === 'support_ticket'
+              ? 'Support'
+              : typeKey === 'posture_alert'
+                ? 'IoT'
+                : typeKey === 'at_risk_flag'
+                  ? 'Security'
+                  : typeKey === 'heatmap_updated'
+                    ? 'System'
+                    : typeKey === 'quiz_assigned'
+                      ? 'User'
+                      : 'General';
+            const handleClick = () => {
+              if (!n.is_read) handleMarkRead(n.notification_id);
+              if (typeKey === 'support_ticket') navigate('/admin/support-tickets');
+            };
             return (
               <div
                 key={n.notification_id}
-                onClick={() => !n.is_read && handleMarkRead(n.notification_id)}
+                onClick={handleClick}
                 className={`bg-white rounded-xl border p-4 flex items-start gap-3 transition-all cursor-pointer hover:shadow-sm ${
                   n.is_read ? 'border-primary-light' : 'border-primary/30 bg-primary-50/30'
                 }`}
