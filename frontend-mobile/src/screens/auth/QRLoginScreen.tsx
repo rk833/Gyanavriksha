@@ -97,9 +97,7 @@ export default function QRLoginScreen({ navigation, onLoginSuccess }: QRLoginScr
         }
 
         onLoginSuccess?.(accessToken);
-        if (navigation) {
-          navigation.navigate('HomeScreen');
-        }
+        // AppNavigator switches to tabs after auth success.
       } catch (error) {
         if (axios.isAxiosError(error)) {
           if (error.response?.status === 401) {

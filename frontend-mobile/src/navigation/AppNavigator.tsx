@@ -1,24 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
+import { StatusBar } from 'expo-status-bar';
 import { BottomTabBarProps, createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
 
-import { API_BASE_URL } from '../config/api';
+import { apiClient, clearStoredAuthTokens, subscribeSessionExpired } from '../api/client';
 import { useAppTheme } from '../context/ThemeContext';
+import SplashScreen from '../screens/SplashScreen';
+import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import TwoFactorScreen from '../screens/auth/TwoFactorScreen';
 import QRLoginScreen from '../screens/auth/QRLoginScreen';
 import AssignmentPickerScreen from '../screens/student/AssignmentPickerScreen';
 import CameraScreen from '../screens/student/CameraScreen';
+import ChatbotScreen from '../screens/student/ChatbotScreen';
 import DashboardScreen from '../screens/student/DashboardScreen';
+import ExamModeScreen from '../screens/student/ExamModeScreen';
+import HelpScreen from '../screens/student/HelpScreen';
+import IoTStatusScreen from '../screens/student/IoTStatusScreen';
+import LibraryScreen from '../screens/student/LibraryScreen';
+import NotificationsScreen from '../screens/student/NotificationsScreen';
+import PerformanceScreen from '../screens/student/PerformanceScreen';
 import ProfileStack from '../screens/student/ProfileScreen';
+import QuizAndGapsScreen from '../screens/student/QuizAndGapsScreen';
+import { StudentIotRealtimeProvider } from '../context/StudentIotRealtimeContext';
 import SubmissionDetailsScreen from '../screens/student/SubmissionDetailsScreen';
 import SubmissionProgressScreen from '../screens/student/SubmissionProgressScreen';
 import SubmissionResultScreen from '../screens/student/SubmissionResultScreen';
+import SubmissionsListScreen from '../screens/student/SubmissionsListScreen';
 import UploadScreen from '../screens/student/UploadScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -94,7 +107,21 @@ function GlobalBottomTabBar({ state, navigation }: BottomTabBarProps) {
   const { theme } = useAppTheme();
 
   const focusedRouteName = state.routes[state.index]?.name;
-  if (focusedRouteName === 'CameraScreen' || focusedRouteName === 'UploadScreen' || focusedRouteName === 'SubmissionDetailsScreen' || focusedRouteName === 'SubmissionProgressScreen' || focusedRouteName === 'SubmissionResultScreen') {
+  const HIDDEN_SCREENS = new Set([
+    'CameraScreen',
+    'UploadScreen',
+    'SubmissionDetailsScreen',
+    'SubmissionProgressScreen',
+    'SubmissionResultScreen',
+    'IoTStatusScreen',
+    'ExamModeScreen',
+    'PerformanceScreen',
+    'LibraryScreen',
+    'NotificationsScreen',
+    'SubmissionsListScreen',
+    'HelpScreen',
+  ]);
+  if (HIDDEN_SCREENS.has(focusedRouteName ?? '')) {
     return null;
   }
 
@@ -173,7 +200,7 @@ function GlobalBottomTabBar({ state, navigation }: BottomTabBarProps) {
   );
 }
 
-function AppTabs({ onLogout }: { onLogout: () => void }) {
+function AppTabs({ onLogout }: { onLogout: () => void | Promise<void> }) {
   const { theme } = useAppTheme();
   const [unreadCount, setUnreadCount] = useState(0);
   const [isNotificationsVisible, setIsNotificationsVisible] = useState(false);
@@ -182,19 +209,8 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
   const [unreadNotifications, setUnreadNotifications] = useState<NotificationItem[]>([]);
 
   const fetchUnreadCount = useCallback(async () => {
-    const token = await SecureStore.getItemAsync('access_token');
-    if (!token) {
-      setUnreadCount(0);
-      return;
-    }
-
     try {
-      const response = await axios.get<UnreadCountResponse>(`${API_BASE_URL}/api/students/notifications/unread-count`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
+      const response = await apiClient.get<UnreadCountResponse>('/api/students/notifications/unread-count');
       setUnreadCount(typeof response.data?.count === 'number' ? response.data.count : 0);
     } catch {
       setUnreadCount(0);
@@ -206,17 +222,9 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
     setIsNotificationsLoading(true);
 
     try {
-      const token = await SecureStore.getItemAsync('access_token');
-      if (!token) {
-        setUnreadNotifications([]);
-        return;
-      }
-
-      const response = await axios.get<PaginatedNotificationsResponse>(`${API_BASE_URL}/api/students/notifications?read=false&page=1&per_page=20`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await apiClient.get<PaginatedNotificationsResponse>(
+        '/api/students/notifications?read=false&page=1&per_page=20'
+      );
 
       setUnreadNotifications(response.data?.items ?? []);
     } catch (error) {
@@ -267,11 +275,12 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
   }, [unreadCount]);
 
   return (
+    <StudentIotRealtimeProvider>
     <>
     <Tab.Navigator
         tabBar={(props) => <GlobalBottomTabBar {...props} />}
         screenOptions={({ route, navigation }) => ({
-          headerShown: route.name !== 'Profile' && route.name !== 'CameraScreen' && route.name !== 'UploadScreen' && route.name !== 'SubmissionDetailsScreen' && route.name !== 'SubmissionProgressScreen' && route.name !== 'SubmissionResultScreen',
+          headerShown: false,
           headerStyle: {
             backgroundColor: theme.colors.surface,
             borderBottomWidth: 1,
@@ -337,11 +346,11 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
         <Tab.Screen name="Submit" options={{ title: 'Submit' }}>
           {(props) => <AssignmentPickerScreen {...props} />}
         </Tab.Screen>
-        <Tab.Screen name="Chat" options={{ title: 'Chat' }}>
-          {() => <PlaceholderScreen title="ChatbotScreen" />}
+        <Tab.Screen name="Chat" options={{ title: 'AI Tutor' }}>
+          {() => <ChatbotScreen />}
         </Tab.Screen>
-        <Tab.Screen name="History" options={{ title: 'History' }}>
-          {() => <PlaceholderScreen title="HistoryScreen" />}
+        <Tab.Screen name="History" options={{ title: 'Quizzes & Gaps' }}>
+          {() => <QuizAndGapsScreen />}
         </Tab.Screen>
         <Tab.Screen name="Profile" options={{ title: 'Profile' }}>
           {() => <ProfileStack onLogout={onLogout} onOpenHomeNotifications={openNotifications} />}
@@ -378,6 +387,48 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
           options={{ title: 'SubmissionResultScreen' }}
         >
           {(props) => <SubmissionResultScreen {...props} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="IoTStatusScreen"
+          options={{ title: 'IoT Status', unmountOnBlur: true }}
+        >
+          {() => <IoTStatusScreen />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="ExamModeScreen"
+          options={{ title: 'Exam Mode', unmountOnBlur: true }}
+        >
+          {(props) => <ExamModeScreen {...props} />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="PerformanceScreen"
+          options={{ title: 'Performance' }}
+        >
+          {() => <PerformanceScreen />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="LibraryScreen"
+          options={{ title: 'Library' }}
+        >
+          {() => <LibraryScreen />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="NotificationsScreen"
+          options={{ title: 'Notifications' }}
+        >
+          {() => <NotificationsScreen />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="SubmissionsListScreen"
+          options={{ title: 'My Submissions' }}
+        >
+          {() => <SubmissionsListScreen />}
+        </Tab.Screen>
+        <Tab.Screen
+          name="HelpScreen"
+          options={{ title: 'Help & FAQ' }}
+        >
+          {() => <HelpScreen />}
         </Tab.Screen>
       </Tab.Navigator>
 
@@ -427,6 +478,7 @@ function AppTabs({ onLogout }: { onLogout: () => void }) {
         </View>
       </Modal>
     </>
+    </StudentIotRealtimeProvider>
   );
 }
 
@@ -442,15 +494,26 @@ function LoginStack({ onAuthenticated, sessionMessage }: { onAuthenticated: () =
       <Stack.Screen name="QRLoginScreen">
         {(props) => <QRLoginScreen {...props} onLoginSuccess={onAuthenticated} />}
       </Stack.Screen>
+      <Stack.Screen name="ForgotPasswordScreen">
+        {(props) => <ForgotPasswordScreen {...props} />}
+      </Stack.Screen>
     </Stack.Navigator>
   );
 }
 
 export default function AppNavigator() {
   const { theme } = useAppTheme();
+  const [showSplash, setShowSplash] = useState(true);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [sessionMessage, setSessionMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    return subscribeSessionExpired(() => {
+      setIsAuthenticated(false);
+      setSessionMessage('Your session has expired. Please log in again.');
+    });
+  }, []);
 
   const navigationTheme = useMemo(
     () => ({
@@ -468,6 +531,9 @@ export default function AppNavigator() {
     }),
     [theme]
   );
+
+  /** Match status bar to app theme. Splash uses light icons; without resetting here they stay light on a light screen. */
+  const statusBarStyle = theme.key === 'dark' ? 'light' : 'dark';
 
   useEffect(() => {
     let active = true;
@@ -488,8 +554,7 @@ export default function AppNavigator() {
       setIsCheckingAuth(false);
 
       if (!hasValidToken) {
-        await SecureStore.deleteItemAsync('access_token');
-        await SecureStore.deleteItemAsync('auth_token');
+        await clearStoredAuthTokens();
       }
     };
 
@@ -500,32 +565,49 @@ export default function AppNavigator() {
     };
   }, []);
 
+  if (showSplash) {
+    return <SplashScreen onFinish={() => setShowSplash(false)} />;
+  }
+
   if (isCheckingAuth) {
     return (
-      <View style={[styles.loaderWrap, { backgroundColor: theme.colors.screen }]}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
+      <>
+        <StatusBar
+          style={statusBarStyle}
+          backgroundColor={Platform.OS === 'android' ? theme.colors.screen : undefined}
+        />
+        <View style={[styles.loaderWrap, { backgroundColor: theme.colors.screen }]}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </>
     );
   }
 
   return (
-    <NavigationContainer theme={navigationTheme}>
-      {isAuthenticated ? (
-        <AppTabs
-          onLogout={() => {
-            setIsAuthenticated(false);
-            setSessionMessage('Your session has ended. Please log in again.');
-          }}
-        />
-      ) : (
-        <LoginStack
-          onAuthenticated={() => {
-            setIsAuthenticated(true);
-          }}
-          sessionMessage={sessionMessage}
-        />
-      )}
-    </NavigationContainer>
+    <>
+      <StatusBar
+        style={statusBarStyle}
+        backgroundColor={Platform.OS === 'android' ? theme.colors.screen : undefined}
+      />
+      <NavigationContainer theme={navigationTheme}>
+        {isAuthenticated ? (
+          <AppTabs
+            onLogout={async () => {
+              await clearStoredAuthTokens();
+              setIsAuthenticated(false);
+              setSessionMessage('Your session has ended. Please log in again.');
+            }}
+          />
+        ) : (
+          <LoginStack
+            onAuthenticated={() => {
+              setIsAuthenticated(true);
+            }}
+            sessionMessage={sessionMessage}
+          />
+        )}
+      </NavigationContainer>
+    </>
   );
 }
 

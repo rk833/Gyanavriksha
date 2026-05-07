@@ -18,9 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MaterialIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
-import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
-
 import { useApi } from '../../hooks/useApi';
 import { ThemePalette, useAppTheme } from '../../context/ThemeContext';
 
@@ -34,10 +32,11 @@ type UserResponse = {
   totp_enabled: boolean;
   profile_image_url: string | null;
   created_at: string;
+  notification_preferences?: Record<string, unknown> | null;
 };
 
 type ProfileStackProps = {
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
   onOpenHomeNotifications: () => void;
 };
 
@@ -49,14 +48,11 @@ type ProfileNavigation = {
 
 type ScreenProps = {
   navigation: ProfileNavigation;
-  onLogout?: () => void;
+  onLogout?: () => void | Promise<void>;
   onOpenHomeNotifications?: () => void;
 };
 
 const Stack = createNativeStackNavigator();
-
-const NOTIFICATION_GRADING_KEY = 'profile_grading_alerts';
-const NOTIFICATION_QUIZ_KEY = 'profile_quiz_reminders';
 
 function getInitials(fullName: string) {
   const trimmed = fullName.trim();
@@ -275,58 +271,31 @@ function ToggleRow({
 
 function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: ScreenProps) {
   const { theme, themeKey } = useAppTheme();
-  const { request } = useApi();
-  const { profile, isLoading, error } = useStudentProfile();
+  const { request, patch } = useApi();
+  const { profile, isLoading, error, reload } = useStudentProfile();
   const [connectedDevicesSummary, setConnectedDevicesSummary] = useState('Checking...');
   const [gradingAlertsEnabled, setGradingAlertsEnabled] = useState(true);
   const [quizRemindersEnabled, setQuizRemindersEnabled] = useState(true);
+  const [postureConnectionEnabled, setPostureConnectionEnabled] = useState(false);
 
   useEffect(() => {
     let active = true;
 
     const loadConnectedDevices = async () => {
-      const endpoints = ['/api/students/iot/devices', '/api/iot/devices'];
+      try {
+        const response = await request<Record<string, unknown>>('get', '/api/students/iot/status');
 
-      for (const endpoint of endpoints) {
-        try {
-          const response = await request<Record<string, unknown> | Array<Record<string, unknown>>>('get', endpoint);
-
-          if (!active) {
-            return;
-          }
-
-          if (Array.isArray(response)) {
-            setConnectedDevicesSummary(response.length > 0 ? `${response.length} connected` : 'No devices connected');
-            return;
-          }
-
-          const countValue = response.count;
-          if (typeof countValue === 'number') {
-            setConnectedDevicesSummary(countValue > 0 ? `${countValue} connected` : 'No devices connected');
-            return;
-          }
-
-          const devices = response.items ?? response.devices;
-          if (Array.isArray(devices)) {
-            setConnectedDevicesSummary(devices.length > 0 ? `${devices.length} connected` : 'No devices connected');
-            return;
-          }
-
-          const label = response.message;
-          if (typeof label === 'string' && label.trim().length > 0) {
-            setConnectedDevicesSummary(label);
-            return;
-          }
-
-          setConnectedDevicesSummary('Connected devices data unavailable');
+        if (!active) {
           return;
-        } catch {
-          // Try next endpoint.
         }
-      }
 
-      if (active) {
-        setConnectedDevicesSummary('Not available yet');
+        const devices = (response.devices as unknown[] | undefined) ?? [];
+        const count = (response.device_count as number | undefined) ?? devices.length;
+        setConnectedDevicesSummary(count > 0 ? `${count} connected` : 'No devices connected');
+      } catch {
+        if (active) {
+          setConnectedDevicesSummary('Not available yet');
+        }
       }
     };
 
@@ -338,38 +307,32 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
   }, [request]);
 
   useEffect(() => {
-    let active = true;
+    const p = profile?.notification_preferences;
+    if (!p || typeof p !== 'object') return;
+    setGradingAlertsEnabled(p.grading_updates !== false);
+    setQuizRemindersEnabled(p.quiz_reminders !== false);
+    setPostureConnectionEnabled(p.posture_connection === true);
+  }, [profile?.notification_preferences, profile?.user_id]);
 
-    const loadPreferences = async () => {
-      const [gradingValue, quizValue] = await Promise.all([
-        SecureStore.getItemAsync(NOTIFICATION_GRADING_KEY),
-        SecureStore.getItemAsync(NOTIFICATION_QUIZ_KEY),
-      ]);
-
-      if (!active) {
-        return;
+  const pushNotificationPreferences = useCallback(
+    async (updates: Partial<{ grading_updates: boolean; quiz_reminders: boolean; posture_connection: boolean }>) => {
+      const merged = {
+        grading_updates: updates.grading_updates ?? gradingAlertsEnabled,
+        quiz_reminders: updates.quiz_reminders ?? quizRemindersEnabled,
+        posture_connection: updates.posture_connection ?? postureConnectionEnabled,
+      };
+      setGradingAlertsEnabled(merged.grading_updates);
+      setQuizRemindersEnabled(merged.quiz_reminders);
+      setPostureConnectionEnabled(merged.posture_connection);
+      try {
+        await patch<UserResponse>('/api/students/profile', { notification_preferences: merged });
+      } catch (err) {
+        Alert.alert('Could not save', parseApiMessage(err, 'Failed to update notification preferences.'));
+        await reload();
       }
-
-      setGradingAlertsEnabled(gradingValue !== 'false');
-      setQuizRemindersEnabled(quizValue !== 'false');
-    };
-
-    void loadPreferences();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const updatePreference = useCallback(async (key: string, nextValue: boolean) => {
-    if (key === NOTIFICATION_GRADING_KEY) {
-      setGradingAlertsEnabled(nextValue);
-    } else {
-      setQuizRemindersEnabled(nextValue);
-    }
-
-    await SecureStore.setItemAsync(key, nextValue ? 'true' : 'false');
-  }, []);
+    },
+    [gradingAlertsEnabled, quizRemindersEnabled, postureConnectionEnabled, patch, reload]
+  );
 
   const initials = getInitials(profile?.full_name ?? 'Student');
   const totpEnabled = profile?.totp_enabled ?? false;
@@ -377,9 +340,11 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
   const sections = useMemo(
     () => [
       { key: 'account', title: 'Account', data: [{ id: 'account-row' }] },
-      { key: 'notifications', title: 'Notifications', data: [{ id: 'notifications-row' }] },
+      { key: 'learning', title: 'Learning & Analytics', data: [{ id: 'learning-row' }] },
+      { key: 'notifications', title: 'Notification Preferences', data: [{ id: 'notifications-row' }] },
       { key: 'iot', title: 'IoT & Smart Desk', data: [{ id: 'iot-row' }] },
       { key: 'appearance', title: 'Appearance', data: [{ id: 'appearance-row' }] },
+      { key: 'support', title: 'Support', data: [{ id: 'support-row' }] },
     ],
     []
   );
@@ -428,21 +393,74 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
           if (section.key === 'notifications') {
             return (
               <SectionCard>
-                <ToggleRow icon="notifications" label="Grading Alerts" enabled={gradingAlertsEnabled} onToggle={() => void updatePreference(NOTIFICATION_GRADING_KEY, !gradingAlertsEnabled)} />
-                <ToggleRow icon="quiz" label="Quiz Reminders" enabled={quizRemindersEnabled} onToggle={() => void updatePreference(NOTIFICATION_QUIZ_KEY, !quizRemindersEnabled)} />
+                <ToggleRow
+                  icon="notifications"
+                  label="Grading Alerts"
+                  enabled={gradingAlertsEnabled}
+                  onToggle={() => void pushNotificationPreferences({ grading_updates: !gradingAlertsEnabled })}
+                />
+                <ToggleRow
+                  icon="quiz"
+                  label="Quiz Reminders"
+                  enabled={quizRemindersEnabled}
+                  onToggle={() => void pushNotificationPreferences({ quiz_reminders: !quizRemindersEnabled })}
+                />
+                <ToggleRow
+                  icon="accessibility-new"
+                  label="Posture Connection (IoT)"
+                  enabled={postureConnectionEnabled}
+                  onToggle={() => void pushNotificationPreferences({ posture_connection: !postureConnectionEnabled })}
+                />
+                <Text style={[styles.alertHint, { color: theme.colors.muted }]}>
+                  When on, ultrasonic &quot;too close&quot; readings can trigger in-app posture alerts while your desk
+                  device is assigned to you. Open IoT Status to verify live readings.
+                </Text>
               </SectionCard>
             );
           }
 
           if (section.key === 'iot') {
+            const parentNav = navigation.getParent?.() ?? navigation;
             return (
               <SectionCard>
                 <Row
+                  icon="sensors"
+                  label="IoT Status"
+                  description="Smart desk — live distance, light, and connectivity"
+                  onPress={() => parentNav.navigate('IoTStatusScreen')}
+                />
+                <Row
                   icon="wifi"
                   label="Connected Devices"
-                  description="Fetched from the IoT API when available"
+                  description="Linked desk units on your account"
                   value={connectedDevicesSummary}
                   onPress={() => Alert.alert('Connected Devices', connectedDevicesSummary)}
+                />
+              </SectionCard>
+            );
+          }
+
+          if (section.key === 'learning') {
+            const parentNav = navigation.getParent?.() ?? navigation;
+            return (
+              <SectionCard>
+                <Row
+                  icon="assignment-turned-in"
+                  label="My Submissions"
+                  description="View all your submitted work"
+                  onPress={() => parentNav.navigate('SubmissionsListScreen')}
+                />
+                <Row
+                  icon="bar-chart"
+                  label="Performance"
+                  description="Score trends, streaks & improvement tips"
+                  onPress={() => parentNav.navigate('PerformanceScreen')}
+                />
+                <Row
+                  icon="library-books"
+                  label="Library"
+                  description="Browse curriculum documents"
+                  onPress={() => parentNav.navigate('LibraryScreen')}
                 />
               </SectionCard>
             );
@@ -457,6 +475,26 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
                   description="Choose the app color palette"
                   value={getThemeLabel(themeKey)}
                   onPress={() => navigation.navigate('ThemeSettings')}
+                />
+              </SectionCard>
+            );
+          }
+
+          if (section.key === 'support') {
+            const parentNav = navigation.getParent?.() ?? navigation;
+            return (
+              <SectionCard>
+                <Row
+                  icon="notifications-active"
+                  label="Notifications"
+                  description="View your full notification inbox"
+                  onPress={() => parentNav.navigate('NotificationsScreen')}
+                />
+                <Row
+                  icon="help-outline"
+                  label="Help & FAQ"
+                  description="Guides, About, Privacy & Terms"
+                  onPress={() => parentNav.navigate('HelpScreen')}
                 />
               </SectionCard>
             );
@@ -966,6 +1004,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     marginTop: 4,
     marginBottom: 6,
+  },
+  alertHint: {
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 10,
+    paddingHorizontal: 4,
+    paddingBottom: 4,
   },
   card: {
     borderWidth: 1,

@@ -1,40 +1,22 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 
-import axios, { AxiosRequestConfig, Method } from 'axios';
-import * as SecureStore from 'expo-secure-store';
-import { API_BASE_URL } from '../config/api';
+import { AxiosRequestConfig, Method } from 'axios';
+
+import { apiClient } from '../api/client';
 
 type RequestConfig = Omit<AxiosRequestConfig, 'url' | 'method'>;
 
 export function useApi() {
-  const client = useMemo(
-    () =>
-      axios.create({
-        baseURL: API_BASE_URL,
-        timeout: 15000,
-      }),
-    []
-  );
-
   const request = useCallback(
     async <T,>(method: Method, url: string, config: RequestConfig = {}) => {
-      const accessToken = await SecureStore.getItemAsync('access_token');
-      const token = accessToken ?? (await SecureStore.getItemAsync('auth_token'));
-      const headers = {
-        ...(config.headers as Record<string, string> | undefined),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-
-      const response = await client.request<T>({
+      const response = await apiClient.request<T>({
         ...config,
         url,
         method,
-        headers,
       });
-
       return response.data;
     },
-    [client]
+    []
   );
 
   const get = useCallback(
@@ -54,17 +36,24 @@ export function useApi() {
     [request]
   );
 
+  const patch = useCallback(
+    <T,>(url: string, data?: unknown, config: RequestConfig = {}) =>
+      request<T>('patch', url, { ...config, data }),
+    [request]
+  );
+
   const del = useCallback(
     <T,>(url: string, config: RequestConfig = {}) => request<T>('delete', url, config),
     [request]
   );
 
   return {
-    client,
+    client: apiClient,
     request,
     get,
     post,
     put,
+    patch,
     delete: del,
   };
 }

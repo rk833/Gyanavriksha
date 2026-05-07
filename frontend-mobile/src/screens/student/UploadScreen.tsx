@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as DocumentPicker from 'expo-document-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialIcons } from '@expo/vector-icons';
 
 import { API_BASE_URL } from '../../config/api';
 
@@ -29,6 +31,8 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
 
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const [processedUri, setProcessedUri] = useState<string>('');
+  const [selectedFileName, setSelectedFileName] = useState<string>('');
+  const [selectedFileType, setSelectedFileType] = useState<string>('image/jpeg');
   const [isPreparingImage, setIsPreparingImage] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -81,6 +85,8 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
         }
 
         setProcessedUri(result.uri);
+        setSelectedFileName(`submission-${Date.now()}.jpg`);
+        setSelectedFileType('image/jpeg');
       } catch {
         if (!isActive) {
           return;
@@ -127,10 +133,10 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
       setUploadProgress(0);
 
       const formData = new FormData();
-      formData.append('files[0]', {
+      formData.append('files', {
         uri: processedUri,
-        name: `submission-${Date.now()}.jpg`,
-        type: 'image/jpeg',
+        name: selectedFileName || `submission-${Date.now()}.jpg`,
+        type: selectedFileType || 'image/jpeg',
       } as unknown as Blob);
 
       const uploadUrl = `${API_BASE_URL}/api/students/submissions?assignment_id=${encodeURIComponent(assignmentId)}`;
@@ -153,7 +159,12 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
 
         xhr.onload = () => {
           if (xhr.status !== 201) {
-            reject(new Error('Upload failed'));
+            try {
+              const payload = JSON.parse(xhr.responseText) as { detail?: string };
+              reject(new Error(payload.detail || 'Upload failed'));
+            } catch {
+              reject(new Error('Upload failed'));
+            }
             return;
           }
 
@@ -184,10 +195,33 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
 
         xhr.send(formData);
       });
-    } catch {
-      setErrorText('Upload failed');
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : 'Upload failed');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const pickDocument = async () => {
+    if (isUploading) return;
+    setErrorText(null);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const file = result.assets[0];
+      const lowerName = (file.name || '').toLowerCase();
+      const isPdf = lowerName.endsWith('.pdf') || file.mimeType === 'application/pdf';
+      setProcessedUri(file.uri);
+      setSelectedFileName(file.name || `submission-${Date.now()}${isPdf ? '.pdf' : '.jpg'}`);
+      setSelectedFileType(isPdf ? 'application/pdf' : file.mimeType || 'image/jpeg');
+      setIsPreparingImage(false);
+      setUploadProgress(0);
+    } catch {
+      setErrorText('Could not open file picker');
     }
   };
 
@@ -197,7 +231,16 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
         <Text style={styles.title}>Upload Assignment</Text>
 
         <View style={styles.thumbnailWrap}>
-          {processedUri ? <Image source={{ uri: processedUri }} style={styles.thumbnail} /> : <View style={styles.thumbnailFallback} />}
+          {processedUri && selectedFileType !== 'application/pdf' ? (
+            <Image source={{ uri: processedUri }} style={styles.thumbnail} />
+          ) : processedUri ? (
+            <View style={[styles.thumbnailFallback, styles.pdfPreview]}>
+              <MaterialIcons name="picture-as-pdf" size={42} color="#B91C1C" />
+              <Text style={styles.pdfText} numberOfLines={2}>{selectedFileName || 'PDF selected'}</Text>
+            </View>
+          ) : (
+            <View style={styles.thumbnailFallback} />
+          )}
         </View>
 
         {isPreparingImage ? (
@@ -213,7 +256,18 @@ export default function UploadScreen({ navigation, route }: UploadScreenProps) {
 
         <Text style={styles.progressText}>{uploadProgress}%</Text>
 
-        {errorText ? <Text style={styles.errorText}>Upload failed</Text> : null}
+        {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
+
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          activeOpacity={0.85}
+          onPress={() => {
+            void pickDocument();
+          }}
+          disabled={isUploading}
+        >
+          <Text style={styles.secondaryButtonText}>Pick PDF / PNG / JPG</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.primaryButton, !canUpload ? styles.buttonDisabled : null]}
@@ -271,6 +325,18 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 280,
     backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  pdfPreview: {
+    gap: 8,
+  },
+  pdfText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   statusRow: {
     flexDirection: 'row',

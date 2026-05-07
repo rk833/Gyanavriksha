@@ -17,6 +17,8 @@ export type ThemePalette = {
     text: string;
     muted: string;
     inactive: string;
+    /** Small uppercase labels on stat cards; brighter than `muted` on dark theme. */
+    caption: string;
     headerBorder: string;
     shadow: string;
   };
@@ -39,6 +41,7 @@ const THEME_OPTIONS: ThemePalette[] = [
       text: '#0F172A',
       muted: '#64748B',
       inactive: '#94A3B8',
+      caption: '#64748B',
       headerBorder: '#E6E1D8',
       shadow: 'rgba(18, 58, 95, 0.08)',
     },
@@ -57,6 +60,7 @@ const THEME_OPTIONS: ThemePalette[] = [
       text: '#0F172A',
       muted: '#64748B',
       inactive: '#94A3B8',
+      caption: '#64748B',
       headerBorder: '#D9E6F2',
       shadow: 'rgba(15, 76, 129, 0.08)',
     },
@@ -75,6 +79,7 @@ const THEME_OPTIONS: ThemePalette[] = [
       text: '#0F172A',
       muted: '#64748B',
       inactive: '#94A3B8',
+      caption: '#64748B',
       headerBorder: '#D8E1EA',
       shadow: 'rgba(31, 42, 68, 0.08)',
     },
@@ -93,6 +98,7 @@ const THEME_OPTIONS: ThemePalette[] = [
       text: '#0F172A',
       muted: '#64748B',
       inactive: '#94A3B8',
+      caption: '#64748B',
       headerBorder: '#CBD5E1',
       shadow: 'rgba(51, 65, 85, 0.08)',
     },
@@ -111,6 +117,7 @@ const THEME_OPTIONS: ThemePalette[] = [
       text: '#F8FAFC',
       muted: '#94A3B8',
       inactive: '#64748B',
+      caption: '#CBD5E1',
       headerBorder: '#1F2937',
       shadow: 'rgba(0, 0, 0, 0.32)',
     },

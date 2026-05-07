@@ -77,7 +77,7 @@ export default function TwoFactorScreen({ navigation, route, onLoginSuccess }: T
       await SecureStore.setItemAsync('refresh_token', response.data.refresh_token);
 
       onLoginSuccess?.(response.data.access_token);
-      navigation?.navigate('HomeScreen');
+      // AppNavigator switches to tabs after auth success.
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 422) {
         clearOtpInputs();
