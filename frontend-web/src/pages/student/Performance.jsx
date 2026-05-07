@@ -205,7 +205,7 @@ function downloadPerformancePdf(data, periodLabel) {
     y += 4;
   } else {
     paragraph(
-      'No period rollups yet. Overall average can still appear from graded submissions; bars appear when weekly/monthly aggregates exist in your progress record.',
+      'No score progression snapshots in this export. Average score still uses graded submissions; the live dashboard may derive weekly/monthly bars from graded work when rollup rows are missing.',
     );
     y += 2;
   }
@@ -503,10 +503,10 @@ export default function StudentPerformance() {
           </div>
           <p className="text-[11px] text-slate-400 mt-1">
             {miniBars
-              ? 'Last periods from your progression'
+              ? 'Last periods (rollup or averages from graded submissions)'
               : avgScore != null
-                ? 'Bars use weekly/monthly rollups (see Score Progression). Your average above still reflects graded work.'
-                : 'Sparkline fills once period rollups exist in your progress record.'}
+                ? 'Bars use rolled-up snapshots when present; otherwise the API builds weekly/monthly averages from graded work.'
+                : 'Sparkline appears once graded assignments exist across at least two calendar periods.'}
           </p>
         </div>
 
@@ -535,7 +535,10 @@ export default function StudentPerformance() {
             </span>
             <span className="text-sm text-slate-400">days</span>
           </div>
-          <p className="text-xs text-slate-400 mt-2">Best: 28 days</p>
+          <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+            Consecutive UTC days with a graded submission or a completed micro-quiz. If you have nothing logged yet
+            today, yesterday still counts so the streak continues into the morning.
+          </p>
         </div>
       </div>
 
@@ -646,9 +649,9 @@ export default function StudentPerformance() {
       <div className="bg-white rounded-xl border border-primary-light p-6 mb-6">
         <h3 className="font-semibold text-primary-dark mb-1">Score Progression</h3>
         <p className="text-xs text-slate-500 mb-4">
-          Bars show your <strong>average score per calendar {period === 'weekly' ? 'week' : 'month'}</strong> from{' '}
-          <strong>rolled-up progress records</strong> (how the backend stores period aggregates). That is separate from
-          the single overall average in the stat cards, which can be computed directly from graded submissions.
+          Bars show your <strong>average score per calendar {period === 'weekly' ? 'week' : 'month'}</strong>, usually from
+          rolled-up progress records. When those snapshots are missing, the server derives the same buckets from graded
+          submission dates (overall line shown as subject &quot;Overall&quot;).
         </p>
         {chartData.length > 0 ? (
           <div className="h-56 w-full">
@@ -682,14 +685,12 @@ export default function StudentPerformance() {
               <Target className="w-10 h-10 mx-auto text-slate-300" />
               <p className="text-sm text-slate-600 font-medium">No weekly/monthly bars yet</p>
               <p className="text-sm text-slate-600">
-                <strong>Why the chart can be empty but you still see an average:</strong> the cards use your graded
-                submissions overall. This chart only appears when the system has{' '}
-                <strong>at least one period bucket</strong> in your progress rollup (stored weekly/monthly averages).
+                <strong>Why the chart might still be empty:</strong> you need graded assignments with scores. The API
+                will build buckets from graded submission timestamps when rollup rows don&apos;t exist yet.
               </p>
               <p className="text-sm text-slate-600">
-                <strong>To populate it:</strong> keep submitting assignments for AI grading; rollups typically fill in
-                after scores are recorded for each calendar period. If you only have one week of grades, you may still
-                see a single bar once that period exists in the rollup table.
+                <strong>To see bars:</strong> submit work until at least one piece is graded. Multiple weeks/months produce
+                several bars when you choose the matching period toggle.
               </p>
               <Link
                 to="/student/submissions"

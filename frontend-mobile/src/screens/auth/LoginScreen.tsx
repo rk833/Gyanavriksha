@@ -90,9 +90,7 @@ export default function LoginScreen({ navigation, onLoginSuccess, initialMessage
       }
 
       onLoginSuccess?.(token);
-      if (!onLoginSuccess && navigation) {
-        navigation.navigate('HomeScreen');
-      }
+      // AppNavigator switches to tabs after auth success.
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         setSubmitError('Invalid email or password. Please try again.');

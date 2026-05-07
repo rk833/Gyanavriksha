@@ -102,9 +102,10 @@ export default function StudentDashboard() {
 
     return subs.slice(0, 3).map((s, i) => {
       const Icon = ICONS[i % ICONS.length];
-      const pending = (quizBySubject[s.subject_id] || []).filter(
-        (q) => q.status && q.status !== 'completed',
-      );
+      const pending = (quizBySubject[s.subject_id] || []).filter((q) => {
+        const st = q.status ? String(q.status).toUpperCase() : '';
+        return st !== 'COMPLETED' && st !== 'SUBMITTED';
+      });
       const questionCount = pending.reduce((acc, q) => acc + (q.total_questions ?? 0), 0);
       const pct = s.completion_percentage ?? 0;
       const tag = pct < 45 ? 'Refresh required' : pct < 70 ? 'High impact' : 'Practice more';

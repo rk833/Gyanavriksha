@@ -20,7 +20,14 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.frontendmobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -32,7 +39,8 @@
         {
           "cameraPermission": "Allow Gyanavriksha to access your camera"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }

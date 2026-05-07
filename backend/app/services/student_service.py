@@ -1,5 +1,6 @@
 import uuid
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import func
@@ -15,7 +16,7 @@ from app.db.models.student_progress import StudentProgress
 from app.db.models.submission import Submission
 from app.db.models.subject import Subject
 from app.db.models.user import User
-from app.shared.source_enum import MicroQuizStatus, PeriodType
+from app.shared.source_enum import MicroQuizStatus, PeriodType, SubmissionProcessingStatus
 
 
 def get_student_enrollments(db: Session, user_id: uuid.UUID):
@@ -300,6 +301,155 @@ def get_knowledge_gap_summary(db: Session, user_id: uuid.UUID) -> dict:
 
 # GD-58: Progress queries
 
+
+def _to_utc_date(dt: datetime | None) -> date | None:
+    """Normalize stored timestamps to a UTC calendar date."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).date()
+
+
+def _collect_learning_activity_dates(db: Session, student_id: uuid.UUID) -> set[date]:
+    """Dates with graded activity: assignment marked DONE or a completed micro-quiz."""
+    dates: set[date] = set()
+    subs = (
+        db.query(Submission.submitted_at)
+        .filter(
+            Submission.student_id == student_id,
+            Submission.processing_status == SubmissionProcessingStatus.DONE,
+            Submission.submitted_at.isnot(None),
+        )
+        .all()
+    )
+    for (submitted_at,) in subs:
+        d = _to_utc_date(submitted_at)
+        if d:
+            dates.add(d)
+    quizzes = (
+        db.query(MicroQuiz.completed_at)
+        .filter(
+            MicroQuiz.student_id == student_id,
+            MicroQuiz.status == MicroQuizStatus.COMPLETED,
+            MicroQuiz.completed_at.isnot(None),
+        )
+        .all()
+    )
+    for (completed_at,) in quizzes:
+        d = _to_utc_date(completed_at)
+        if d:
+            dates.add(d)
+    return dates
+
+
+def _streak_from_activity_dates(activity_dates: set[date]) -> int:
+    """
+    Active streak (UTC):
+
+    • Count consecutive calendar days backwards from ``today``, as long as each day appears in
+      ``activity_dates``.
+    • If there is nothing logged **today**, we still start from **yesterday** if that day counts,
+      so a new calendar day hasn't broken the streak yet.
+    • No activity yesterday or today ⇒ streak 0 (break / cold start).
+    """
+    if not activity_dates:
+        return 0
+    today = datetime.now(timezone.utc).date()
+    if today not in activity_dates and (today - timedelta(days=1)) not in activity_dates:
+        return 0
+    ref = today if today in activity_dates else today - timedelta(days=1)
+    streak = 0
+    cur = ref
+    while cur in activity_dates:
+        streak += 1
+        cur = cur - timedelta(days=1)
+    return streak
+
+
+def _fallback_score_progression_from_submissions(
+    db: Session,
+    user_id: uuid.UUID,
+    period: str,
+) -> list[dict]:
+    """
+    When ``student_progress`` has no rows yet, approximate the chart from graded submissions
+    (average score per calendar week or month, UTC).
+    """
+    rows = (
+        db.query(Submission.submitted_at, Submission.score_percentage)
+        .filter(
+            Submission.student_id == user_id,
+            Submission.processing_status == SubmissionProcessingStatus.DONE,
+            Submission.score_percentage.isnot(None),
+            Submission.submitted_at.isnot(None),
+        )
+        .order_by(Submission.submitted_at.asc())
+        .all()
+    )
+    if not rows:
+        return []
+
+    buckets: defaultdict[tuple[str, date], list[float]] = defaultdict(list)
+
+    def bucket_key_for(d: date) -> tuple[str, date]:
+        if period == "weekly":
+            monday = d - timedelta(days=d.weekday())
+            return ("week", monday)
+        return ("month", date(d.year, d.month, 1))
+
+    for submitted_at, score in rows:
+        d = _to_utc_date(submitted_at)
+        if d is None or score is None:
+            continue
+        buckets[bucket_key_for(d)].append(float(score))
+
+    sorted_buckets = sorted(buckets.items(), key=lambda kv: kv[0][1])
+    progression: list[dict] = []
+    for (kind, period_start), scores in sorted_buckets:
+        avg = round(sum(scores) / len(scores), 1)
+        if kind == "week":
+            _, iso_w, _ = period_start.isocalendar()
+            label = period_start.strftime("%b ") + f"W{iso_w}"
+        else:
+            label = period_start.strftime("%b %Y")
+        progression.append({
+            "period": label,
+            "score": avg,
+            "subject": "Overall",
+        })
+    return progression
+
+
+def _rollup_student_progress_chart(
+    progress_rows: list[tuple[StudentProgress, Subject]],
+    period: str,
+) -> list[dict]:
+    """
+    Aggregate ``student_progress`` rows so each calendar period appears once—mean ``avg_score``
+    across enrolled subjects—which matches how students read the progression chart.
+    Without this, the last two points can be same-week different subjects so trend misbehaves or
+    never reaches two logical periods.
+    """
+    if not progress_rows:
+        return []
+    by_start: defaultdict[date, list[float]] = defaultdict(list)
+    for prog, _subject in progress_rows:
+        raw = prog.avg_score
+        by_start[prog.period_start].append(round(float(raw), 1) if raw is not None else 0.0)
+    out: list[dict] = []
+    for period_start in sorted(by_start.keys()):
+        bucket = by_start[period_start]
+        avg_p = round(sum(bucket) / len(bucket), 1)
+        if period == "weekly":
+            _, iso_w, _ = period_start.isocalendar()
+            label = period_start.strftime("%b ") + f"W{iso_w}"
+        else:
+            label = period_start.strftime("%b %Y")
+        out.append({"period": label, "score": avg_p, "subject": "Overall"})
+    return out
+
+
 def get_student_progress(
     db: Session,
     user_id: uuid.UUID,
@@ -331,14 +481,10 @@ def get_student_progress(
         .all()
     )
 
-    score_progression = []
-    for prog, subject in progress_rows:
-        label = prog.period_start.strftime("%b W%U") if period == "weekly" else prog.period_start.strftime("%b %Y")
-        score_progression.append({
-            "period": label,
-            "score": round(prog.avg_score, 1) if prog.avg_score else 0.0,
-            "subject": subject.subject_name,
-        })
+    score_progression = _rollup_student_progress_chart(progress_rows, period)
+
+    if not score_progression:
+        score_progression = _fallback_score_progression_from_submissions(db, user_id, period)
 
     # Topic difficulty from knowledge gaps (higher recurrence = harder)
     topic_rows = (
@@ -378,13 +524,17 @@ def get_student_progress(
         .first()
     )
 
-    # Trend: compare last two periods
+    # Trend: percent change vs prior calendar period (after rollup / fallback aggregation)
     trend_percentage = None
     if len(score_progression) >= 2:
-        recent = score_progression[-1]["score"]
-        previous = score_progression[-2]["score"]
+        recent = float(score_progression[-1]["score"])
+        previous = float(score_progression[-2]["score"])
         if previous > 0:
             trend_percentage = round(((recent - previous) / previous) * 100, 1)
+        elif previous <= 0 and recent > 0:
+            trend_percentage = 100.0
+        elif recent == 0 and previous <= 0:
+            trend_percentage = 0.0
 
     recent_gap_rows = (
         db.query(KnowledgeGap, Subject)
@@ -430,11 +580,13 @@ def get_student_progress(
             "Use Micro Quiz for targeted practice when a quiz is linked to this gap."
         )
 
+    activity_dates = _collect_learning_activity_dates(db, user_id)
+
     return {
         "average_score": round(avg_score, 1) if avg_score else None,
         "trend_percentage": trend_percentage,
         "quizzes_completed": quizzes_completed,
-        "active_streak": 0,  # calculated from daily login tracking (future)
+        "active_streak": _streak_from_activity_dates(activity_dates),
         "score_progression": score_progression,
         "topic_difficulty": topic_difficulty,
         "at_risk_flag": at_risk is not None,

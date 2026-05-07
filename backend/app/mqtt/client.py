@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -26,6 +27,7 @@ from app.core.database import SessionLocal
 from app.db.models.iot_device import IotDevice
 from app.db.models.sensor_log import SensorLog
 from app.db.models.system_setting import SystemSetting
+from app.db.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,44 @@ _STATUS_RE = re.compile(
 )
 
 _mqtt_client: mqtt.Client | None = None
+
+# Per-student monotonic cooldown for posture_alert WebSocket pushes (too-close readings).
+_last_posture_alert_monotonic: dict[uuid.UUID, float] = {}
+_POSTURE_ALERT_COOLDOWN_SEC = 45.0
+_TOO_CLOSE_CM_POSTURE = 30.0
+
+
+def _maybe_push_posture_alert(db, student_id: uuid.UUID, distance_cm: float) -> None:
+    """When the student opted in, push a WS posture_alert for ultrasonic too-close (MQTT path)."""
+    if distance_cm < 0 or distance_cm >= _TOO_CLOSE_CM_POSTURE:
+        return
+    user = db.query(User).filter(User.user_id == student_id).first()
+    if user is None:
+        return
+    prefs = user.notification_preferences or {}
+    if prefs.get("posture_connection") is not True:
+        return
+    now_m = time.monotonic()
+    last = _last_posture_alert_monotonic.get(student_id, 0.0)
+    if now_m - last < _POSTURE_ALERT_COOLDOWN_SEC:
+        return
+    _last_posture_alert_monotonic[student_id] = now_m
+    try:
+        from app.api.ws.iot_session import manager
+
+        manager.send_to_student_sync(
+            student_id,
+            {
+                "type": "posture_alert",
+                "distance_cm": distance_cm,
+                "message": (
+                    "You are sitting too close to your screen. "
+                    "Move back for better posture and eye comfort."
+                ),
+            },
+        )
+    except Exception:
+        logger.debug("MQTT: posture_alert WS push failed", exc_info=True)
 
 
 def _send_iot_telemetry(student_id: uuid.UUID, fields: dict) -> None:
@@ -182,6 +222,9 @@ def _handle_distance(node_id: str, cm: float) -> None:
             })
 
         iot_exam_service.handle_distance_reading(device.device_id, cm, db)
+
+        if sid is not None:
+            _maybe_push_posture_alert(db, sid, cm)
     except Exception:
         logger.exception("Error handling MQTT distance message for node=%s", node_id)
         db.rollback()
