@@ -6,6 +6,7 @@ Admin creates users via seed script; no public registration.
 import time
 import uuid
 
+import pyotp  # type: ignore
 import pytest
 from fastapi.testclient import TestClient  # type: ignore
 from sqlalchemy import create_engine
@@ -182,6 +183,78 @@ class TestAccountLockout:
         })
         assert resp.status_code == 423
         assert "locked" in resp.json()["detail"].lower()
+
+
+def _create_user_with_totp(suffix: str):
+    email = f"test_{RUN_ID}_{suffix}@example.com"
+    db = TestSession()
+    secret = pyotp.random_base32()
+    user = User(
+        email=email,
+        password_hash=hash_password(TEST_PASSWORD),
+        full_name=f"Test {suffix}",
+        role=UserRole.STUDENT,
+        is_active=True,
+        is_email_verified=True,
+        totp_enabled=True,
+        totp_secret=secret,
+    )
+    db.add(user)
+    db.commit()
+    uid = user.user_id
+    db.close()
+    return email, secret, str(uid)
+
+
+# Trusted device (skip 2FA for 3 days)
+
+class TestTwoFactorTrustedDevice:
+    def test_login_skips_2fa_with_trusted_token(self):
+        email, secret, user_id = _create_user_with_totp("2fa_trust")
+        step1 = client.post("/api/auth/login", json={"email": email, "password": TEST_PASSWORD})
+        assert step1.status_code == 200
+        assert step1.json()["requires_2fa"] is True
+        code = pyotp.TOTP(secret).now()
+        step2 = client.post(
+            "/api/auth/2fa/validate",
+            json={
+                "user_id": user_id,
+                "code": code,
+                "method": "totp",
+                "remember_device": True,
+            },
+        )
+        assert step2.status_code == 200
+        trust = step2.json().get("trusted_device_token")
+        assert trust and len(trust) > 10
+        step3 = client.post(
+            "/api/auth/login",
+            json={
+                "email": email,
+                "password": TEST_PASSWORD,
+                "trusted_device_token": trust,
+            },
+        )
+        assert step3.status_code == 200
+        body = step3.json()
+        assert body.get("requires_2fa") is False
+        assert body.get("access_token")
+
+    def test_validate_without_remember_has_no_trust_token(self):
+        email, secret, user_id = _create_user_with_totp("2fa_no_trust")
+        client.post("/api/auth/login", json={"email": email, "password": TEST_PASSWORD})
+        code = pyotp.TOTP(secret).now()
+        step2 = client.post(
+            "/api/auth/2fa/validate",
+            json={
+                "user_id": user_id,
+                "code": code,
+                "method": "totp",
+                "remember_device": False,
+            },
+        )
+        assert step2.status_code == 200
+        assert step2.json().get("trusted_device_token") in (None, "")
 
 
 # Health check

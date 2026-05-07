@@ -23,8 +23,13 @@ class StudentProfileUpdateInput(BaseModel):
     @field_validator("notification_preferences")
     @classmethod
     def filter_notification_prefs(cls, v: dict[str, Any] | None) -> dict[str, bool] | None:
-        """Allow only known learning-alert toggles."""
+        """Allow known learning-alert toggles and mobile quick-sign-in preference keys."""
         if v is None:
             return None
-        allowed = ("grading_updates", "quiz_reminders", "posture_connection")
+        allowed = (
+            "grading_updates",
+            "quiz_reminders",
+            "posture_connection",
+            "mobile_biometric_quick_signin",
+        )
         return {k: bool(v[k]) for k in allowed if k in v} or None

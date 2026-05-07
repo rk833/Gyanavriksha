@@ -14,6 +14,7 @@ import {
   Menu,
   Bell,
   Settings,
+  TicketCheck,
 } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
 import { getAdminUnreadCount } from '../services/adminService';
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { to: '/admin/curriculum-ingestion', label: 'Curriculum Ingestion', icon: Upload },
   { to: '/admin/audit-logs', label: 'Audit Logs', icon: ScrollText },
   { to: '/admin/security', label: 'Security', icon: ShieldCheck },
+  { to: '/admin/support-tickets', label: 'Support Tickets', icon: TicketCheck },
 ];
 
 export default function AdminLayout() {

@@ -55,9 +55,9 @@ export default function Footer() {
                 </a>
               </li>
               <li>
-                <a href="#contact-form" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${roleBasePath}/contact`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Contact Us
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -99,12 +99,12 @@ export default function Footer() {
             <h3 className="font-semibold text-xs text-primary-dark mb-4">Help Centre</h3>
             <ul className="space-y-2">
               <li>
-                <a href="#faq" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${roleBasePath}/faq`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   FAQ
-                </a>
+                </Link>
               </li>
               <li>
-                <Link to={`${roleBasePath}/help`} className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${roleBasePath}/support-ticket`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Support Ticket
                 </Link>
               </li>

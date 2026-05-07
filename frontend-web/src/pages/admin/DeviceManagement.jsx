@@ -121,7 +121,7 @@ function EditDeviceModal({ device, onClose, onSuccess }) {
   const [form, setForm] = useState({
     location: device.location ?? '',
     description: device.description ?? '',
-    assigned_student_id: device.assigned_student_id ?? '',
+    assigned_student_id: device.assigned_student_id ? String(device.assigned_student_id) : '',
   });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -633,7 +633,7 @@ export default function DeviceManagement() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-primary-light bg-slate-50">
-              {['Node ID', 'Device Type', 'Location', 'Snapshots', 'Status', 'Last Seen', 'Actions'].map((h) => (
+              {['Node ID', 'Device Type', 'Location', 'Assigned To', 'Snapshots', 'Status', 'Last Seen', 'Actions'].map((h) => (
                 <th key={h} className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -641,14 +641,14 @@ export default function DeviceManagement() {
           <tbody className="divide-y divide-slate-50">
             {isLoading && (
               <tr>
-                <td colSpan={7} className="text-center py-12">
+                <td colSpan={8} className="text-center py-12">
                   <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto" />
                 </td>
               </tr>
             )}
             {!isLoading && devices.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center py-12 text-slate-400 text-sm">No devices registered</td>
+                <td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No devices registered</td>
               </tr>
             )}
             {devices.map((d) => (
@@ -660,7 +660,12 @@ export default function DeviceManagement() {
                 <td className="px-4 py-3"><DeviceTypeBadge type={d.device_type} /></td>
                 <td className="px-4 py-3 text-slate-500 flex items-center gap-1">
                   <MapPin className="w-3.5 h-3.5 shrink-0" />
-                  {d.location ?? '—'}
+                  {d.location || '—'}
+                </td>
+                <td className="px-4 py-3 text-xs text-slate-600">
+                  {d.assigned_student_name
+                    ? <span className="bg-primary-light text-primary-dark font-semibold px-2 py-0.5 rounded-full">{d.assigned_student_name}</span>
+                    : <span className="text-slate-400">Unassigned</span>}
                 </td>
                 <td className="px-4 py-3 text-xs text-slate-500">
                   <div>Light: {d.latest_light != null ? d.latest_light : '—'}</div>

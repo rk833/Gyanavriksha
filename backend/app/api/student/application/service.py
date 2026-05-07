@@ -419,6 +419,7 @@ _DEFAULT_ALERT_PREFS: dict[str, bool] = {
     "grading_updates": True,
     "quiz_reminders": True,
     "posture_connection": False,
+    "mobile_biometric_quick_signin": False,
 }
 
 

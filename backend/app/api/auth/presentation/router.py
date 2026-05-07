@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.db.models.user import User
 from app.schemas.user import (
     ChangePasswordRequest,
+    ForceChangePasswordRequest,
     ForgotPasswordRequest,
     LoginResponse,
     MessageResponse,
@@ -25,6 +26,9 @@ from app.schemas.user import (
     TokenRefreshRequest,
     TokenResponse,
     TwoFactorDisableRequest,
+    TwoFactorEmailDisableRequest,
+    TwoFactorEmailEnableRequest,
+    TwoFactorEmailSendRequest,
     TwoFactorSetupResponse,
     TwoFactorSetupVerifyRequest,
     TwoFactorValidateRequest,
@@ -41,7 +45,7 @@ def login(
     db: Session = Depends(get_db),
 ):
     """Authenticate a user by email and password and return access/refresh tokens."""
-    return service.execute_login(db, data.email, data.password)
+    return service.execute_login(db, data.email, data.password, data.trusted_device_token)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -98,6 +102,20 @@ def change_password(
     )
 
 
+@router.post("/force-change-password", response_model=MessageResponse)
+def force_change_password(
+    data: ForceChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set a new password on first login (no current password required).
+
+    Only callable when must_change_password is True on the account.
+    Returns 403 if the flag is not set.
+    """
+    return service.execute_force_change_password(db, current_user, data.new_password)
+
+
 @router.post("/2fa/setup", response_model=TwoFactorSetupResponse)
 def setup_2fa(current_user: User = Depends(get_current_user)):
     """Generate a TOTP secret and QR code for the authenticated user to configure."""
@@ -121,8 +139,39 @@ def validate_2fa(
     data: TwoFactorValidateRequest,
     db: Session = Depends(get_db),
 ):
-    """Validate a TOTP code at login time and return full access/refresh tokens."""
-    return service.execute_validate_2fa(db, str(data.user_id), data.code)
+    """Validate an authenticator or email OTP at login and return full access/refresh tokens."""
+    return service.execute_validate_2fa(
+        db, str(data.user_id), data.code, data.method, data.remember_device
+    )
+
+
+@router.post("/2fa/email/send", response_model=MessageResponse)
+def send_2fa_login_email(
+    data: TwoFactorEmailSendRequest,
+    db: Session = Depends(get_db),
+):
+    """Send a short-lived email OTP during login when email 2FA is enabled."""
+    return service.execute_send_2fa_email(db, str(data.user_id))
+
+
+@router.post("/2fa/email/enable", response_model=MessageResponse)
+def enable_email_2fa_route(
+    data: TwoFactorEmailEnableRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Enable email one-time codes at sign-in (requires a verified email address)."""
+    return service.execute_enable_email_2fa(db, current_user, data.password)
+
+
+@router.post("/2fa/email/disable", response_model=MessageResponse)
+def disable_email_2fa_route(
+    data: TwoFactorEmailDisableRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Disable email OTP at sign-in."""
+    return service.execute_disable_email_2fa(db, current_user, data.password)
 
 
 @router.post("/2fa/disable", response_model=MessageResponse)
@@ -131,7 +180,7 @@ def disable_2fa(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Disable two-factor authentication after verifying the account password and code."""
+    """Disable authenticator (TOTP) 2FA after verifying password and a valid app code."""
     return service.execute_disable_2fa(
         db, current_user, data.code, data.password
     )

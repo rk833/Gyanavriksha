@@ -1,6 +1,31 @@
 import { useLocation } from 'react-router-dom';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GraduationCap, ShieldCheck, Brain, Accessibility } from 'lucide-react';
+
+function TeamCard({ member }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <div className="text-center group">
+      <div className="relative mb-4 mx-auto w-28 h-28 md:w-32 md:h-32">
+        <div className="absolute inset-0 bg-primary rounded-full opacity-0 group-hover:opacity-10 scale-110 transition-all duration-300 z-0" />
+        {!imgFailed ? (
+          <img
+            src={member.photo}
+            alt={member.name}
+            onError={() => setImgFailed(true)}
+            className="w-full h-full object-cover rounded-full border-2 border-primary-light shadow-md ring-2 ring-primary/10 group-hover:ring-primary/30 transition-all duration-300"
+          />
+        ) : (
+          <div className="w-full h-full rounded-full border-2 border-primary-light shadow-sm bg-gradient-to-br from-primary-light/60 to-primary/20 flex items-center justify-center ring-2 ring-primary/10 group-hover:ring-primary/30 transition-all duration-300">
+            <span className="text-3xl font-bold text-primary select-none">{member.name.charAt(0)}</span>
+          </div>
+        )}
+      </div>
+      <h5 className="text-sm font-bold text-primary-dark mb-1">{member.name}</h5>
+      <p className="text-xs text-slate-600 font-medium">{member.role}</p>
+    </div>
+  );
+}
 
 export default function About() {
   const location = useLocation();
@@ -22,11 +47,11 @@ export default function About() {
   }, [location]);
 
   const teamMembers = [
-    { name: 'Aarya', role: 'AI Lead' },
-    { name: 'Aayush', role: 'Backend Lead' },
-    { name: 'Barun', role: 'IoT Lead' },
-    { name: 'Ridesha', role: 'Project Manager' },
-    { name: 'Shritika', role: 'Frontend and Mobile App Lead' },
+    { name: 'Aarya', role: 'AI Lead', photo: '/images/team/aarya.jpg' },
+    { name: 'Aayush', role: 'Backend Lead', photo: '/images/team/aayush.jpg' },
+    { name: 'Barun', role: 'IoT Lead', photo: '/images/team/barun.jpg' },
+    { name: 'Ridesha', role: 'Project Manager', photo: '/images/team/ridesha.jpg' },
+    { name: 'Shritika', role: 'Frontend and Mobile App Lead', photo: '/images/team/shritika.jpg' },
   ];
 
   const values = [
@@ -144,16 +169,7 @@ export default function About() {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
             {teamMembers.map((member, idx) => (
-              <div key={idx} className="text-center group">
-                <div className="relative mb-4 mx-auto w-28 h-28 md:w-32 md:h-32">
-                  <div className="absolute inset-0 bg-primary rounded-full opacity-0 group-hover:opacity-10 scale-110 transition-all duration-300"></div>
-                  <div className="w-full h-full object-cover rounded-full border-3 border-primary-light shadow-sm bg-primary-light/50 flex items-center justify-center">
-                    <span className="text-3xl font-bold text-primary">{member.name.charAt(0)}</span>
-                  </div>
-                </div>
-                <h5 className="text-sm font-bold text-primary-dark mb-1">{member.name}</h5>
-                <p className="text-xs text-slate-600 font-medium">{member.role}</p>
-              </div>
+              <TeamCard key={idx} member={member} />
             ))}
           </div>
         </section>

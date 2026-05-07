@@ -75,7 +75,7 @@ async function attemptTokenRefresh() {
   return data.access_token;
 }
 
-const SKIP_REFRESH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh'];
+const SKIP_REFRESH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/auth/2fa/email/send'];
 const AI_TUTOR_CHAT_PATH = '/api/students/ai-tutor/chat';
 
 /**

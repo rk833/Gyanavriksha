@@ -211,3 +211,17 @@ export const getProfile = () => api.get('/api/instructors/profile');
  * @returns {Promise<import('./types').InstructorProfileResponse>}
  */
 export const updateProfile = (data) => api.patch('/api/instructors/profile', data);
+
+// ── Notifications ─────────────────────────────────────────────────────────
+
+export const getNotifications = (params = {}) =>
+  api.get('/api/instructors/notifications', { params });
+
+export const getUnreadCount = () =>
+  api.get('/api/instructors/notifications/unread-count');
+
+export const markNotificationRead = (id) =>
+  api.patch(`/api/instructors/notifications/${id}/read`);
+
+export const markAllNotificationsRead = () =>
+  api.patch('/api/instructors/notifications/read-all');

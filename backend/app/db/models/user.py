@@ -31,10 +31,16 @@ class User(Base):
     totp_enabled = Column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    email_2fa_enabled = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     profile_image_url = Column(Text, nullable=True)
     notification_preferences = Column(JSONB, nullable=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     grade_id = Column(Integer, ForeignKey("grades.grade_id", ondelete="SET NULL"), nullable=True)
+    must_change_password = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     token_version = Column(Integer, nullable=False, default=0, server_default="0")
     failed_login_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     locked_until = Column(DateTime(timezone=True), nullable=True)

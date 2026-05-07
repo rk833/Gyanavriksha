@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { DeviceEventEmitter } from 'react-native';
 
 import { API_BASE_URL } from '../config/api';
+import { clearTwoFactorTrustUsingLastLoginEmail } from '../utils/twoFactorTrust';
 
 const AUTH_SESSION_EXPIRED = 'auth:session-expired';
 
@@ -24,7 +25,11 @@ function processQueue(error: unknown, token: string | null = null) {
   failedQueue = [];
 }
 
-export async function clearStoredAuthTokens() {
+/**
+ * Clear stored access tokens. Optionally keep the refresh token so the user can
+ * unlock again with quick sign-in (biometrics) after Sign out.
+ */
+export async function clearStoredAuthTokens(preserveRefreshToken = false) {
   try {
     await SecureStore.deleteItemAsync('access_token');
   } catch {
@@ -35,10 +40,17 @@ export async function clearStoredAuthTokens() {
   } catch {
     /* ignore */
   }
-  try {
-    await SecureStore.deleteItemAsync('refresh_token');
-  } catch {
-    /* ignore */
+  if (!preserveRefreshToken) {
+    try {
+      await SecureStore.deleteItemAsync('refresh_token');
+    } catch {
+      /* ignore */
+    }
+    try {
+      await clearTwoFactorTrustUsingLastLoginEmail();
+    } catch {
+      /* ignore */
+    }
   }
 }
 

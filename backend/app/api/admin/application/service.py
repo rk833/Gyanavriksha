@@ -171,6 +171,8 @@ def create_user(
     if admin_service.email_exists(db, email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     user, password = admin_service.create_user(db, email, full_name, role, raw_password)
+    if grade_id is not None:
+        user.grade_id = grade_id
     admin_service.log_audit_event(
         db, actor_id, "USER_CREATED", f"Created user {email} (role: {role.value})", "user", str(user.user_id), ip_address,
     )
@@ -843,7 +845,12 @@ def update_iot_device(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot update a decommissioned device")
     admin_service.update_iot_device_fields(db, device, location, description, assigned_student_id)
     db.commit()
-    return IoTDeviceResponse(**admin_service._device_to_response_dict(device))
+    db.refresh(device)
+    student_name: str | None = None
+    if device.assigned_student_id:
+        student = db.query(User).filter(User.user_id == device.assigned_student_id).first()
+        student_name = student.full_name if student else None
+    return IoTDeviceResponse(**admin_service._device_to_response_dict(device, student_name))
 
 
 def decommission_iot_device(

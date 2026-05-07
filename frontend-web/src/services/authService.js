@@ -1,10 +1,15 @@
 import api from './api';
 
+export function twoFactorTrustStorageKey(email) {
+  return `gv_2fa_trust_${String(email).trim().toLowerCase()}`;
+}
+
 /**
  * Service layer for all authentication API calls.
  * Maps directly to the backend auth bounded context: /api/auth/*
  */
 const authService = {
+  twoFactorTrustStorageKey,
   /**
    * Register a new student or instructor account.
    *
@@ -34,7 +39,18 @@ const authService = {
    * @returns {Promise<import('./types').LoginResponse>}
    */
   async login(email, password) {
-    const { data } = await api.post('/api/auth/login', { email, password });
+    const key = twoFactorTrustStorageKey(email);
+    let trusted_device_token;
+    try {
+      trusted_device_token = localStorage.getItem(key);
+    } catch {
+      trusted_device_token = null;
+    }
+    const body = { email, password };
+    if (trusted_device_token) {
+      body.trusted_device_token = trusted_device_token;
+    }
+    const { data } = await api.post('/api/auth/login', body);
     return data;
   },
 
@@ -140,11 +156,39 @@ const authService = {
    * @param {string} code
    * @returns {Promise<import('./types').TokenResponse>}
    */
-  async verify2FA(userId, code) {
+  async verify2FA(userId, code, method = 'totp', rememberDevice = false) {
     const { data } = await api.post('/api/auth/2fa/validate', {
       user_id: userId,
       code,
+      method,
+      remember_device: rememberDevice,
     });
+    return data;
+  },
+
+  /**
+   * Request an email OTP during login when email 2FA is enabled.
+   *
+   * @param {string} userId
+   */
+  async send2FAEmailCode(userId) {
+    const { data } = await api.post('/api/auth/2fa/email/send', { user_id: userId });
+    return data;
+  },
+
+  /**
+   * Turn on email one-time codes at sign-in (authenticated).
+   */
+  async enableEmail2FA(password) {
+    const { data } = await api.post('/api/auth/2fa/email/enable', { password });
+    return data;
+  },
+
+  /**
+   * Turn off email OTP at sign-in (authenticated).
+   */
+  async disableEmail2FA(password) {
+    const { data } = await api.post('/api/auth/2fa/email/disable', { password });
     return data;
   },
 

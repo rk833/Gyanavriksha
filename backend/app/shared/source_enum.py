@@ -104,6 +104,8 @@ class NotificationType(str, Enum):
     POSTURE_ALERT = "posture_alert"
     AT_RISK_FLAG = "at_risk_flag"
     IOT_DESK_ABSENCE = "iot_desk_absence"
+    SUBMISSION_RECEIVED = "submission_received"
+    SUPPORT_TICKET = "support_ticket"
 
 
 class NotificationChannel(str, Enum):

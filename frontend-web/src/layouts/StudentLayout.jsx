@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard,
   BookOpen,
@@ -17,6 +18,7 @@ import {
 import useAuth from '../hooks/useAuth';
 import Footer from '../components/common/Footer';
 import StudentGlobalIotAlerts from '../components/student/StudentGlobalIotAlerts';
+import { getUnreadCount } from '../services/studentService';
 
 const NAV_ITEMS = [
   { to: '/student/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,6 +34,13 @@ export default function StudentLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const { data: unreadData } = useQuery({
+    queryKey: ['student', 'notifications', 'unread-count'],
+    queryFn: async () => (await getUnreadCount()).data,
+    refetchInterval: 30_000,
+  });
+  const unreadCount = unreadData?.count ?? 0;
 
   const handleLogout = async () => {
     await logout();
@@ -140,6 +149,11 @@ export default function StudentLayout() {
               className="p-2 rounded-lg hover:bg-primary-light/50 text-slate-600 relative"
             >
               <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-0.5 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
             <button
               onClick={() => navigate('/student/settings')}

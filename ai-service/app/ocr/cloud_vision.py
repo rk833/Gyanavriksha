@@ -7,7 +7,7 @@ except Exception:
     def load_dotenv(*_, **__):
         return False
 
-from ..preprocessing.image_processor import validate_image
+from ..preprocessing.image_processor import preprocess_image
 
 # Load .env if available
 load_dotenv()
@@ -30,15 +30,12 @@ class VisionService:
         self.url = f"https://vision.googleapis.com/v1/images:annotate?key={self.api_key}"
 
     def extract_text(self, image_content: bytes) -> str:
-        """
-        Validates the image locally first, then sends to Vision API.
-        """
-        # --- NEW PREPROCESSING STEP ---
-        if not validate_image(image_content):
-            return "" # Return empty string for invalid images
-        # ------------------------------
+        """Preprocess (resize if needed) then send to Cloud Vision API."""
+        processed = preprocess_image(image_content)
+        if processed is None:
+            return ""
 
-        image_base64 = base64.b64encode(image_content).decode("utf-8")
+        image_base64 = base64.b64encode(processed).decode("utf-8")
 
         payload = {
             "requests": [

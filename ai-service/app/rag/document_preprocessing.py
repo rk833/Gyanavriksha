@@ -6,6 +6,30 @@ from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from PIL import Image
 from app.ocr import extract_text as ocr_extract_text
+
+# Scanner/app watermark tokens — if pypdf returns ONLY these, the PDF is
+# image-based and we must fall through to PyMuPDF page-render OCR.
+_WATERMARK_TOKENS = {
+    "camscanner", "scanned", "scan", "adobe", "acrobat",
+    "microsoft", "office", "lens", "genius", "tiny",
+}
+
+
+def _is_watermark_only(text: str) -> bool:
+    """Return True when *text* contains no meaningful content.
+
+    Strips punctuation/whitespace, lowercases every word, and checks whether
+    ALL remaining words are known scanner/watermark tokens.
+    Texts shorter than 30 meaningful characters are also treated as noise.
+    """
+    cleaned = re.sub(r"[^a-zA-Z0-9\s]", " ", text).lower()
+    words = [w for w in cleaned.split() if len(w) > 1]
+    if not words:
+        return True
+    meaningful_chars = sum(len(w) for w in words if w not in _WATERMARK_TOKENS)
+    return meaningful_chars < 30
+
+
 try:
     import fitz  # PyMuPDF
 except ImportError:
@@ -37,10 +61,12 @@ load_dotenv()
 class DocumentPreprocessor:
     """
     A service for preprocessing documents to be used in the RAG pipeline.
-    It accepts only .txt, .pdf, .docx/.doc, and .md files.
+    Accepts .txt, .pdf, .docx/.doc, .md, and common image formats (.jpg, .jpeg, .png, .webp).
+    Images are OCR'd directly via the same Vision→Tesseract stack used for scanned PDFs.
     """
-    
-    ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.doc', '.md'}
+
+    ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.doc', '.md', '.jpg', '.jpeg', '.png', '.webp'}
+    _IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
     _MIN_OCR_WIDTH = 400
     _MIN_OCR_HEIGHT = 400
     
@@ -99,7 +125,9 @@ class DocumentPreprocessor:
                 extracted = page.extract_text()
                 if extracted:
                     text += extracted + "\n"
-            if text.strip():
+            # Only accept pypdf output when it contains real content — not just
+            # scanner app watermarks (CamScanner, Adobe Scan, etc.).
+            if text.strip() and not _is_watermark_only(text):
                 return text
 
             # Fallback for scanned/image-only PDFs:
@@ -134,7 +162,40 @@ class DocumentPreprocessor:
             doc = docx.Document(str(path))
             text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
             return text
-            
+
+        elif ext in self._IMAGE_EXTENSIONS:
+            # Direct image upload (e.g. a photo of handwritten notes).
+            # Resize if needed then run the same Vision→Tesseract OCR stack.
+            self.last_ocr_summary["used_ocr"] = True
+            self.last_ocr_summary["images_total"] += 1
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            # Normalise to JPEG, capping the long edge at 3000 px so Vision API
+            # and Tesseract both stay within their comfortable size limits.
+            try:
+                with Image.open(io.BytesIO(raw)) as img:
+                    img = img.convert("RGB")
+                    max_edge = 3000
+                    w, h = img.size
+                    if max(w, h) > max_edge:
+                        scale = max_edge / max(w, h)
+                        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=88)
+                    raw = buf.getvalue()
+            except Exception:
+                pass  # keep original bytes if PIL fails
+
+            if not self._is_worth_ocr(raw):
+                self.last_ocr_summary["images_failed"] += 1
+                return ""
+            ocr_text = (ocr_extract_text(raw, provider="auto") or "").strip()
+            if ocr_text:
+                self.last_ocr_summary["images_succeeded"] += 1
+            else:
+                self.last_ocr_summary["images_failed"] += 1
+            return ocr_text
+
         raise ValueError(f"Cannot process file {file_path}")
 
     def chunk_document(self, file_path: str) -> List[str]:
@@ -221,17 +282,28 @@ class DocumentPreprocessor:
         return width >= self._MIN_OCR_WIDTH and height >= self._MIN_OCR_HEIGHT
 
     def _extract_text_from_pdf_pages_via_ocr(self, file_path: str) -> str:
-        """Render each PDF page to an image and OCR it (PyMuPDF path)."""
+        """Render each PDF page to an image and OCR it (PyMuPDF path).
+
+        Scale is calculated dynamically so the longer edge lands near 2000 px,
+        which gives good OCR quality without creating excessively large bitmaps.
+        """
         if fitz is None:
             return ""
+        _TARGET_LONG_EDGE = 2000
         parts: list[str] = []
         self.last_ocr_summary["used_ocr"] = True
         try:
             with fitz.open(file_path) as doc:
                 for page in doc:
-                    # 2x render scale to improve OCR quality on scanned pages.
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-                    image_bytes = pix.tobytes("png")
+                    rect = page.rect
+                    long_edge = max(rect.width, rect.height) or 1
+                    scale = max(1.0, _TARGET_LONG_EDGE / long_edge)
+                    pix = page.get_pixmap(
+                        matrix=fitz.Matrix(scale, scale),
+                        colorspace=fitz.csRGB,
+                        alpha=False,
+                    )
+                    image_bytes = pix.tobytes("jpeg")
                     self.last_ocr_summary["images_total"] += 1
                     if not self._is_worth_ocr(image_bytes):
                         self.last_ocr_summary["images_failed"] += 1

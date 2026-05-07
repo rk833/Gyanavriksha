@@ -18,7 +18,6 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { MaterialIcons } from '@expo/vector-icons';
 import axios from 'axios';
 
-import ScreenHeader from '../../components/ScreenHeader';
 import { useApi } from '../../hooks/useApi';
 import { useAppTheme } from '../../context/ThemeContext';
 
@@ -468,10 +467,21 @@ export default function AssignmentPickerScreen({ navigation }: AssignmentPickerS
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.screen }]} edges={['top', 'left', 'right']}>
-      <ScreenHeader
-        title="Choose Assignment"
-        subtitle="Pick work to submit"
-      />
+      {/* ── Branded header ── */}
+      <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
+        <View style={styles.headerGlow} />
+        <View style={styles.headerRow}>
+          <View style={styles.headerIconWrap}>
+            <MaterialIcons name="assignment" size={22} color="#FFFFFF" />
+          </View>
+          <View style={styles.headerTextWrap}>
+            <Text style={styles.headerTitle}>Pick Work to Submit</Text>
+            <Text style={styles.headerSub}>
+              {isLoading ? 'Loading…' : `${items.length} assignment${items.length !== 1 ? 's' : ''} available`}
+            </Text>
+          </View>
+        </View>
+      </View>
 
       {Platform.OS === 'ios' ? (
         <Modal visible={showDuePicker} transparent animationType="fade">
@@ -494,19 +504,26 @@ export default function AssignmentPickerScreen({ navigation }: AssignmentPickerS
 
       {isLoading ? (
         <View style={styles.stateWrap}>
-          <ActivityIndicator color={theme.colors.primary} />
-          <Text style={[styles.stateText, { color: theme.colors.muted }]}>Loading assignments...</Text>
+          <View style={[styles.stateIconWrap, { backgroundColor: theme.colors.primarySoft }]}>
+            <ActivityIndicator color={theme.colors.primary} size="large" />
+          </View>
+          <Text style={[styles.stateTitle, { color: theme.colors.primary }]}>Loading assignments</Text>
+          <Text style={[styles.stateText, { color: theme.colors.muted }]}>Fetching your coursework…</Text>
         </View>
       ) : errorMessage ? (
         <View style={styles.stateWrap}>
-          <MaterialIcons name="error-outline" size={22} color={theme.colors.primary} />
-          <Text style={[styles.errorText, { color: theme.colors.primary }]}>{errorMessage}</Text>
+          <View style={[styles.stateIconWrap, { backgroundColor: '#FEF2F2' }]}>
+            <MaterialIcons name="error-outline" size={32} color="#DC2626" />
+          </View>
+          <Text style={[styles.stateTitle, { color: theme.colors.primary }]}>Could not load</Text>
+          <Text style={[styles.stateText, { color: theme.colors.muted }]}>{errorMessage}</Text>
           <TouchableOpacity
             style={[styles.retryButton, { backgroundColor: theme.colors.primary }]}
             activeOpacity={0.85}
             onPress={() => void onRefresh()}
           >
-            <Text style={[styles.retryButtonText, { color: theme.colors.surface }]}>Retry</Text>
+            <MaterialIcons name="refresh" size={16} color="#FFFFFF" />
+            <Text style={styles.retryButtonText}>Try again</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -518,293 +535,246 @@ export default function AssignmentPickerScreen({ navigation }: AssignmentPickerS
           }
           contentContainerStyle={[styles.listContent, filteredItems.length === 0 ? styles.listContentEmpty : null]}
           refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={() => void onRefresh()}
-              tintColor={theme.colors.primary}
-            />
+            <RefreshControl refreshing={isRefreshing} onRefresh={() => void onRefresh()} tintColor={theme.colors.primary} />
           }
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.35}
+
           ListHeaderComponent={
             <View style={styles.filtersWrap}>
-              <View style={[styles.summaryBar, { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.border }]}>
-                <MaterialIcons name="assignment" size={16} color={theme.colors.primary} />
-                <Text style={[styles.summaryBarText, { color: theme.colors.primary }]}>
-                  {filteredItems.length} assignment{filteredItems.length === 1 ? '' : 's'} shown
-                  {pagination.totalPages > 1 ? ` · page ${pagination.lastPage}/${pagination.totalPages}` : ''}
-                </Text>
-              </View>
+              {/* Search bar */}
               <View style={[styles.searchWrap, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                <MaterialIcons name="search" size={17} color={theme.colors.muted} />
+                <MaterialIcons name="search" size={18} color={theme.colors.muted} />
                 <TextInput
                   style={[styles.searchInput, { color: theme.colors.text }]}
-                  placeholder="Search assignment or subject..."
+                  placeholder="Search assignment or subject…"
                   placeholderTextColor={theme.colors.inactive}
                   value={search}
                   onChangeText={setSearch}
                 />
                 {search.length > 0 ? (
-                  <TouchableOpacity onPress={() => setSearch('')}>
-                    <MaterialIcons name="close" size={15} color={theme.colors.muted} />
+                  <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialIcons name="close" size={16} color={theme.colors.muted} />
                   </TouchableOpacity>
                 ) : null}
               </View>
-              <View style={styles.filterGroup}>
-                <Text style={[styles.filterLabel, { color: theme.colors.muted }]}>Subject</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  nestedScrollEnabled
-                  keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={styles.chipsRow}
-                >
+
+              {/* Status tab row */}
+              <View style={[styles.statusTabsWrap, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                {([
+                  { key: 'All', icon: 'apps', label: 'All' },
+                  { key: 'Open', icon: 'edit', label: 'Open' },
+                  { key: 'Submitted', icon: 'check-circle', label: 'Done' },
+                  { key: 'Exam', icon: 'lock-clock', label: 'Exam' },
+                ] as { key: 'All' | 'Open' | 'Submitted' | 'Exam'; icon: keyof typeof MaterialIcons.glyphMap; label: string }[]).map((tab) => (
                   <TouchableOpacity
-                    key="__all_subjects"
-                    style={[
-                      styles.chip,
-                      { backgroundColor: theme.colors.surfaceMuted, borderWidth: 1, borderColor: theme.colors.border },
-                      selectedSubjectId === null && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-                    ]}
+                    key={tab.key}
+                    style={[styles.statusTab, statusFilter === tab.key && { backgroundColor: theme.colors.primary }]}
+                    onPress={() => setStatusFilter(tab.key)}
+                    activeOpacity={0.85}
+                  >
+                    <MaterialIcons name={tab.icon} size={13} color={statusFilter === tab.key ? '#FFFFFF' : theme.colors.muted} />
+                    <Text style={[styles.statusTabText, { color: statusFilter === tab.key ? '#FFFFFF' : theme.colors.muted }]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Subject chips */}
+              {subjectOptions.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled keyboardShouldPersistTaps="handled" contentContainerStyle={styles.chipsRow}>
+                  <TouchableOpacity
+                    style={[styles.chip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }, selectedSubjectId === null && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]}
                     onPress={() => setSelectedSubjectId(null)}
                     activeOpacity={0.85}
                   >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        { color: theme.colors.text },
-                        selectedSubjectId === null && { color: theme.colors.surface },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      All
-                    </Text>
+                    <Text style={[styles.chipText, { color: selectedSubjectId === null ? '#FFFFFF' : theme.colors.muted }]}>All subjects</Text>
                   </TouchableOpacity>
                   {subjectOptions.map((s) => (
                     <TouchableOpacity
                       key={s.subject_id}
-                      style={[
-                        styles.chip,
-                        { backgroundColor: theme.colors.surfaceMuted, borderWidth: 1, borderColor: theme.colors.border },
-                        selectedSubjectId === s.subject_id && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-                      ]}
+                      style={[styles.chip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }, selectedSubjectId === s.subject_id && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]}
                       onPress={() => setSelectedSubjectId(s.subject_id)}
                       activeOpacity={0.85}
                     >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          { color: theme.colors.text },
-                          selectedSubjectId === s.subject_id && { color: theme.colors.surface },
-                        ]}
-                        numberOfLines={1}
-                      >
+                      <Text style={[styles.chipText, { color: selectedSubjectId === s.subject_id ? '#FFFFFF' : theme.colors.muted }]} numberOfLines={1}>
                         {s.subject_name}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-              </View>
-              <View style={styles.filterGroup}>
-                <Text style={[styles.filterLabel, { color: theme.colors.muted }]}>Due on</Text>
-                <View style={styles.dueRow}>
+              ) : null}
+
+              {/* Due date + reset row */}
+              <View style={styles.dueResetRow}>
+                <TouchableOpacity
+                  style={[styles.dueChip, { backgroundColor: theme.colors.surface, borderColor: dueDateFilter ? theme.colors.primary : theme.colors.border }]}
+                  onPress={openDueDatePicker}
+                  activeOpacity={0.85}
+                >
+                  <MaterialIcons name="event" size={15} color={dueDateFilter ? theme.colors.primary : theme.colors.muted} />
+                  <Text style={[styles.dueChipText, { color: dueDateFilter ? theme.colors.primary : theme.colors.muted }]}>
+                    {dueDateFilter.trim() ? dueDateFilter : 'Any due date'}
+                  </Text>
+                  {dueDateFilter.trim() ? (
+                    <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => setDueDateFilter('')}>
+                      <MaterialIcons name="close" size={13} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                  ) : null}
+                </TouchableOpacity>
+                {hasActiveFilters ? (
                   <TouchableOpacity
-                    style={[styles.dueChip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
-                    onPress={openDueDatePicker}
+                    style={[styles.resetBtn, { borderColor: theme.colors.border }]}
+                    onPress={() => { setSearch(''); setSelectedSubjectId(null); setDueDateFilter(''); setStatusFilter('All'); }}
                     activeOpacity={0.85}
                   >
-                    <MaterialIcons name="event" size={16} color={theme.colors.primary} />
-                    <Text style={[styles.dueChipText, { color: theme.colors.text }]}>
-                      {dueDateFilter.trim() ? dueDateFilter : 'Any due date'}
-                    </Text>
+                    <MaterialIcons name="refresh" size={14} color={theme.colors.muted} />
+                    <Text style={[styles.resetBtnText, { color: theme.colors.muted }]}>Reset</Text>
                   </TouchableOpacity>
-                  {dueDateFilter.trim() ? (
-                    <TouchableOpacity
-                      style={[styles.dueClear, { backgroundColor: theme.colors.surfaceMuted }]}
-                      onPress={() => setDueDateFilter('')}
-                      activeOpacity={0.85}
-                    >
-                      <MaterialIcons name="close" size={16} color={theme.colors.muted} />
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                {Platform.OS === 'android' && showDuePicker ? (
-                  <DateTimePicker
-                    value={pickerScratch}
-                    mode="date"
-                    display="default"
-                    onChange={onDuePickerChange}
-                  />
                 ) : null}
               </View>
-              <View style={styles.filterGroup}>
-                <Text style={[styles.filterLabel, { color: theme.colors.muted }]}>Status</Text>
-                <View style={styles.chipsRow}>
-                  {(['All', 'Open', 'Submitted', 'Exam'] as const).map((s) => (
-                    <TouchableOpacity
-                      key={s}
-                      style={[
-                        styles.chip,
-                        { backgroundColor: theme.colors.surfaceMuted, borderWidth: 1, borderColor: theme.colors.border },
-                        statusFilter === s && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-                      ]}
-                      onPress={() => setStatusFilter(s)}
-                      activeOpacity={0.85}
-                    >
-                      <Text
-                        style={[styles.chipText, { color: theme.colors.text }, statusFilter === s && { color: theme.colors.surface }]}
-                      >
-                        {s}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  {hasActiveFilters ? (
-                    <TouchableOpacity
-                      style={[styles.clearChip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
-                      onPress={() => {
-                        setSearch('');
-                        setSelectedSubjectId(null);
-                        setDueDateFilter('');
-                        setStatusFilter('All');
-                      }}
-                      activeOpacity={0.85}
-                    >
-                      <MaterialIcons name="refresh" size={12} color={theme.colors.muted} />
-                      <Text style={[styles.clearChipText, { color: theme.colors.muted }]}>Reset</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-              </View>
+
+              {Platform.OS === 'android' && showDuePicker ? (
+                <DateTimePicker value={pickerScratch} mode="date" display="default" onChange={onDuePickerChange} />
+              ) : null}
+
+              <Text style={[styles.resultsCount, { color: theme.colors.muted }]}>
+                {filteredItems.length} result{filteredItems.length !== 1 ? 's' : ''}
+                {pagination.totalPages > 1 ? ` · page ${pagination.lastPage}/${pagination.totalPages}` : ''}
+              </Text>
             </View>
           }
+
           ListEmptyComponent={
             <View style={styles.listEmptyWrap}>
-              <MaterialIcons name="assignment" size={24} color={theme.colors.inactive} />
+              <View style={[styles.stateIconWrap, { backgroundColor: theme.colors.primarySoft }]}>
+                <MaterialIcons name="assignment-late" size={32} color={theme.colors.primary} />
+              </View>
+              <Text style={[styles.stateTitle, { color: theme.colors.primary }]}>
+                {items.length === 0 ? 'No assignments yet' : 'No matches'}
+              </Text>
               <Text style={[styles.stateText, { color: theme.colors.muted }]}>
                 {items.length === 0
-                  ? 'No assignments available for submission.'
-                  : 'No assignments match your filters.'}
+                  ? 'Your instructor hasn\u2019t posted any assignments for submission.'
+                  : 'Try adjusting your search or filters.'}
               </Text>
-              {items.length > 0 && pagination.lastPage < pagination.totalPages ? (
-                <Text style={[styles.listEmptyHint, { color: theme.colors.muted }]}>
-                  More assignments may be on the next pages.
-                </Text>
-              ) : null}
               {pagination.lastPage < pagination.totalPages && pagination.totalPages > 0 ? (
                 <TouchableOpacity
-                  style={[styles.loadMoreInline, { backgroundColor: theme.colors.primary }]}
+                  style={[styles.retryButton, { backgroundColor: theme.colors.primary }]}
                   activeOpacity={0.85}
                   disabled={isLoadingMore}
                   onPress={() => void fetchAssignmentsPage(pagination.lastPage + 1, true)}
                 >
-                  {isLoadingMore ? (
-                    <ActivityIndicator color={theme.colors.surface} />
-                  ) : (
-                    <Text style={[styles.loadMoreInlineText, { color: theme.colors.surface }]}>Load more assignments</Text>
+                  {isLoadingMore ? <ActivityIndicator color="#FFFFFF" size="small" /> : (
+                    <>
+                      <MaterialIcons name="expand-more" size={16} color="#FFFFFF" />
+                      <Text style={styles.retryButtonText}>Load more</Text>
+                    </>
                   )}
                 </TouchableOpacity>
               ) : null}
             </View>
           }
-          ListFooterComponent={
-            isLoadingMore ? (
-              <View style={styles.listFooterLoading}>
-                <ActivityIndicator color={theme.colors.primary} />
-              </View>
-            ) : null
-          }
+
+          ListFooterComponent={isLoadingMore ? <View style={styles.listFooterLoading}><ActivityIndicator color={theme.colors.primary} /></View> : null}
+
           renderItem={({ item }) => {
             const examMode = isExamAssignment(item);
             const st = item.latestSubmission?.processing_status;
-            const statusCol =
-              st != null
-                ? getStatusColor(st, theme.colors.primary, theme.colors.muted, theme.colors.inactive)
-                : theme.colors.muted;
+            const isSubmitted = item.submissionCount > 0;
+            const isDone = st === 'done';
+            const isProcessing = st === 'ocr' || st === 'grading' || st === 'queued';
+
+            const cardIcon = (isSubmitted ? (isDone ? 'check-circle' : 'hourglass-top') : examMode ? 'lock-clock' : 'description') as keyof typeof MaterialIcons.glyphMap;
+            const iconBg = examMode ? '#FEF3C7' : isDone ? '#DCFCE7' : isProcessing ? '#FEF3C7' : `${theme.colors.primary}1A`;
+            const iconColor = examMode ? '#B45309' : isDone ? '#15803D' : isProcessing ? '#B45309' : theme.colors.primary;
+
+            const ctaLabel = isSubmitted ? 'View submissions' : examMode ? 'Enter exam mode' : 'Capture & submit';
+            const ctaBg = isSubmitted ? 'transparent' : examMode ? '#D97706' : theme.colors.primary;
+            const ctaColor = isSubmitted ? theme.colors.primary : '#FFFFFF';
+            const ctaIcon = (isSubmitted ? 'visibility' : examMode ? 'lock-open' : 'camera-alt') as keyof typeof MaterialIcons.glyphMap;
+
+            const statusPillBg = isDone ? '#DCFCE7' : isProcessing ? '#FEF3C7' : `${theme.colors.primary}18`;
+            const statusPillColor = isDone ? '#15803D' : isProcessing ? '#B45309' : theme.colors.primary;
+            const statusLabel = isDone
+              ? item.latestSubmission!.score_percentage !== null
+                ? `${item.latestSubmission!.score_percentage.toFixed(0)}%`
+                : 'Graded'
+              : st ? getPrettyStatusLabel(st) : '';
+
             return (
               <TouchableOpacity
-                style={[
-                  styles.card,
-                  {
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
-                    shadowColor: theme.colors.shadow,
-                  },
-                ]}
-                activeOpacity={0.86}
-                onPress={() =>
-                  item.submissionCount > 0
-                    ? openSubmissionDetails(item)
-                    : examMode
-                      ? openExamMode(item)
-                      : openCameraForAssignment(item)
-                }
+                style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, shadowColor: theme.colors.shadow }]}
+                activeOpacity={0.88}
+                onPress={() => isSubmitted ? openSubmissionDetails(item) : examMode ? openExamMode(item) : openCameraForAssignment(item)}
               >
-                <View style={[styles.cardAccent, { backgroundColor: examMode ? theme.colors.primary : theme.colors.muted }]} />
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardTitleWrap}>
-                    <Text style={[styles.cardTitle, { color: theme.colors.text }]}>{item.title}</Text>
-                    {examMode && (
-                      <View style={[styles.examBadge, { backgroundColor: theme.colors.primarySoft }]}>
-                        <MaterialIcons name="assignment" size={10} color={theme.colors.primary} />
-                        <Text style={[styles.examBadgeText, { color: theme.colors.primary }]}>Exam</Text>
-                      </View>
-                    )}
-                    {item.submissionCount > 0 && (
-                      <View style={[styles.submissionBadge, { backgroundColor: theme.colors.primary }]}>
-                        <Text style={[styles.submissionBadgeText, { color: theme.colors.surface }]}>{item.submissionCount}</Text>
-                      </View>
-                    )}
+                {/* Top row: icon + title + meta */}
+                <View style={styles.cardTopRow}>
+                  <View style={[styles.cardIconCircle, { backgroundColor: iconBg }]}>
+                    <MaterialIcons name={cardIcon} size={22} color={iconColor} />
                   </View>
+                  <View style={styles.cardTitleBlock}>
+                    <Text style={[styles.cardTitle, { color: theme.colors.text }]} numberOfLines={2}>{item.title}</Text>
+                    <View style={styles.cardMetaRow}>
+                      <MaterialIcons name="book" size={11} color={theme.colors.inactive} />
+                      <Text style={[styles.cardMetaText, { color: theme.colors.muted }]} numberOfLines={1}>
+                        {item.subject_name || 'No subject'}
+                      </Text>
+                      {item.due_date ? (
+                        <>
+                          <View style={[styles.metaDot, { backgroundColor: theme.colors.inactive }]} />
+                          <MaterialIcons name="event" size={11} color={theme.colors.inactive} />
+                          <Text style={[styles.cardMetaText, { color: theme.colors.muted }]}>{formatDueDate(item.due_date)}</Text>
+                        </>
+                      ) : null}
+                    </View>
+                  </View>
+                  {isSubmitted ? (
+                    <View style={[styles.subCountBubble, { backgroundColor: isDone ? '#DCFCE7' : theme.colors.primarySoft }]}>
+                      <Text style={[styles.subCountText, { color: isDone ? '#15803D' : theme.colors.primary }]}>{item.submissionCount}</Text>
+                    </View>
+                  ) : null}
                 </View>
-                <Text style={[styles.cardMeta, { color: theme.colors.muted }]}>{item.subject_name || 'Subject unavailable'}</Text>
-                <Text style={[styles.cardMeta, { color: theme.colors.muted }]}>Due: {formatDueDate(item.due_date)}</Text>
-                {examMode && (item.exam_duration_minutes != null || item.exam_max_pauses != null) && (
-                  <View style={styles.examRulesRow}>
-                    {item.exam_duration_minutes != null && (
-                      <View style={[styles.examRulePill, { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.border }]}>
-                        <MaterialIcons name="schedule" size={12} color={theme.colors.primary} />
-                        <Text style={[styles.examRuleText, { color: theme.colors.primary }]}>
-                          Time limit: {item.exam_duration_minutes} min
-                        </Text>
+
+                {/* Exam rule pills */}
+                {examMode && (item.exam_duration_minutes != null || item.exam_max_pauses != null) ? (
+                  <View style={styles.examPillsRow}>
+                    {item.exam_duration_minutes != null ? (
+                      <View style={styles.examPill}>
+                        <MaterialIcons name="schedule" size={11} color="#B45309" />
+                        <Text style={styles.examPillText}>{item.exam_duration_minutes} min</Text>
                       </View>
-                    )}
-                    {item.exam_max_pauses != null && (
-                      <View style={[styles.examRulePill, { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.border }]}>
-                        <MaterialIcons name="pause-circle-outline" size={12} color={theme.colors.primary} />
-                        <Text style={[styles.examRuleText, { color: theme.colors.primary }]}>
-                          Pauses allowed: {item.exam_max_pauses}
-                        </Text>
+                    ) : null}
+                    {item.exam_max_pauses != null ? (
+                      <View style={styles.examPill}>
+                        <MaterialIcons name="pause-circle-outline" size={11} color="#B45309" />
+                        <Text style={styles.examPillText}>{item.exam_max_pauses} pauses</Text>
                       </View>
-                    )}
+                    ) : null}
                   </View>
-                )}
-                {item.latestSubmission && (
-                  <View style={[styles.submissionStatus, { borderTopColor: theme.colors.border }]}>
-                    <MaterialIcons name="check-circle" size={14} color={statusCol} />
-                    <Text style={[styles.submissionStatusText, { color: statusCol }]}>
-                      {item.latestSubmission.processing_status === 'done'
-                        ? `Submitted • ${
-                            item.latestSubmission.score_percentage !== null
-                              ? `${item.latestSubmission.score_percentage.toFixed(0)}%`
-                              : 'Graded'
-                          }`
-                        : item.latestSubmission.processing_status === 'queued'
-                          ? 'Submitted'
-                          : getPrettyStatusLabel(item.latestSubmission.processing_status)}
+                ) : null}
+
+                {/* Status pill for submitted */}
+                {item.latestSubmission ? (
+                  <View style={styles.submissionStatusRow}>
+                    <View style={[styles.statusPill, { backgroundColor: statusPillBg }]}>
+                      <MaterialIcons name={isDone ? 'check-circle' : 'hourglass-top'} size={12} color={statusPillColor} />
+                      <Text style={[styles.statusPillText, { color: statusPillColor }]}>
+                        {isDone ? `Graded${statusLabel ? ` · ${statusLabel}` : ''}` : statusLabel}
+                      </Text>
+                    </View>
+                    <Text style={[styles.subDateText, { color: theme.colors.inactive }]}>
+                      {new Date(item.latestSubmission.submitted_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                     </Text>
                   </View>
-                )}
-                {examMode && item.submissionCount === 0 && (
-                  <View style={[styles.examActionRow, { borderTopColor: theme.colors.border }]}>
-                    <MaterialIcons name="lock-clock" size={14} color={theme.colors.primary} />
-                    <Text style={[styles.examActionText, { color: theme.colors.primary }]}>Tap to enter exam mode</Text>
-                  </View>
-                )}
-                <View style={[styles.cardCtaRow, { borderTopColor: theme.colors.border }]}>
-                  <Text style={[styles.cardCtaText, { color: theme.colors.primary }]}>
-                    {item.submissionCount > 0 ? 'View previous submissions' : examMode ? 'Start exam mode' : 'Capture and submit'}
-                  </Text>
-                  <MaterialIcons name="chevron-right" size={18} color={theme.colors.primary} />
+                ) : null}
+
+                {/* CTA button */}
+                <View style={[styles.ctaBtn, { backgroundColor: ctaBg, borderColor: isSubmitted ? theme.colors.border : 'transparent', borderWidth: isSubmitted ? 1 : 0 }]}>
+                  <MaterialIcons name={ctaIcon} size={15} color={ctaColor} />
+                  <Text style={[styles.ctaBtnText, { color: ctaColor }]}>{ctaLabel}</Text>
+                  <MaterialIcons name="arrow-forward" size={15} color={ctaColor} style={styles.ctaArrow} />
                 </View>
               </TouchableOpacity>
             );
@@ -816,310 +786,346 @@ export default function AssignmentPickerScreen({ navigation }: AssignmentPickerS
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  listFlex: {
-    flex: 1,
-  },
-  listContent: {
+  container: { flex: 1 },
+  listFlex: { flex: 1 },
+
+  /* Header */
+  header: {
     paddingHorizontal: 16,
-    paddingBottom: 24,
-    gap: 12,
+    paddingTop: 14,
+    paddingBottom: 16,
+    overflow: 'hidden',
   },
-  listContentEmpty: {
-    flexGrow: 1,
+  headerGlow: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255,255,255,0.07)',
   },
-  filtersWrap: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    gap: 8,
-  },
-  listEmptyWrap: {
-    alignItems: 'center',
-    paddingVertical: 32,
-    paddingHorizontal: 24,
-    gap: 10,
-  },
-  listEmptyHint: {
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  listFooterLoading: {
-    paddingVertical: 20,
-  },
-  loadMoreInline: {
-    marginTop: 4,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 999,
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  loadMoreInlineText: {
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  summaryBar: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    gap: 12,
   },
-  summaryBarText: {
+  headerIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTextWrap: { gap: 2 },
+  headerTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  headerSub: {
+    color: 'rgba(255,255,255,0.72)',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
+  },
+
+  /* List */
+  listContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 12,
+  },
+  listContentEmpty: { flexGrow: 1 },
+  listFooterLoading: { paddingVertical: 20, alignItems: 'center' },
+
+  /* Filters */
+  filtersWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 10,
   },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 12,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     gap: 8,
-    minHeight: 42,
+    minHeight: 44,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 14,
     paddingVertical: 8,
+  },
+  statusTabsWrap: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  statusTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 9,
+    borderRadius: 11,
+    marginHorizontal: 2,
+    marginVertical: 2,
+  },
+  statusTabText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   chipsRow: {
     flexDirection: 'row',
     gap: 8,
-    flexWrap: 'wrap',
     paddingRight: 8,
   },
-  dueRow: {
+  chip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dueResetRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    flexWrap: 'wrap',
   },
   dueChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
+    flex: 1,
   },
   dueChipText: {
+    flex: 1,
     fontSize: 13,
     fontWeight: '600',
   },
-  dueClear: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  resetBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
+  resetBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  resultsCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    paddingHorizontal: 2,
+  },
+
+  /* Date picker modal */
   pickerBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15,23,42,0.45)',
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingBottom: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 20,
     overflow: 'hidden',
   },
   pickerToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  pickerToolbarTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  pickerToolbarBtn: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  filterGroup: {
-    gap: 6,
-  },
-  filterLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  chip: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    maxWidth: 140,
-  },
-  chipText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  clearChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  clearChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  card: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    gap: 8,
-    position: 'relative',
-    overflow: 'hidden',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  cardAccent: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 4,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  cardTitleWrap: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cardTitle: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  submissionBadge: {
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    minWidth: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  submissionBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  cardMeta: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  submissionStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
-    paddingTop: 8,
-    borderTopWidth: 1,
-  },
-  submissionStatusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  pickerToolbarTitle: { fontSize: 15, fontWeight: '700' },
+  pickerToolbarBtn: { fontSize: 15, fontWeight: '600' },
+
+  /* State views */
   stateWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    gap: 10,
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  stateIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stateTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: -0.2,
   },
   stateText: {
-    fontSize: 14,
+    fontSize: 13,
     textAlign: 'center',
-  },
-  errorText: {
-    fontSize: 14,
-    textAlign: 'center',
+    lineHeight: 19,
   },
   retryButton: {
-    marginTop: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-  },
-  retryButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  examBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  examBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  examActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingTop: 6,
-    borderTopWidth: 1,
+    marginTop: 4,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: 999,
   },
-  examActionText: {
-    fontSize: 12,
-    fontWeight: '600',
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
-  examRulesRow: {
+  listEmptyWrap: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+
+  /* Assignment card */
+  card: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  cardTopRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 2,
+    alignItems: 'flex-start',
+    gap: 12,
   },
-  examRulePill: {
+  cardIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  cardTitleBlock: {
+    flex: 1,
+    gap: 4,
+  },
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.1,
+    lineHeight: 20,
+  },
+  cardMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexWrap: 'wrap',
+  },
+  cardMetaText: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  metaDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    marginHorizontal: 2,
+  },
+  subCountBubble: {
+    minWidth: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    flexShrink: 0,
+  },
+  subCountText: {
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  examPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  examPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
   },
-  examRuleText: {
+  examPillText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: '#B45309',
   },
-  cardCtaRow: {
-    marginTop: 2,
-    paddingTop: 8,
-    borderTopWidth: 1,
+  submissionStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
-  cardCtaText: {
-    fontSize: 12,
-    fontWeight: '700',
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  subDateText: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  ctaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 11,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+  },
+  ctaBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+  },
+  ctaArrow: {
+    marginLeft: 'auto' as unknown as number,
   },
 });

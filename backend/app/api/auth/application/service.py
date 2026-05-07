@@ -32,14 +32,19 @@ def _raise_for_error(error: str, mapping: dict[str, tuple[int, str]]) -> None:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
 
-def execute_login(db: Session, email: str, password: str) -> LoginResponse:
+def execute_login(
+    db: Session,
+    email: str,
+    password: str,
+    trusted_device_token: str | None = None,
+) -> LoginResponse:
     """Authenticate the user by email and password and return login tokens.
 
     Raises HTTPException for invalid credentials, disabled accounts, or
     temporarily locked accounts.
     """
     try:
-        return auth_service.authenticate_user(db, email, password)
+        return auth_service.authenticate_user(db, email, password, trusted_device_token)
     except ValueError as exc:
         _raise_for_error(str(exc), {
             "INVALID_CREDENTIALS": (
@@ -147,6 +152,28 @@ def execute_change_password(
         })
 
 
+def execute_force_change_password(
+    db: Session,
+    user: User,
+    new_password: str,
+) -> MessageResponse:
+    """Set a new password without verifying the current one (first-login flow)."""
+    try:
+        auth_service.force_change_password(db, user, new_password)
+        return MessageResponse(message="Password updated successfully. Please log in again.")
+    except ValueError as exc:
+        _raise_for_error(str(exc), {
+            "FORCE_CHANGE_NOT_REQUIRED": (
+                status.HTTP_403_FORBIDDEN,
+                "Your account does not require a forced password change",
+            ),
+            "PASSWORD_TOO_SHORT": (
+                status.HTTP_400_BAD_REQUEST,
+                "New password must be at least 8 characters",
+            ),
+        })
+
+
 def execute_setup_2fa(user: User) -> TwoFactorSetupResponse:
     """Generate a TOTP QR code and plaintext secret for the user to scan."""
     try:
@@ -175,21 +202,82 @@ def execute_verify_2fa_setup(
 
 
 def execute_validate_2fa(
-    db: Session, user_id: str, code: str
+    db: Session,
+    user_id: str,
+    code: str,
+    method: str = "totp",
+    remember_device: bool = False,
 ) -> TokenResponse:
-    """Validate the TOTP code and exchange it for full access/refresh tokens."""
+    """Validate a TOTP or email OTP at login and exchange for full access/refresh tokens."""
     try:
-        result = auth_service.validate_2fa(db, user_id, code)
+        result = auth_service.validate_2fa(
+            db, user_id, code, method, remember_device=remember_device
+        )
         return TokenResponse(**result)
     except ValueError as exc:
         _raise_for_error(str(exc), {
             "2FA_NOT_ENABLED": (
                 status.HTTP_400_BAD_REQUEST,
-                "Two-factor authentication is not enabled",
+                "Authenticator two-factor is not enabled",
+            ),
+            "EMAIL_2FA_NOT_ENABLED": (
+                status.HTTP_400_BAD_REQUEST,
+                "Email two-factor is not enabled",
+            ),
+            "USER_NOT_FOUND": (
+                status.HTTP_404_NOT_FOUND,
+                "User not found",
             ),
             "INVALID_CODE": (
                 status.HTTP_401_UNAUTHORIZED,
                 "Invalid authentication code",
+            ),
+        })
+
+
+def execute_send_2fa_email(db: Session, user_id: str) -> MessageResponse:
+    try:
+        auth_service.send_2fa_email_otp(db, user_id)
+        return MessageResponse(message="If email sign-in is enabled for this account, a code has been sent.")
+    except ValueError as exc:
+        _raise_for_error(str(exc), {
+            "EMAIL_2FA_NOT_ENABLED": (
+                status.HTTP_400_BAD_REQUEST,
+                "Email two-factor is not enabled for this account",
+            ),
+            "EMAIL_NOT_VERIFIED": (
+                status.HTTP_400_BAD_REQUEST,
+                "Verify your email before using email sign-in codes",
+            ),
+        })
+
+
+def execute_enable_email_2fa(db: Session, user: User, password: str) -> MessageResponse:
+    try:
+        auth_service.enable_email_2fa(db, user, password)
+        return MessageResponse(message="Email sign-in codes enabled")
+    except ValueError as exc:
+        _raise_for_error(str(exc), {
+            "INVALID_PASSWORD": (
+                status.HTTP_401_UNAUTHORIZED,
+                "Invalid password",
+            ),
+            "EMAIL_NOT_VERIFIED": (
+                status.HTTP_400_BAD_REQUEST,
+                "Verify your email address first",
+            ),
+        })
+
+
+def execute_disable_email_2fa(db: Session, user: User, password: str) -> MessageResponse:
+    try:
+        auth_service.disable_email_2fa(db, user, password)
+        return MessageResponse(message="Email sign-in codes disabled")
+    except ValueError as exc:
+        _raise_for_error(str(exc), {
+            "INVALID_PASSWORD": (
+                status.HTTP_401_UNAUTHORIZED,
+                "Invalid password",
             ),
         })
 
@@ -200,7 +288,7 @@ def execute_disable_2fa(
     """Disable TOTP after verifying the account password and a valid code."""
     try:
         auth_service.disable_2fa(db, user, code, password)
-        return MessageResponse(message="Two-factor authentication disabled successfully")
+        return MessageResponse(message="Authenticator (app) two-factor authentication disabled")
     except ValueError as exc:
         _raise_for_error(str(exc), {
             "2FA_NOT_ENABLED": (
@@ -250,6 +338,10 @@ def execute_scan_qr_session(
                 status.HTTP_409_CONFLICT,
                 "QR session is not in a valid state",
             ),
+            "QR_LOGIN_STUDENT_ONLY": (
+                status.HTTP_403_FORBIDDEN,
+                "QR web login is only available for student accounts",
+            ),
         })
 
 
@@ -286,5 +378,9 @@ def execute_authenticate_qr(
             "SESSION_USER_MISMATCH": (
                 status.HTTP_403_FORBIDDEN,
                 "Session user mismatch",
+            ),
+            "QR_LOGIN_STUDENT_ONLY": (
+                status.HTTP_403_FORBIDDEN,
+                "QR web login is only available for student accounts",
             ),
         })

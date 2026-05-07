@@ -89,7 +89,7 @@ uv venv .venv
 uv sync
 
 # Start AI service
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### Frontend Web (local)

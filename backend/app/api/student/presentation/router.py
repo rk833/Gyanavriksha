@@ -12,13 +12,19 @@ from urllib.parse import quote
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    pass
 
 from app.api.auth.infrastructure.dependencies import require_role
 from app.api.student.application import service
 from app.services import submission_service as submission_service_mod
+from app.services import ocr_service
 from app.api.student.domain.schemas import StudentProfileUpdateInput
 from app.core.database import get_db
 from app.db.models.user import User
@@ -152,15 +158,72 @@ def terminate_exam_session(
 
 @router.post("/submissions", response_model=SubmissionListItem, status_code=201)
 async def upload_submission(
+    background_tasks: BackgroundTasks,
     assignment_id: uuid.UUID = Query(...),
     files: list[UploadFile] = File(...),
     current_user: User = Depends(require_role([UserRole.STUDENT])),
     db: Session = Depends(get_db),
 ):
     """Upload handwritten work images as a new submission for the given assignment."""
-    return await service.create_submission(
+    result = await service.create_submission(
         db, current_user.user_id, assignment_id, files
     )
+    # Automatically enqueue OCR + LLM grading so the submission progresses
+    # past QUEUED without requiring a separate manual trigger call.
+    background_tasks.add_task(
+        ocr_service.process_submission_ocr, db, result.submission_id
+    )
+    # Notify the subject instructor about the new submission.
+    background_tasks.add_task(
+        _notify_instructor_new_submission,
+        db,
+        result.submission_id,
+        current_user.full_name,
+    )
+    return result
+
+
+def _notify_instructor_new_submission(
+    db: "Session",
+    submission_id: uuid.UUID,
+    student_name: str,
+) -> None:
+    """Background task: find the subject instructor and send a SUBMISSION_RECEIVED notification."""
+    try:
+        from app.db.models.assignment import Assignment
+        from app.db.models.instructor_subject import InstructorSubject
+        from app.db.models.submission import Submission
+        from app.services import notification_service
+        from app.shared.source_enum import NotificationType
+
+        sub = db.query(Submission).filter(Submission.submission_id == submission_id).first()
+        if not sub:
+            return
+        assignment = db.query(Assignment).filter(Assignment.assignment_id == sub.assignment_id).first()
+        assignment_title = assignment.title if assignment else "an assignment"
+
+        instructor_link = (
+            db.query(InstructorSubject)
+            .filter(
+                InstructorSubject.subject_id == sub.subject_id,
+                InstructorSubject.is_active == True,
+            )
+            .first()
+        )
+        if not instructor_link:
+            return
+
+        notification_service.create_notification(
+            db=db,
+            recipient_id=instructor_link.instructor_id,
+            notification_type=NotificationType.SUBMISSION_RECEIVED,
+            title="New Submission Received",
+            body=f'{student_name} submitted "{assignment_title}".',
+            related_resource_id=str(submission_id),
+        )
+        db.commit()
+    except Exception:
+        pass
 
 
 @router.get("/submissions", response_model=PaginatedResponse[SubmissionListItem])
