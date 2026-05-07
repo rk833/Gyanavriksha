@@ -309,8 +309,12 @@ class TestGetQuiz:
 class TestGenerateQuizStream:
     def test_generate_stream_ndjson_has_question_and_complete(self):
         student = _create_student("stream_ndjson")
-        q_one = {"questions": [_QUIZ_AI_RESULT["questions"][0]]}
-        with patch("app.services.quiz_service.ai_post", new=AsyncMock(return_value=q_one)):
+        # Return a distinct question per AI call so duplicate detection doesn't fire
+        side_effects = [
+            {"questions": [_QUIZ_AI_RESULT["questions"][0]]},
+            {"questions": [_QUIZ_AI_RESULT["questions"][1]]},
+        ]
+        with patch("app.services.quiz_service.ai_post", new=AsyncMock(side_effect=side_effects)):
             resp = client.post(
                 "/api/quiz/generate-stream",
                 json={
