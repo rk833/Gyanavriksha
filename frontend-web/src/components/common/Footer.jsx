@@ -11,6 +11,10 @@ export default function Footer() {
   const aboutPath = `${roleBasePath}/about`;
   const faqPath = `${roleBasePath}/faq`;
   const supportTicketPath = `${roleBasePath}/support/ticket`;
+  const featuresPath = `${roleBasePath}/features`;
+  const privacyPolicyPath = `${roleBasePath}/privacy-policy`;
+  const termsPath = `${roleBasePath}/terms-of-service`;
+  const cookiePolicyPath = `${roleBasePath}/cookie-policy`;
 
   return (
     <footer className="bg-white border-t border-primary-light mt-auto">
@@ -65,29 +69,29 @@ export default function Footer() {
             <h3 className="font-semibold text-xs text-primary-dark mb-4">Features</h3>
             <ul className="space-y-2">
               <li>
-                <a href="#ai-grading" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${featuresPath}#ocr`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Advanced OCR Intelligence
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#knowledge-gaps" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${featuresPath}#rag`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   RAG AI Tutor
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#analytics" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${featuresPath}#heatmap`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Intelligent Concept Heatmap
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#micro-quizzes" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${featuresPath}#quizzes`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Retention Micro-Quizzes
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#iot-smart-desk" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${featuresPath}#iot`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   The IoT Smart Desk
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -103,6 +107,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link to={supportTicketPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={`${roleBasePath}/help`} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Support Ticket
                 </Link>
               </li>
@@ -114,19 +119,19 @@ export default function Footer() {
             <h3 className="font-semibold text-xs text-primary-dark mb-4">Legal</h3>
             <ul className="space-y-2">
               <li>
-                <a href="#privacy" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                  <Link to={privacyPolicyPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Privacy Policy
-                </a>
+                  </Link>
               </li>
               <li>
-                <a href="#terms" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={termsPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Terms of Service
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#cookies" className="text-xs text-slate-600 hover:text-primary transition-colors">
+                <Link to={cookiePolicyPath} className="text-xs text-slate-600 hover:text-primary transition-colors">
                   Cookie Policy
-                </a>
+                </Link>
               </li>
             </ul>
           </div>

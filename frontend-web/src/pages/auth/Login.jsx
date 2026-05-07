@@ -300,6 +300,13 @@ export default function Login() {
               <span className="hover:text-primary-dark cursor-pointer">Privacy policy</span>
               <span className="text-slate-300">•</span>
               <span className="hover:text-primary-dark cursor-pointer">Terms of Service</span>
+            <div className="space-x-4">
+              <Link to="/privacy-policy" className="hover:text-primary-dark cursor-pointer">
+                Privacy policy
+              </Link>
+              <Link to="/terms-of-service" className="hover:text-primary-dark cursor-pointer">
+                Terms of Service
+              </Link>
             </div>
           </div>
         </div>

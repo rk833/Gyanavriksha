@@ -109,6 +109,7 @@ export default function FAQ() {
 					<Link to="/" className="flex items-center gap-2">
 						<img src="/images/logo-icon.png" alt="Gyanavriksha" className="w-8 h-8" />
 						<span className="font-bold text-primary-dark">Gyanavriksha</span>
+						<span className="font-bold text-sm text-primary-dark">Gyanavriksha</span>
 					</Link>
 				</nav>
 			)}
@@ -152,6 +153,14 @@ export default function FAQ() {
 			) : (
 				<footer className="bg-white border-t border-primary-light py-6 text-center text-sm text-slate-600">
 					Gyanavriksha © 2026 — AI-Powered Learning Ecosystem
+				<footer className="bg-white border-t border-primary-light py-6">
+					<div className="flex flex-col items-center gap-2 text-center">
+						<div className="flex items-center gap-2">
+							<img src="/images/logo-icon.png" alt="Gyanavriksha" className="w-6 h-6" />
+							<span className="text-xs font-medium text-slate-600">Gyanavriksha © 2026</span>
+						</div>
+						<p className="text-xs text-slate-500">AI-Powered Learning Ecosystem for Secondary Education</p>
+					</div>
 				</footer>
 			)}
 		</div>

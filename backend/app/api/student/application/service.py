@@ -20,8 +20,10 @@ from app.schemas.progress import (
     DashboardResponse,
     KnowledgeGapResponse,
     KnowledgeGapSummary,
+    KnowledgeGapSummary,
     StudentProgressResponse,
 )
+from app.schemas.quiz import MicroQuizSchema, QuizQuestionSchema
 from app.schemas.submission import (
     SubmissionDetailResponse,
     SubmissionFeedbackResponse,
@@ -34,6 +36,7 @@ from app.services import (
     notification_service,
     student_service,
     submission_service,
+    quiz_service,
 )
 
 
@@ -430,3 +433,46 @@ def get_library_document(
     return CurriculumDocumentResponse(
         **library_service.get_document_detail(db, student_id, doc_id)
     )
+
+
+async def generate_quiz(
+    db: Session, student_id: uuid.UUID, subject_id: int, concept: str, num_questions: int = 5
+) -> MicroQuizSchema:
+    """Trigger AI quiz generation and save to DB."""
+    quiz = await quiz_service.generate_and_save_quiz(
+        db, student_id, subject_id, concept, num_questions
+    )
+    return MicroQuizSchema.from_orm(quiz)
+
+
+def list_quizzes(
+    db: Session,
+    student_id: uuid.UUID,
+    subject_id: int | None,
+    page: int,
+    per_page: int,
+) -> PaginatedResponse[MicroQuizSchema]:
+    """Return paginated micro-quizzes for the student."""
+    items, total = quiz_service.get_quizzes_for_student(
+        db, student_id, subject_id=subject_id, page=page, per_page=per_page
+    )
+    return PaginatedResponse(
+        items=[MicroQuizSchema.from_orm(q) for q in items],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=_calculate_total_pages(total, per_page),
+    )
+
+
+def get_quiz_detail(
+    db: Session, student_id: uuid.UUID, quiz_id: uuid.UUID
+) -> MicroQuizSchema:
+    """Return full detail for a specific quiz, including questions."""
+    quiz = quiz_service.get_quiz_detail(db, student_id, quiz_id)
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Quiz not found",
+        )
+    return MicroQuizSchema.from_orm(quiz)

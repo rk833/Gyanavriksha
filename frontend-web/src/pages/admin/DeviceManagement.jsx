@@ -3,12 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cpu, MapPin, Copy, ChevronRight, ChevronLeft, MoreVertical,
   Plus, RefreshCw, Shield, Activity, Loader2, AlertCircle, X,
-  Eye, Pencil, Wifi, WifiOff, RotateCcw,
+  Eye, Pencil,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   listIotDevices, registerDevice, getIotHealth, getIotDevice, updateIotDevice,
-  decommissionDevice, regenerateDeviceKey, updateDeviceStatus,
+  decommissionDevice, regenerateDeviceKey, updateDeviceStatus, getIotAlerts,
 } from '../../services/adminService';
 
 const DEVICE_TYPE_BADGE = {
@@ -35,24 +35,6 @@ function StatusBadge({ status }) {
     <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${cls}`}>
       <span className="w-1.5 h-1.5 rounded-full bg-current" />
       {status?.toUpperCase() ?? 'UNKNOWN'}
-    </span>
-  );
-}
-
-function MaskedKey({ apiKeyHint }) {
-  const masked = apiKeyHint ?? '••••••••••••????';
-
-  const copyKey = () => {
-    toast.success('Key hint copied');
-    navigator.clipboard.writeText(masked);
-  };
-
-  return (
-    <span className="flex items-center gap-1 font-mono text-xs text-slate-500">
-      {masked}
-      <button onClick={copyKey} className="text-slate-400 hover:text-primary">
-        <Copy className="w-3.5 h-3.5" />
-      </button>
     </span>
   );
 }
@@ -263,18 +245,20 @@ function DeviceDetailModal({ deviceId, onClose }) {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
                         <th className="text-left px-3 py-2 font-semibold text-slate-500">Timestamp</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Temperature</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Humidity</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Raw Data</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Sensor</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Light</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Distance</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Alert</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {telemetry.map((t, i) => (
                         <tr key={i} className="hover:bg-slate-50/50">
-                          <td className="px-3 py-2 text-slate-500">{t.logged_at ? new Date(t.logged_at).toLocaleString() : '—'}</td>
-                          <td className="px-3 py-2 font-mono text-primary-dark">{t.temperature_c != null ? `${t.temperature_c}°C` : '—'}</td>
-                          <td className="px-3 py-2 font-mono text-slate-600">{t.humidity_pct != null ? `${t.humidity_pct}%` : '—'}</td>
-                          <td className="px-3 py-2 text-slate-400 max-w-xs truncate">{t.raw_payload ?? '—'}</td>
+                          <td className="px-3 py-2 text-slate-500">{t.recorded_at ? new Date(t.recorded_at).toLocaleString() : '—'}</td>
+                          <td className="px-3 py-2 text-slate-600">{t.sensor_type ?? '—'}</td>
+                          <td className="px-3 py-2 font-mono text-primary-dark">{t.ldr_value != null ? t.ldr_value : '—'}</td>
+                          <td className="px-3 py-2 font-mono text-slate-600">{t.distance_cm != null ? `${t.distance_cm} cm` : '—'}</td>
+                          <td className="px-3 py-2 text-slate-400">{t.alert_triggered ?? 'none'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -432,6 +416,13 @@ const PAGE_SIZE = 10;
 
 export default function DeviceManagement() {
   const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [deviceTypeFilter, setDeviceTypeFilter] = useState('all');
+  const [nodeIdFilter, setNodeIdFilter] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [timelineSeverity, setTimelineSeverity] = useState('all');
+  const [timelineHours, setTimelineHours] = useState(24);
+  const [timelineDeviceId, setTimelineDeviceId] = useState('all');
   const [showRegister, setShowRegister] = useState(false);
   const [newApiKey, setNewApiKey] = useState(null);
   const [confirmDevice, setConfirmDevice] = useState(null);
@@ -440,13 +431,30 @@ export default function DeviceManagement() {
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin', 'iot-devices', page],
-    queryFn: async () => (await listIotDevices({ page, page_size: PAGE_SIZE })).data,
+    queryKey: ['admin', 'iot-devices', page, statusFilter, deviceTypeFilter, nodeIdFilter, locationFilter],
+    queryFn: async () => (await listIotDevices({
+      page,
+      per_page: PAGE_SIZE,
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      device_type: deviceTypeFilter === 'all' ? undefined : deviceTypeFilter,
+      node_id: nodeIdFilter.trim() || undefined,
+      location: locationFilter || undefined,
+    })).data,
   });
 
   const { data: health } = useQuery({
     queryKey: ['admin', 'iot-health'],
     queryFn: async () => (await getIotHealth()).data,
+  });
+
+  const { data: timeline } = useQuery({
+    queryKey: ['admin', 'iot-alerts', timelineDeviceId, timelineSeverity, timelineHours],
+    queryFn: async () => (await getIotAlerts({
+      device_id: timelineDeviceId === 'all' ? undefined : timelineDeviceId,
+      severity: timelineSeverity,
+      hours: timelineHours,
+      limit: 20,
+    })).data,
   });
 
   const decommissionMutation = useMutation({
@@ -480,6 +488,15 @@ export default function DeviceManagement() {
   const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
   const activeNodes = health?.active_device_count ?? data?.active_nodes ?? 0;
   const offlineNodes = health?.offline_device_count ?? 0;
+  const alerts = timeline?.alerts ?? [];
+  const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const pageEnd = Math.min(page * PAGE_SIZE, total);
+
+  const maxVisible = 5;
+  const startPage = Math.max(1, page - Math.floor(maxVisible / 2));
+  const endPage = Math.min(totalPages, startPage + maxVisible - 1);
+  const pageButtons = [];
+  for (let p = startPage; p <= endPage; p += 1) pageButtons.push(p);
 
   return (
     <div>
@@ -513,10 +530,45 @@ export default function DeviceManagement() {
       </div>
 
       <div className="bg-white rounded-xl border border-primary-light shadow-sm mb-6 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex flex-wrap items-center gap-3">
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600"
+          >
+            <option value="all">All status</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+            <option value="syncing">Syncing</option>
+          </select>
+          <select
+            value={deviceTypeFilter}
+            onChange={(e) => { setDeviceTypeFilter(e.target.value); setPage(1); }}
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600"
+          >
+            <option value="all">All device types</option>
+            <option value="ESP32">ESP32</option>
+            <option value="ESP32-CAM">ESP32-CAM</option>
+            <option value="Arduino MKR">Arduino MKR</option>
+            <option value="Raspberry Pi 4">Raspberry Pi 4</option>
+          </select>
+          <input
+            value={nodeIdFilter}
+            onChange={(e) => { setNodeIdFilter(e.target.value); setPage(1); }}
+            placeholder="Filter by node ID"
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600"
+          />
+          <input
+            value={locationFilter}
+            onChange={(e) => { setLocationFilter(e.target.value); setPage(1); }}
+            placeholder="Filter by location"
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600"
+          />
+        </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-primary-light bg-slate-50">
-              {['Node ID', 'Device Type', 'Location', 'API Key', 'Status', 'Last Seen', 'Actions'].map((h) => (
+              {['Node ID', 'Device Type', 'Location', 'Snapshots', 'Status', 'Last Seen', 'Actions'].map((h) => (
                 <th key={h} className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -545,7 +597,11 @@ export default function DeviceManagement() {
                   <MapPin className="w-3.5 h-3.5 shrink-0" />
                   {d.location ?? '—'}
                 </td>
-                <td className="px-4 py-3"><MaskedKey apiKeyHint={d.api_key_hint ?? ''} /></td>
+                <td className="px-4 py-3 text-xs text-slate-500">
+                  <div>Light: {d.latest_light != null ? d.latest_light : '—'}</div>
+                  <div>Distance: {d.latest_distance_cm != null ? `${d.latest_distance_cm} cm` : '—'}</div>
+                  <div>Alert: {d.latest_alert ?? 'none'}</div>
+                </td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                 <td className="px-4 py-3 text-slate-400 text-xs">{d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Never'}</td>
                 <td className="px-4 py-3">
@@ -562,20 +618,44 @@ export default function DeviceManagement() {
           </tbody>
         </table>
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-500">
-          <span>Showing {devices.length ? `${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + devices.length}` : '0'} of {total} devices</span>
+          <span>
+            Showing {pageStart}-{pageEnd} of {total} devices
+          </span>
           <div className="flex items-center gap-1">
             <button disabled={page === 1} onClick={() => setPage((p) => p - 1)} className="p-1 rounded hover:bg-slate-100 disabled:opacity-40">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            {[...Array(Math.min(totalPages, 3))].map((_, i) => (
+            {startPage > 1 && (
+              <>
+                <button
+                  onClick={() => setPage(1)}
+                  className="w-6 h-6 rounded text-xs font-medium hover:bg-slate-100 text-slate-600"
+                >
+                  1
+                </button>
+                {startPage > 2 && <span className="px-1 text-slate-400">...</span>}
+              </>
+            )}
+            {pageButtons.map((p) => (
               <button
-                key={i + 1}
-                onClick={() => setPage(i + 1)}
-                className={`w-6 h-6 rounded text-xs font-medium ${page === i + 1 ? 'bg-primary text-white' : 'hover:bg-slate-100 text-slate-600'}`}
+                key={p}
+                onClick={() => setPage(p)}
+                className={`w-6 h-6 rounded text-xs font-medium ${page === p ? 'bg-primary text-white' : 'hover:bg-slate-100 text-slate-600'}`}
               >
-                {i + 1}
+                {p}
               </button>
             ))}
+            {endPage < totalPages && (
+              <>
+                {endPage < totalPages - 1 && <span className="px-1 text-slate-400">...</span>}
+                <button
+                  onClick={() => setPage(totalPages)}
+                  className="w-6 h-6 rounded text-xs font-medium hover:bg-slate-100 text-slate-600"
+                >
+                  {totalPages}
+                </button>
+              </>
+            )}
             <button disabled={page === totalPages} onClick={() => setPage((p) => p + 1)} className="p-1 rounded hover:bg-slate-100 disabled:opacity-40">
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -587,6 +667,59 @@ export default function DeviceManagement() {
         <HealthCard label="Health Check" value={`${health?.health_check_pct ?? 98.2}%`} sub={health?.uptime_status ?? 'Stable uptime this week'} icon={Shield} />
         <HealthCard label="Data Throughput" value={`${health?.data_throughput_gbps ?? 1.2} GB/s`} sub="Real-time aggregate stream" icon={Activity} />
         <HealthCard label="Network Security" value={health?.network_security_protocol ?? 'TLS 1.3'} sub="AES-256 Encrypted channel" icon={Shield} />
+      </div>
+
+      <div className="mt-6 bg-white rounded-xl border border-primary-light shadow-sm p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h3 className="text-sm font-bold text-primary-dark">Alert Timeline</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={timelineDeviceId}
+              onChange={(e) => setTimelineDeviceId(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600"
+            >
+              <option value="all">All devices</option>
+              {devices.map((d) => (
+                <option key={d.device_id} value={d.device_id}>{d.node_id}</option>
+              ))}
+            </select>
+            <select
+              value={timelineSeverity}
+              onChange={(e) => setTimelineSeverity(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600"
+            >
+              <option value="all">All severity</option>
+              <option value="critical">Critical</option>
+              <option value="warning">Warning</option>
+              <option value="info">Info</option>
+            </select>
+            <select
+              value={timelineHours}
+              onChange={(e) => setTimelineHours(Number(e.target.value))}
+              className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600"
+            >
+              <option value={6}>Last 6h</option>
+              <option value={24}>Last 24h</option>
+              <option value={72}>Last 72h</option>
+            </select>
+          </div>
+        </div>
+        {alerts.length === 0 ? (
+          <div className="text-xs text-slate-400 py-4">No alert events in selected window.</div>
+        ) : (
+          <div className="space-y-2">
+            {alerts.map((a, idx) => (
+              <div key={`${a.device_id}-${a.recorded_at}-${idx}`} className="border border-slate-100 rounded-lg px-3 py-2 flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold text-primary-dark">{a.node_id}</span>
+                  <span className="text-slate-500"> · {a.event_type}</span>
+                  <span className="text-slate-400"> · {a.message}</span>
+                </div>
+                <div className="text-slate-400">{new Date(a.recorded_at).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {showRegister && <RegisterDeviceModal onClose={() => setShowRegister(false)} onRegistered={handleRegistered} />}

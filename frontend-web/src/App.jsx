@@ -11,6 +11,10 @@ import QRLogin from './pages/auth/QRLogin';
 
 // Public Pages
 import About from './pages/About';
+import Features from './pages/Features';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
+import CookiePolicy from './pages/CookiePolicy';
 
 // Student Pages
 import StudentLayout from './layouts/StudentLayout';
@@ -53,6 +57,8 @@ import AdminSecurityIntegrity from './pages/admin/SecurityIntegrity';
 import AdminCurriculumUpload from './pages/admin/CurriculumUpload';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminAcademicManagement from './pages/admin/AcademicManagement';
+import AdminNotifications from './pages/admin/Notifications';
+import AdminProfile from './pages/admin/Profile';
 
 // Common Pages
 import FAQ from './pages/FAQ';
@@ -67,6 +73,9 @@ function App() {
         <Routes>
           {/* Default redirect */}
           <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-of-service" element={<TermsOfService />} />
+          <Route path="/cookie-policy" element={<CookiePolicy />} />
 
           {/* Public Routes */}
           <Route path="/faq" element={<FAQ />} />
@@ -100,6 +109,10 @@ function App() {
             <Route path="help" element={<StudentHelp />} />
             <Route path="faq" element={<FAQ />} />
             <Route path="support/ticket" element={<SupportTicket />} />
+            <Route path="features" element={<Features />} />
+            <Route path="privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="terms-of-service" element={<TermsOfService />} />
+            <Route path="cookie-policy" element={<CookiePolicy />} />
             <Route path="about" element={<About />} />
           </Route>
 
@@ -129,6 +142,10 @@ function App() {
             <Route path="profile" element={<InstructorProfile />} />
             <Route path="faq" element={<FAQ />} />
             <Route path="support/ticket" element={<SupportTicket />} />
+            <Route path="features" element={<Features />} />
+            <Route path="privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="terms-of-service" element={<TermsOfService />} />
+            <Route path="cookie-policy" element={<CookiePolicy />} />
             <Route path="about" element={<About />} />
             <Route path="student-review/:studentId" element={<InstructorStudentReview />} />
           </Route>
@@ -151,9 +168,15 @@ function App() {
             <Route path="iot" element={<AdminDeviceManagement />} />
             <Route path="security" element={<AdminSecurityIntegrity />} />
             <Route path="curriculum-ingestion" element={<AdminCurriculumUpload />} />
+            <Route path="notifications" element={<AdminNotifications />} />
+            <Route path="profile" element={<AdminProfile />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="faq" element={<FAQ />} />
             <Route path="support/ticket" element={<SupportTicket />} />
+            <Route path="features" element={<Features />} />
+            <Route path="privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="terms-of-service" element={<TermsOfService />} />
+            <Route path="cookie-policy" element={<CookiePolicy />} />
             <Route path="about" element={<About />} />
           </Route>
         </Routes>

@@ -1,0 +1,10 @@
+{
+  "created_at": "2026-04-28T19:17:31.293407+00:00",
+  "summary": {
+    "users": 1027,
+    "iot_devices": 82,
+    "sensor_logs": 2,
+    "curriculum_docs": 86,
+    "audit_logs": 325
+  }
+}

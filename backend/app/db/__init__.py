@@ -22,6 +22,7 @@ from app.db.models import ocr_log
 from app.db.models import submission
 from app.db.models import knowledge_gap
 from app.db.models import submission_feedback
+from app.db.models import chat_history
 
 # Domain 5: Adaptive Quiz System 
 from app.db.models import micro_quiz
