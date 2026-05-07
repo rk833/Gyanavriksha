@@ -17,12 +17,13 @@ from app.services import chat_log_io
 from app.db.models.chat_history import ChatHistory
 from app.db.models.knowledge_gap import KnowledgeGap
 from app.db.models.micro_quiz import MicroQuiz
+from app.db.models.notification import Notification
 from app.db.models.submission import Submission
 from app.db.models.quiz_question import QuizQuestion
 from app.db.models.subject import Subject
 from app.db.models.user import User
 from app.schemas.quiz import MicroQuizSchema
-from app.shared.source_enum import MicroQuizStatus, QuestionDifficulty, QuestionType
+from app.shared.source_enum import MicroQuizStatus, NotificationChannel, NotificationType, QuestionDifficulty, QuestionType
 
 # Minimum score (%) to mark a linked knowledge gap as resolved
 GAP_RESOLVE_MIN_SCORE_PCT = 60.0
@@ -259,6 +260,24 @@ def _create_quiz_questions(db: Session, quiz_id: uuid.UUID, questions: list[dict
         ))
 
 
+def _notify_quiz_assigned(
+    db: Session,
+    student_id: uuid.UUID,
+    concept: str,
+    num_questions: int,
+    quiz_id: uuid.UUID,
+) -> None:
+    """Create an in-app QUIZ_ASSIGNED notification for the student."""
+    db.add(Notification(
+        recipient_id=student_id,
+        type=NotificationType.QUIZ_ASSIGNED,
+        title="New Quiz Ready",
+        body=f"Your AI quiz on \"{concept}\" is ready — {num_questions} question{'s' if num_questions != 1 else ''} waiting for you.",
+        channel=NotificationChannel.IN_APP,
+        related_resource_id=str(quiz_id),
+    ))
+
+
 # Public API
 
 async def detect_gaps_for_quiz(db: Session, history_id: uuid.UUID) -> dict[str, Any]:
@@ -365,6 +384,9 @@ async def stream_generate_quiz_events(
     db.commit()
     db.refresh(new_quiz)
 
+    _notify_quiz_assigned(db, student_id, concept, len(collected), new_quiz.quiz_id)
+    db.commit()
+
     full = get_quiz_detail(db, student_id, new_quiz.quiz_id)
     if full and full.questions:
         full.questions.sort(key=lambda x: x.order_num)
@@ -417,6 +439,7 @@ async def generate_and_save_quiz(
     db.add(new_quiz)
     db.flush()
     _create_quiz_questions(db, new_quiz.quiz_id, uniq_questions)
+    _notify_quiz_assigned(db, student_id, concept, len(uniq_questions), new_quiz.quiz_id)
     db.commit()
     db.refresh(new_quiz)
     return new_quiz

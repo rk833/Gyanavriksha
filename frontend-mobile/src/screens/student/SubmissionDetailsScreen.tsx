@@ -438,13 +438,7 @@ export default function SubmissionDetailsScreen({ navigation, route }: Submissio
                 <View style={styles.attemptMeta}>
                   <MaterialIcons name="event" size={15} color="#64748B" />
                   <Text style={styles.attemptMetaText}>
-                    {new Date(submission.submitted_at).toLocaleDateString(undefined, {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                    {(() => { const s = submission.submitted_at; const h = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s); return new Date(h ? s : s + 'Z').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); })()}
                   </Text>
                 </View>
                 {submission.score_percentage !== null && submission.processing_status === 'done' ? (

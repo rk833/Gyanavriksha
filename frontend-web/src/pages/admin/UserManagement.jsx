@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   Users, Plus, Pencil, KeyRound, Trash2, X, ChevronLeft, ChevronRight,
   Copy, ShieldCheck, Loader2, AlertCircle, UserCog, CheckCircle2, Clock,
@@ -462,7 +463,7 @@ function PendingEnrollmentsPanel() {
                   <td className="px-4 py-3 text-slate-500">{e.grade_name ?? '—'}</td>
                   <td className="px-4 py-3 text-slate-500">{e.subject_name ?? '—'}</td>
                   <td className="px-4 py-3 text-slate-400 text-xs">
-                    {e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : '—'}
+                    {fmtDate(e.enrolled_at)}
                   </td>
                   <td className="px-4 py-3">
                     <button

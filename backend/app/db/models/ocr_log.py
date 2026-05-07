@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, String, Text
@@ -21,6 +21,6 @@ class OcrLog(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )

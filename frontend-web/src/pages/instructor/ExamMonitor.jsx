@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { fmtDateTime, fmtTime } from '../../utils/dateUtils';
 import { useQuery } from '@tanstack/react-query';
 import {
   Monitor, Users, PauseCircle, FileCheck, Clock, ChevronDown, Radio,
@@ -169,7 +170,7 @@ export default function ExamMonitorPage() {
           <div>
             <span className="text-slate-400 text-xs uppercase font-semibold">Due</span>
             <p className="font-medium text-slate-700">
-              {data.due_date ? new Date(data.due_date).toLocaleString() : '—'}
+              {fmtDateTime(data.due_date)}
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400 ml-auto">
@@ -428,7 +429,7 @@ export default function ExamMonitorPage() {
                           className="border-b border-slate-50 hover:bg-slate-50/60"
                         >
                           <td className="px-5 py-2.5 whitespace-nowrap text-slate-600 tabular-nums">
-                            {ev.sent_at ? new Date(ev.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                            {fmtTime(ev.sent_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                           </td>
                           <td className="px-5 py-2.5 font-medium text-slate-800">{ev.student_name}</td>
                           <td className="px-5 py-2.5 text-slate-600">{ev.category}</td>

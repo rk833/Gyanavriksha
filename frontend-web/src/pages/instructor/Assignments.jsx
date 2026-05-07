@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { fmtDate, fmtDateTime } from '../../utils/dateUtils';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   ClipboardList,
@@ -513,7 +514,7 @@ export default function InstructorAssignments() {
               {a.due_date && (
                 <div className="flex items-center gap-1 text-xs text-slate-500 mb-2">
                   <Calendar className="w-3 h-3" />
-                  <span>Due {new Date(a.due_date).toLocaleDateString()}</span>
+                  <span>Due {fmtDate(a.due_date)}</span>
                 </div>
               )}
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
@@ -591,7 +592,7 @@ export default function InstructorAssignments() {
               {detail.due_date && (
                 <p className="text-sm text-slate-500">
                   <Calendar className="w-4 h-4 inline mr-1" />
-                  Due: {new Date(detail.due_date).toLocaleString()}
+                  Due: {fmtDateTime(detail.due_date)}
                 </p>
               )}
               {detail.topic_tags?.length > 0 && (

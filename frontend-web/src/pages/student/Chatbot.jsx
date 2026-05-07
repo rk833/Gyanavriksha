@@ -149,7 +149,8 @@ function formatTimeFromIso(iso) {
 
 function formatDateFromIso(iso) {
   if (!iso) return 'Recently';
-  const d = new Date(iso);
+  const hasOffset = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso);
+  const d = new Date(hasOffset ? iso : iso + 'Z');
   if (Number.isNaN(d.getTime())) return 'Recently';
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

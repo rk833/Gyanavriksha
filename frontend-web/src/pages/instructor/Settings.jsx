@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import { useMutation } from '@tanstack/react-query';
 import {
   Settings as SettingsIcon,
@@ -504,7 +505,7 @@ export default function InstructorSettings() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-slate-500">Joined</span>
-            <span className="text-sm text-primary-dark">{new Date(profile.created_at).toLocaleDateString()}</span>
+            <span className="text-sm text-primary-dark">{fmtDate(profile.created_at)}</span>
           </div>
         </div>
       </div>

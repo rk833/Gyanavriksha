@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   AlertCircle,
   CheckCircle,
@@ -132,7 +133,7 @@ export default function StudentKnowledgeGaps() {
                         <p className="font-medium text-primary-dark text-sm">{gap.concept_name}</p>
                         <div className="flex items-center gap-3 mt-0.5">
                           <span className="text-xs text-slate-400">
-                            {new Date(gap.detected_at).toLocaleDateString()}
+                            {fmtDate(gap.detected_at)}
                           </span>
                           <span className={`text-xs px-1.5 py-0.5 rounded ${
                             gap.recurrence_count > 2

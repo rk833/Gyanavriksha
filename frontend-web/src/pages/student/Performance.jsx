@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   TrendingUp,
   TrendingDown,
@@ -586,7 +587,7 @@ export default function StudentPerformance() {
                 : `/student/micro-quiz?gap_id=${g.gap_id}&concept=${encodeURIComponent(g.concept_name)}&subject_id=${g.subject_id ?? ''}`;
               const detected =
                 g.detected_at != null
-                  ? new Date(g.detected_at).toLocaleDateString(undefined, {
+                  ? fmtDate(g.detected_at, {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',

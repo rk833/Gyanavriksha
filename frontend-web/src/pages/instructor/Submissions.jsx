@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { fmtDate, fmtDateTime } from '../../utils/dateUtils';
 import {
   FileText,
   Search,
@@ -180,7 +181,7 @@ function FeedbackPanel({ submission, onClose, onSaved }) {
               </div>
               <div>
                 <p className="text-xs text-slate-500">Submitted</p>
-                <p className="text-sm text-primary-dark">{new Date(submission.submitted_at).toLocaleString()}</p>
+                <p className="text-sm text-primary-dark">{fmtDateTime(submission.submitted_at)}</p>
               </div>
             </div>
           </div>
@@ -659,7 +660,7 @@ export default function InstructorSubmissions() {
                       {s.score_percentage != null ? `${s.score_percentage}%` : '—'}
                     </td>
                     <td className="py-3 px-4 text-right text-xs text-slate-500">
-                      {new Date(s.submitted_at).toLocaleDateString()}
+                      {fmtDate(s.submitted_at)}
                     </td>
                     <td className="py-3 px-4">
                       <button

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { fmtDate, fmtDateTime } from '../../utils/dateUtils';
 import {
   Upload, CloudUpload, FileText, Folder, FolderOpen, ChevronRight,
   CheckCircle2, RefreshCw, X, Loader2, Activity, Library, Trash2, RotateCcw, Clock3,
@@ -242,7 +243,7 @@ function JobsTable({
                 <td className="px-4 py-2.5 text-xs text-slate-500">{j.grade_subject ?? '—'}</td>
                 <td className="px-4 py-2.5"><JobStatusBadge status={j.status} /></td>
                 <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">
-                  {j.created_at ? new Date(j.created_at).toLocaleString() : '—'}
+                  {fmtDateTime(j.created_at)}
                 </td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -383,7 +384,7 @@ function PipelineActivityLog({ jobs }) {
   const events = pageJobs.map((j) => ({
     text: `${j.filename} — ${j.status}`,
     sub: j.grade_subject || '',
-    time: j.created_at ? new Date(j.created_at).toLocaleTimeString() : '—',
+    time: j.created_at ? (() => { const hasOff = j.created_at.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(j.created_at); return new Date(hasOff ? j.created_at : j.created_at + 'Z').toLocaleTimeString(); })() : '—',
   }));
 
   return (
@@ -582,7 +583,7 @@ function DocumentLibrary() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-400 text-xs">
-                      {d.created_at ? new Date(d.created_at).toLocaleDateString() : '—'}
+                      {fmtDate(d.created_at)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">

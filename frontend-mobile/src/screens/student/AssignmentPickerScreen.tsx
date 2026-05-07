@@ -765,7 +765,7 @@ export default function AssignmentPickerScreen({ navigation }: AssignmentPickerS
                       </Text>
                     </View>
                     <Text style={[styles.subDateText, { color: theme.colors.inactive }]}>
-                      {new Date(item.latestSubmission.submitted_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      {(() => { const s = item.latestSubmission.submitted_at; const h = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s); return new Date(h ? s : s + 'Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); })()}
                     </Text>
                   </View>
                 ) : null}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate, fmtDateTime } from '../../utils/dateUtils';
 import { useQuery } from '@tanstack/react-query';
 import {
   TrendingUp,
@@ -155,6 +156,7 @@ export default function StudentSubmissions() {
   };
 
   const avgScore = dashboard?.average_score;
+  const streak = dashboard?.active_streak ?? 0;
 
   return (
     <div>
@@ -175,12 +177,12 @@ export default function StudentSubmissions() {
             </div>
           )}
           <div className="bg-primary-dark rounded-xl px-4 py-3 text-center text-white">
-            <p className="text-xs uppercase tracking-wider text-white/70">Resolve Streak</p>
+            <p className="text-xs uppercase tracking-wider text-white/70">Active Streak</p>
             <p className="text-xl font-bold flex items-center gap-1">
               <Zap className="w-4 h-4 text-accent" />
-              12 Days
+              {streak} {streak === 1 ? 'Day' : 'Days'}
             </p>
-            <p className="text-[10px] text-white/50">Keep going!</p>
+            <p className="text-[10px] text-white/50">{streak > 0 ? 'Keep going!' : 'Submit today!'}</p>
           </div>
         </div>
       </div>
@@ -304,7 +306,7 @@ export default function StudentSubmissions() {
               {submissions.map((s) => (
                 <tr key={s.submission_id} className="border-b border-slate-50 hover:bg-primary-50/30">
                   <td className="px-5 py-3.5 text-slate-600">
-                    {new Date(s.submitted_at).toLocaleDateString()}
+                    {fmtDate(s.submitted_at)}
                   </td>
                   <td className="px-5 py-3.5 font-medium text-primary-dark">{s.subject_name || '—'}</td>
                   <td className="px-5 py-3.5 text-slate-600 hidden md:table-cell">{s.assignment_title || '—'}</td>
@@ -461,7 +463,7 @@ export default function StudentSubmissions() {
                 {/* Submitted at */}
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Clock className="w-4 h-4" />
-                  <span>Submitted: {new Date(selectedSubmission.submitted_at).toLocaleString()}</span>
+                  <span>Submitted: {fmtDateTime(selectedSubmission.submitted_at)}</span>
                 </div>
 
                 {/* Uploaded files */}

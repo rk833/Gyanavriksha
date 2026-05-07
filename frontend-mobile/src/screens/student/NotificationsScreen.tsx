@@ -52,9 +52,14 @@ function parseApiError(error: unknown, fallback: string) {
 }
 
 function timeAgo(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime();
+  // Bare ISO strings from the API have no timezone suffix — treat them as UTC.
+  const hasOffset = dateStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(dateStr);
+  const normalized = hasOffset ? dateStr : dateStr + 'Z';
+  const ms = new Date(normalized).getTime();
+  if (isNaN(ms)) return '';
+  const diff = Date.now() - ms;
+  if (diff < 60000) return 'Just now';   // covers 0 and slight negative (clock skew)
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;

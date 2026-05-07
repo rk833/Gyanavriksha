@@ -223,7 +223,7 @@ function IntegrityCard({ overview, auditResult, onRunAudit, running, onViewLogs 
         <div>
           <p className="text-xs text-primary-light uppercase tracking-wider mb-1">Last Audit Time</p>
           <p className="font-medium text-white text-sm">
-            {typeof auditTime === 'string' ? auditTime : new Date(auditTime).toLocaleString()}
+            {typeof auditTime === 'string' ? (() => { const h = auditTime.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(auditTime); return new Date(h ? auditTime : auditTime + 'Z').toLocaleString(); })() : new Date(auditTime).toLocaleString()}
           </p>
         </div>
       </div>

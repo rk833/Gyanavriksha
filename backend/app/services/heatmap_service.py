@@ -4,7 +4,7 @@ Fetches a chat history record, calls the AI service to generate a concept
 summary, persists the summary, and upserts ConceptHeatmapEntry rows.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -56,7 +56,7 @@ def _upsert_heatmap_entry(
         prev_score = entry.proficiency_score or 0.0
         entry.occurrence_count = new_count
         entry.proficiency_score = (prev_score * (new_count - 1) + proficiency) / new_count
-        entry.last_updated_at = datetime.utcnow()
+        entry.last_updated_at = datetime.now(timezone.utc)
     else:
         db.add(ConceptHeatmapEntry(
             student_id=student_id,

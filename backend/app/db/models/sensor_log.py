@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Enum as SAEnum, Float, ForeignKey, String
@@ -21,6 +21,6 @@ class SensorLog(Base):
     recorded_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate, fmtDateTime } from '../../utils/dateUtils';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Calendar, Upload, CheckCircle, Loader2, X, Image as ImageIcon, Camera,
@@ -412,7 +413,7 @@ export default function StudentAssignments() {
                         {a.due_date && (
                           <span className="inline-flex items-center gap-1">
                             <Calendar className="w-3 h-3" />
-                            Due {new Date(a.due_date).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                            Due {fmtDate(a.due_date)}
                           </span>
                         )}
                       </div>
@@ -609,7 +610,7 @@ export default function StudentAssignments() {
                     )}
                     {uploadModal.due_date && (
                       <span className="text-white/70">
-                        Due: {new Date(uploadModal.due_date).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                        Due: {fmtDateTime(uploadModal.due_date, { dateStyle: 'short', timeStyle: 'short' })}
                       </span>
                     )}
                     {!examIotPaused && (

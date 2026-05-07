@@ -82,11 +82,13 @@ function TicketDetailModal({ ticket, onClose, onStatusChange, updating, adminNam
     }
   };
 
-  const formatDate = (iso) =>
-    new Date(iso).toLocaleString('en-US', {
+  const formatDate = (iso) => {
+    const hasOff = iso?.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso ?? '');
+    return new Date(hasOff ? iso : (iso ?? '') + 'Z').toLocaleString(undefined, {
       year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -271,10 +273,12 @@ export default function AdminSupportTickets() {
     resolved: tickets.filter((t) => t.status === 'resolved' || t.status === 'closed').length,
   };
 
-  const formatDate = (iso) =>
-    new Date(iso).toLocaleDateString('en-US', {
+  const formatDate = (iso) => {
+    const hasOff = iso?.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso ?? '');
+    return new Date(hasOff ? iso : (iso ?? '') + 'Z').toLocaleDateString(undefined, {
       month: 'short', day: 'numeric', year: 'numeric',
     });
+  };
 
   return (
     <div className="space-y-6">

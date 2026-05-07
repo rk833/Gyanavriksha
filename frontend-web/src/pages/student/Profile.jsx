@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   User,
   Mail,
@@ -182,7 +183,7 @@ export default function StudentProfile() {
                       <div>
                         <p className="text-sm text-slate-700">{sub.assignment_title} Submitted</p>
                         <p className="text-xs text-slate-400">
-                          {sub.submitted_at ? new Date(sub.submitted_at).toLocaleDateString() : ''}
+                          {fmtDate(sub.submitted_at)}
                         </p>
                       </div>
                     </div>

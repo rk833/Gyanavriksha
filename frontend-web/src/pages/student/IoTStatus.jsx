@@ -58,11 +58,13 @@ function mergeIotTelemetryCache(prev, msg) {
 
 function formatRelative(isoStr) {
   if (!isoStr) return '—';
-  const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
+  const hasOff = isoStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(isoStr);
+  const d = new Date(hasOff ? isoStr : isoStr + 'Z');
+  const diff = (Date.now() - d.getTime()) / 1000;
   if (diff < 5) return 'just now';
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function getPostureLabel(cm) {

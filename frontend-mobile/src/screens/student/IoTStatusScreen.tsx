@@ -59,7 +59,8 @@ function parseApiError(error: unknown, fallback: string) {
 
 function formatTs(raw?: string) {
   if (!raw) return '—';
-  const d = new Date(raw);
+  const hasOff = raw.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(raw);
+  const d = new Date(hasOff ? raw : raw + 'Z');
   if (Number.isNaN(d.getTime())) return raw;
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }

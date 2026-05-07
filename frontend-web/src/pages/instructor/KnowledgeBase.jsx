@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   Upload,
   FileText,
@@ -309,7 +310,7 @@ export default function KnowledgeBasePage() {
               }`}>
                 {doc.doc_type === 'curriculum_pdf' ? 'Curriculum' : 'Note'}
               </span>
-              <span className="text-xs text-slate-400">{new Date(doc.created_at).toLocaleDateString()}</span>
+              <span className="text-xs text-slate-400">{fmtDate(doc.created_at)}</span>
               <button
                 onClick={() => setDeleteTarget({ id: doc.doc_id, fileName: doc.file_name })}
                 className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition"

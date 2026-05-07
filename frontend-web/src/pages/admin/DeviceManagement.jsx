@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { fmtDateTime } from '../../utils/dateUtils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cpu, MapPin, Copy, ChevronRight, ChevronLeft, MoreVertical,
@@ -267,7 +268,7 @@ function DeviceDetailModal({ deviceId, onClose }) {
               </div>
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Last Seen</p>
-                <p className="text-slate-600">{detail?.last_seen_at ? new Date(detail.last_seen_at).toLocaleString() : 'Never'}</p>
+                <p className="text-slate-600">{fmtDateTime(detail?.last_seen_at) || 'Never'}</p>
               </div>
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Status</p>
@@ -319,7 +320,7 @@ function DeviceDetailModal({ deviceId, onClose }) {
                     <tbody className="divide-y divide-slate-50">
                       {telemetry.map((t, i) => (
                         <tr key={i} className="hover:bg-slate-50/50">
-                          <td className="px-3 py-2 text-slate-500">{t.recorded_at ? new Date(t.recorded_at).toLocaleString() : '—'}</td>
+                          <td className="px-3 py-2 text-slate-500">{fmtDateTime(t.recorded_at)}</td>
                           <td className="px-3 py-2 text-slate-600">{t.sensor_type ?? '—'}</td>
                           <td className="px-3 py-2 font-mono text-primary-dark">{t.ldr_value != null ? t.ldr_value : '—'}</td>
                           <td className="px-3 py-2 font-mono text-slate-600">{t.distance_cm != null ? `${t.distance_cm} cm` : '—'}</td>
@@ -673,7 +674,7 @@ export default function DeviceManagement() {
                   <div>Alert: {d.latest_alert ?? 'none'}</div>
                 </td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
-                <td className="px-4 py-3 text-slate-400 text-xs">{d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Never'}</td>
+                <td className="px-4 py-3 text-slate-400 text-xs">{fmtDateTime(d.last_seen_at) || 'Never'}</td>
                 <td className="px-4 py-3">
                   <ActionsMenu
                     device={d}
@@ -785,7 +786,7 @@ export default function DeviceManagement() {
                   <span className="text-slate-500"> · {a.event_type}</span>
                   <span className="text-slate-400"> · {a.message}</span>
                 </div>
-                <div className="text-slate-400">{new Date(a.recorded_at).toLocaleString()}</div>
+                <div className="text-slate-400">{fmtDateTime(a.recorded_at)}</div>
               </div>
             ))}
           </div>

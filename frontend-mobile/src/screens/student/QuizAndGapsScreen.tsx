@@ -461,11 +461,13 @@ export default function QuizAndGapsScreen() {
     setGeneratingQuiz(true);
     setShowGenForm(false);
     try {
-      const res = await post<GenerateResponse>('/api/students/quizzes/generate', {
-        subject_id: genSubjectId,
-        concept,
-        num_questions: 5,
-      });
+      // Quiz generation calls the AI service which can take up to 90 s — override the
+      // default 15 s client timeout so the request doesn't fail before the AI responds.
+      const res = await post<GenerateResponse>(
+        '/api/students/quizzes/generate',
+        { subject_id: genSubjectId, concept, num_questions: 5 },
+        { timeout: 90000 },
+      );
       const detail = await get<QuizDetailResponse>(`/api/students/quizzes/${res.quiz_id}`);
       setQuizInProgress({
         quiz: detail,

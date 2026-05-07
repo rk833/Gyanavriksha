@@ -76,7 +76,8 @@ function gradeColor(gc?: string | null) {
 }
 
 function formatDate(dateStr: string) {
-  const d = new Date(dateStr);
+  const hasOff = dateStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(dateStr);
+  const d = new Date(hasOff ? dateStr : dateStr + 'Z');
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 

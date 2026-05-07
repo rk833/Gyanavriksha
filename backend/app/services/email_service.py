@@ -1,6 +1,6 @@
 import logging
 import smtplib
-from datetime import datetime
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -11,7 +11,7 @@ LOGO_URL = "https://i.postimg.cc/V6zdQ7k0/primary-logo.png"
 
 
 def _email_footer_html() -> str:
-    year = datetime.utcnow().year
+    year = datetime.now(timezone.utc).year
     support_email = settings.SMTP_FROM_EMAIL or "support@gyanavriksha.edu.np"
     return f"""
       <div style="padding:0 26px 22px;">

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   BookOpen, Plus, Pencil, Trash2, Users, BookMarked,
   ChevronRight, Loader2, AlertCircle, X, GraduationCap, UserPlus, UsersRound, Search,
@@ -349,7 +350,7 @@ function EnrollmentsPanel({ subject, gradeId, onClose }) {
                   <td className="px-4 py-3 text-slate-500 text-xs">{e.student_email ?? '—'}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs">{e.grade_name ?? '—'}</td>
                   <td className="px-4 py-3 text-slate-400 text-xs">
-                    {e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : '—'}
+                    {fmtDate(e.enrolled_at)}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${e.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>

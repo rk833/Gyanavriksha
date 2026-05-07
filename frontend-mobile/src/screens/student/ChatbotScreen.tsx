@@ -88,7 +88,8 @@ function formatTime(date: Date) {
 
 function formatDate(iso?: string | null) {
   if (!iso) return 'Recently';
-  const d = new Date(iso);
+  const hasOff = iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso);
+  const d = new Date(hasOff ? iso : iso + 'Z');
   if (isNaN(d.getTime())) return 'Recently';
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
@@ -405,7 +406,8 @@ export default function ChatbotScreen() {
         if (historyId) body.history_id = historyId;
         if (selectedSubject) body.subject_id = selectedSubject;
 
-        const res = await post<ChatResponse>('/api/students/ai-tutor/chat', body);
+        // AI tutor responses can take >15 s — use a longer timeout than the default.
+        const res = await post<ChatResponse>('/api/students/ai-tutor/chat', body, { timeout: 90000 });
         const answer = res.answer || 'I had trouble producing a response.';
         const citation = res.sources?.[0] ?? null;
 

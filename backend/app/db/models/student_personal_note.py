@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID, BIGINT
 from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text
@@ -28,6 +28,6 @@ class StudentPersonalNote(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )
