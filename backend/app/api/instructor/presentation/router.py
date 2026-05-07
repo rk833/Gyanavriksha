@@ -23,6 +23,7 @@ from app.schemas.instructor import (
     AssignmentUpdateRequest,
     AtRiskStudentResponse,
     ConceptHeatmapResponse,
+    ExamMonitorResponse,
     FeedbackOverrideRequest,
     InstructorAssignmentDetailResponse,
     InstructorAssignmentResponse,
@@ -39,6 +40,16 @@ from app.schemas.instructor import (
 from app.shared.source_enum import UserRole
 
 router = APIRouter(prefix="/api/instructors", tags=["Instructor"])
+
+
+@router.get("/exam-monitor", response_model=ExamMonitorResponse)
+def get_exam_monitor(
+    assignment_id: uuid.UUID | None = Query(None, description="Published exam assignment to monitor"),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Live exam cockpit: enrolled students, IoT telemetry, posture alerts timeline."""
+    return service.get_exam_monitor(db, str(current_user.user_id), assignment_id)
 
 
 @router.get("/dashboard", response_model=InstructorDashboardResponse)

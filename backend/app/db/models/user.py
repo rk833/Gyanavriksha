@@ -4,6 +4,8 @@ from datetime import datetime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import Boolean, Column, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text
 
+from sqlalchemy.dialects.postgresql import JSONB
+
 from app.db.base import Base
 from app.shared.source_enum import UserRole
 
@@ -30,6 +32,7 @@ class User(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     profile_image_url = Column(Text, nullable=True)
+    notification_preferences = Column(JSONB, nullable=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     grade_id = Column(Integer, ForeignKey("grades.grade_id", ondelete="SET NULL"), nullable=True)
     token_version = Column(Integer, nullable=False, default=0, server_default="0")

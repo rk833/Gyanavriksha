@@ -1,6 +1,7 @@
 import re
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field, field_validator # type: ignore
 
@@ -116,6 +117,7 @@ class UserResponse(BaseModel):
     is_email_verified: bool
     totp_enabled: bool = False
     profile_image_url: str | None = None
+    notification_preferences: dict[str, Any] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

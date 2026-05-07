@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   FileText,
@@ -13,6 +13,7 @@ import {
   Download,
   Bot,
   UserCircle,
+  ListFilter,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -421,10 +422,13 @@ export default function InstructorSubmissions() {
   const [loading, setLoading] = useState(true);
   const [subjects, setSubjects] = useState([]);
   const [selectedSubmission, setSelectedSubmission] = useState(null);
+  const [localSearch, setLocalSearch] = useState('');
+  const [scoreBand, setScoreBand] = useState('all');
 
   const page = Number(searchParams.get('page')) || 1;
   const statusFilter = searchParams.get('status') || '';
   const subjectFilter = searchParams.get('subject_id') || '';
+  const assignmentFilter = searchParams.get('assignment_id') || '';
   const perPage = 20;
   const totalPages = Math.ceil(total / perPage);
 
@@ -434,6 +438,7 @@ export default function InstructorSubmissions() {
       const params = { page, per_page: perPage };
       if (statusFilter) params.status = statusFilter;
       if (subjectFilter) params.subject_id = Number(subjectFilter);
+      if (assignmentFilter) params.assignment_id = assignmentFilter;
       const res = await getSubmissions(params);
       setSubmissions(res.data.items || []);
       setTotal(res.data.total || 0);
@@ -442,10 +447,34 @@ export default function InstructorSubmissions() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, subjectFilter]);
+  }, [page, statusFilter, subjectFilter, assignmentFilter]);
 
   useEffect(() => { fetchSubmissions(); }, [fetchSubmissions]);
   useEffect(() => { getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {}); }, []);
+
+  useEffect(() => {
+    setLocalSearch('');
+    setScoreBand('all');
+  }, [statusFilter, subjectFilter, assignmentFilter]);
+
+  const filteredSubmissions = useMemo(() => {
+    const q = localSearch.trim().toLowerCase();
+    return submissions.filter((s) => {
+      const pct = s.score_percentage != null ? Number(s.score_percentage) : null;
+      if (scoreBand === 'has_score' && pct == null) return false;
+      if (scoreBand === 'no_score' && pct != null) return false;
+      if (scoreBand === 'high' && (pct == null || pct < 70)) return false;
+      if (scoreBand === 'mid' && (pct == null || pct < 50 || pct >= 70)) return false;
+      if (scoreBand === 'low' && (pct == null || pct >= 50)) return false;
+      if (q) {
+        const blob = `${s.student_name ?? ''} ${s.student_email ?? ''} ${s.assignment_title ?? ''} ${s.subject_name ?? ''} ${s.assignment_instructor_name ?? ''}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [submissions, localSearch, scoreBand]);
+
+  const hasLocalFilters = Boolean(localSearch.trim()) || scoreBand !== 'all';
 
   const openDetail = async (id) => {
     try {
@@ -484,13 +513,18 @@ export default function InstructorSubmissions() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
+      <div className="mb-6 p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex flex-col lg:flex-row flex-wrap items-stretch lg:items-center gap-2 lg:gap-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
+          <ListFilter className="w-3.5 h-3.5" />
+          Filter
+        </div>
         <select
           value={statusFilter}
           onChange={(e) => setFilter('status', e.target.value)}
-          className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+          className="flex-1 min-w-[120px] lg:max-w-[160px] px-3 py-2 border border-primary-light rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary"
+          aria-label="Processing status"
         >
-          <option value="">All Status</option>
+          <option value="">All status</option>
           <option value="queued">Queued</option>
           <option value="ocr">OCR</option>
           <option value="grading">Grading</option>
@@ -501,15 +535,54 @@ export default function InstructorSubmissions() {
         <select
           value={subjectFilter}
           onChange={(e) => setFilter('subject_id', e.target.value)}
-          className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+          className="flex-1 min-w-[120px] lg:max-w-[200px] px-3 py-2 border border-primary-light rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary"
+          aria-label="Subject"
         >
-          <option value="">All Subjects</option>
+          <option value="">All subjects</option>
           {subjects.map((s) => (
             <option key={s.subject_id} value={s.subject_id}>{s.subject_name}</option>
           ))}
         </select>
 
-        <span className="text-sm text-slate-500 ml-auto">{total} total submissions</span>
+        <select
+          value={scoreBand}
+          onChange={(e) => setScoreBand(e.target.value)}
+          className="flex-1 min-w-[120px] lg:max-w-[200px] px-3 py-2 border border-primary-light rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary"
+          aria-label="Score band"
+        >
+          <option value="all">All scores</option>
+          <option value="has_score">Has score</option>
+          <option value="no_score">No score yet</option>
+          <option value="high">Score 70%+</option>
+          <option value="mid">Score 50–69%</option>
+          <option value="low">Score under 50%</option>
+        </select>
+
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="search"
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
+            placeholder="Search student, email, assignment, subject…"
+            className="w-full pl-9 pr-3 py-2 border border-primary-light rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary"
+            aria-label="Search submissions"
+          />
+        </div>
+
+        {hasLocalFilters ? (
+          <button
+            type="button"
+            onClick={() => { setLocalSearch(''); setScoreBand('all'); }}
+            className="text-xs font-medium text-primary hover:underline whitespace-nowrap px-1 py-2 lg:py-0"
+          >
+            Clear local filters
+          </button>
+        ) : null}
+
+        <span className="text-sm text-slate-500 lg:ml-auto lg:text-right">
+          {total} total · showing {filteredSubmissions.length} on this page
+        </span>
       </div>
 
       {/* Table */}
@@ -530,6 +603,19 @@ export default function InstructorSubmissions() {
           <h3 className="text-lg font-semibold text-primary-dark mb-2">No Submissions</h3>
           <p className="text-slate-500 text-sm">No submissions match your filters.</p>
         </div>
+      ) : filteredSubmissions.length === 0 ? (
+        <div className="bg-white border border-primary-light rounded-xl p-12 text-center">
+          <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-primary-dark mb-2">No Rows Match</h3>
+          <p className="text-slate-500 text-sm mb-4">Try clearing local search or score filters.</p>
+          <button
+            type="button"
+            onClick={() => { setLocalSearch(''); setScoreBand('all'); }}
+            className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm hover:bg-slate-200 transition"
+          >
+            Clear local filters
+          </button>
+        </div>
       ) : (
         <div className="bg-white rounded-xl border border-primary-light overflow-hidden">
           <div className="overflow-x-auto">
@@ -548,7 +634,7 @@ export default function InstructorSubmissions() {
                 </tr>
               </thead>
               <tbody>
-                {submissions.map((s) => (
+                {filteredSubmissions.map((s) => (
                   <tr key={s.submission_id} className="border-b border-slate-50 hover:bg-slate-50/50 transition">
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
 import Footer from '../components/common/Footer';
+import StudentGlobalIotAlerts from '../components/student/StudentGlobalIotAlerts';
 
 const NAV_ITEMS = [
   { to: '/student/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -23,7 +24,7 @@ const NAV_ITEMS = [
   { to: '/student/assignments', label: 'Assignments', icon: ClipboardList },
   { to: '/student/performance', label: 'Progress', icon: TrendingUp },
   { to: '/student/library', label: 'Library', icon: Library },
-  { to: '/student/iot-status', label: 'IoT Status', icon: Cpu, disabled: true },
+  { to: '/student/iot-status', label: 'IoT Status', icon: Cpu },
   { to: '/student/ai-tutor', label: 'AI Tutor', icon: Bot },
 ];
 
@@ -162,6 +163,8 @@ export default function StudentLayout() {
 
         <Footer />
       </div>
+
+      <StudentGlobalIotAlerts />
     </div>
   );
 }

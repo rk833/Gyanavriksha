@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cpu, MapPin, Copy, ChevronRight, ChevronLeft, MoreVertical,
@@ -9,6 +10,7 @@ import toast from 'react-hot-toast';
 import {
   listIotDevices, registerDevice, getIotHealth, getIotDevice, updateIotDevice,
   decommissionDevice, regenerateDeviceKey, updateDeviceStatus, getIotAlerts,
+  getUsers,
 } from '../../services/adminService';
 
 const DEVICE_TYPE_BADGE = {
@@ -41,49 +43,97 @@ function StatusBadge({ status }) {
 
 function ActionsMenu({ device, onDecommission, onRegenerate, onViewDetail, onEdit }) {
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState({});
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuHeight = 170;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < menuHeight
+      ? rect.top - menuHeight + window.scrollY
+      : rect.bottom + window.scrollY + 4;
+    setMenuStyle({
+      position: 'absolute',
+      top,
+      left: rect.right - 192 + window.scrollX,
+      width: 192,
+      zIndex: 9999,
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (btnRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const menu = open ? createPortal(
+    <div ref={menuRef} style={menuStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl py-1">
+      <button
+        onClick={() => { setOpen(false); onViewDetail(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+      >
+        <Eye className="w-4 h-4" /> View Details
+      </button>
+      <button
+        onClick={() => { setOpen(false); onEdit(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+      >
+        <Pencil className="w-4 h-4" /> Edit
+      </button>
+      <button
+        onClick={() => { setOpen(false); onRegenerate(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+      >
+        <RefreshCw className="w-4 h-4" /> Regenerate Key
+      </button>
+      <div className="border-t border-slate-100 my-1" />
+      <button
+        onClick={() => { setOpen(false); onDecommission(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 flex items-center gap-2 text-red-600"
+      >
+        <X className="w-4 h-4" /> Decommission
+      </button>
+    </div>,
+    document.body,
+  ) : null;
 
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} className="p-1 rounded hover:bg-slate-100">
+      <button ref={btnRef} onClick={() => setOpen((v) => !v)} className="p-1 rounded hover:bg-slate-100">
         <MoreVertical className="w-4 h-4 text-slate-500" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-7 z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-48 py-1">
-          <button
-            onClick={() => { setOpen(false); onViewDetail(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-          >
-            <Eye className="w-4 h-4" /> View Details
-          </button>
-          <button
-            onClick={() => { setOpen(false); onEdit(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-          >
-            <Pencil className="w-4 h-4" /> Edit
-          </button>
-          <button
-            onClick={() => { setOpen(false); onRegenerate(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-          >
-            <RefreshCw className="w-4 h-4" /> Regenerate Key
-          </button>
-          <div className="border-t border-slate-100 my-1" />
-          <button
-            onClick={() => { setOpen(false); onDecommission(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 flex items-center gap-2 text-red-600"
-          >
-            <X className="w-4 h-4" /> Decommission
-          </button>
-        </div>
-      )}
+      {menu}
     </div>
   );
 }
 
 function EditDeviceModal({ device, onClose, onSuccess }) {
-  const [form, setForm] = useState({ location: device.location ?? '', description: device.description ?? '' });
+  const [form, setForm] = useState({
+    location: device.location ?? '',
+    description: device.description ?? '',
+    assigned_student_id: device.assigned_student_id ?? '',
+  });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const { data: studentsData } = useQuery({
+    queryKey: ['admin', 'users', 'students'],
+    queryFn: async () => {
+      const res = await getUsers({ role: 'student', per_page: 200 });
+      return res.data?.users || [];
+    },
+  });
+  const students = studentsData || [];
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -108,6 +158,21 @@ function EditDeviceModal({ device, onClose, onSuccess }) {
         </div>
         <p className="text-xs text-slate-500 mb-4">Node: <span className="font-mono font-semibold text-primary-dark">{device.node_id}</span></p>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Assign to Student</label>
+            <select
+              value={form.assigned_student_id}
+              onChange={(e) => set('assigned_student_id', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">— Unassigned —</option>
+              {students.map((s) => (
+                <option key={s.user_id} value={s.user_id}>
+                  {s.full_name} ({s.email})
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
             <input

@@ -257,6 +257,7 @@ class IoTDeviceUpdateRequest(BaseModel):
     location: Optional[str] = Field(None, min_length=1, max_length=150)
     description: Optional[str] = None
     status: Optional[str] = None
+    assigned_student_id: Optional[str] = None
 
 
 class DeviceStatusUpdateRequest(BaseModel):

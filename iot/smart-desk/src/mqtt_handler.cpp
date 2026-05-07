@@ -1,3 +1,4 @@
+#include <string.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -65,7 +66,15 @@ bool mqttPublish(const char* topic, const char* payload) {
     if (!g_mqttClient.connected()) {
         return false;
     }
-    return g_mqttClient.publish(topic, payload);
+    size_t len = strlen(payload);
+    bool ok = g_mqttClient.publish(topic, payload);
+    if (!ok) {
+        Serial.printf(
+            "MQTT publish failed (topic=%s payload_len=%u). Check WiFi/MQTT buffer size.\n",
+            topic,
+            static_cast<unsigned int>(len));
+    }
+    return ok;
 }
 
 void mqttPublishHeartbeat(unsigned long nowMs) {

@@ -15,6 +15,7 @@ from app.schemas.common import PaginatedResponse
 from app.schemas.instructor import (
     AtRiskStudentResponse,
     ConceptHeatmapResponse,
+    ExamMonitorResponse,
     InstructorAssignmentDetailResponse,
     InstructorAssignmentResponse,
     InstructorDashboardResponse,
@@ -461,6 +462,21 @@ def get_profile(
     return InstructorProfileResponse(
         **instructor_service.get_instructor_profile(db, instructor_id)
     )
+
+
+def get_exam_monitor(
+    db: Session,
+    instructor_id: str,
+    assignment_id: uuid.UUID | None,
+) -> ExamMonitorResponse:
+    """Return live roster + telemetry for one published exam assignment."""
+    raw = instructor_service.get_exam_monitor_snapshot(db, instructor_id, assignment_id)
+    if raw is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exam assignment not found or not published for monitoring",
+        )
+    return ExamMonitorResponse(**raw)
 
 
 def update_profile(

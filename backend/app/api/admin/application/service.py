@@ -834,13 +834,14 @@ def update_iot_device(
     device_id: uuid.UUID,
     location: str | None,
     description: str | None,
+    assigned_student_id: str | None = None,
 ) -> IoTDeviceResponse:
-    """Update a device's location and/or description."""
+    """Update a device's location, description, and/or assigned student."""
     device = admin_service.get_iot_device_by_id(db, device_id)
     _raise_if_not_found(device, "Device not found")
     if device.status == "decommissioned":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot update a decommissioned device")
-    admin_service.update_iot_device_fields(db, device, location, description)
+    admin_service.update_iot_device_fields(db, device, location, description, assigned_student_id)
     db.commit()
     return IoTDeviceResponse(**admin_service._device_to_response_dict(device))
 

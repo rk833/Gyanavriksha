@@ -31,6 +31,7 @@ import StudentHelp from './pages/student/Help';
 import AiTutor from './pages/student/Chatbot';
 import MicroQuiz from './pages/student/MicroQuiz';
 import GradingResult from './pages/student/GradingResult';
+import IoTStatus from './pages/student/IoTStatus';
 
 // Instructor Pages
 import InstructorLayout from './layouts/InstructorLayout';
@@ -106,6 +107,7 @@ function App() {
             <Route path="library" element={<StudentLibrary />} />
             <Route path="help" element={<StudentHelp />} />
             <Route path="ai-tutor" element={<AiTutor />} />
+            <Route path="iot-status" element={<IoTStatus />} />
             <Route path="micro-quiz" element={<MicroQuiz />} />
             <Route path="submissions/:submissionId/result" element={<GradingResult />} />
             <Route path="features" element={<Features />} />

@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Calendar, Upload, CheckCircle, Loader2, X, Image as ImageIcon, Camera,
-  FileText, User, Award, ShieldAlert, ListOrdered, Clock, Pause, Users,
+  FileText, User, Award, ShieldAlert, ListOrdered, Clock, Pause, Users, Cpu,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getWebSocketOrigin } from '../../lib/wsOrigin';
 import MarkdownMath from '../../components/MarkdownMath';
 import {
   getAssignments,
@@ -13,6 +14,7 @@ import {
   uploadSubmission,
   postExamSessionStart,
   postExamSessionTerminate,
+  resumeExamSession,
 } from '../../services/studentService';
 import { queryClient } from '../../lib/queryClient';
 import useAuth from '../../hooks/useAuth';
@@ -50,6 +52,7 @@ export default function StudentAssignments() {
   const [files, setFiles] = useState([]);
   const [examRemainSec, setExamRemainSec] = useState(0);
   const [examPauseActive, setExamPauseActive] = useState(false);
+  const [examIotPaused, setExamIotPaused] = useState(false); // true when paused by IoT
   const [examPausesUsed, setExamPausesUsed] = useState(0);
   const [activeExamSessionId, setActiveExamSessionId] = useState(null);
   const [examStartLoading, setExamStartLoading] = useState(false);
@@ -83,6 +86,7 @@ export default function StudentAssignments() {
       setFiles([]);
       setExamSessionStarted(false);
       setExamPauseActive(false);
+      setExamIotPaused(false);
       setExamPausesUsed(0);
       setActiveExamSessionId(null);
       queryClient.invalidateQueries({ queryKey: ['student', 'assignments'] });
@@ -122,6 +126,7 @@ export default function StudentAssignments() {
     setFiles([]);
     setExamSessionStarted(false);
     setExamPauseActive(false);
+    setExamIotPaused(false);
     setExamPausesUsed(0);
     setActiveExamSessionId(null);
   };
@@ -183,6 +188,7 @@ export default function StudentAssignments() {
       setExamRemainSec(mins && a.is_exam_mode ? Math.round(Number(mins) * 60) : 0);
     }
     setExamPauseActive(false);
+    setExamIotPaused(false);
     setExamPausesUsed(0);
   };
 
@@ -201,6 +207,7 @@ export default function StudentAssignments() {
       const elapsed = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
       setExamRemainSec(Math.max(0, totalSec - elapsed));
       setExamPauseActive(false);
+      setExamIotPaused(false);
       setExamPausesUsed(0);
       queryClient.invalidateQueries({ queryKey: ['student', 'assignments'] });
     } catch (err) {
@@ -225,6 +232,43 @@ export default function StudentAssignments() {
     examSessionStarted,
   ]);
 
+  // ── IoT WebSocket: listen for auto_pause / auto_forfeit / posture_alert ───
+  useEffect(() => {
+    if (!examSessionStarted || !activeExamSessionId) return;
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+    const origin = getWebSocketOrigin();
+    const ws = new WebSocket(`${origin}/api/students/ws/iot-session?token=${encodeURIComponent(token)}`);
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (msg.type === 'auto_pause') {
+        setExamPauseActive(true);
+        setExamIotPaused(true);
+        if (msg.pauses_used != null) setExamPausesUsed(msg.pauses_used);
+        toast('IoT: You moved away — exam auto-paused', { icon: '⚠️' });
+      }
+      if (msg.type === 'auto_forfeit') {
+        toast.error('Exam forfeited: you left your desk too many times');
+        void closeModal();
+      }
+    };
+    ws.onerror = () => {}; // silently ignore if MQTT/WS not running
+    return () => ws.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examSessionStarted, activeExamSessionId]);
+
+  const handleIotResume = async () => {
+    if (!activeExamSessionId) return;
+    try {
+      await resumeExamSession(activeExamSessionId);
+      setExamPauseActive(false);
+      setExamIotPaused(false);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not resume exam session');
+    }
+  };
+
   const toggleExamPause = () => {
     if (!uploadModal?.is_exam_mode || !examSessionStarted) return;
     const maxP = uploadModal.exam_max_pauses != null ? Number(uploadModal.exam_max_pauses) : null;
@@ -238,9 +282,11 @@ export default function StudentAssignments() {
         return;
       }
       setExamPauseActive(true);
+      setExamIotPaused(false);
       if (maxP != null && maxP > 0) setExamPausesUsed((n) => n + 1);
     } else {
       setExamPauseActive(false);
+      setExamIotPaused(false);
     }
   };
 
@@ -535,32 +581,50 @@ export default function StudentAssignments() {
               )}
 
               {uploadModal.is_exam_mode && uploadModal.exam_duration_minutes > 0 && examSessionStarted && (
-                <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-xl bg-slate-900 text-white text-xs">
-                  <span className="inline-flex items-center gap-1.5 font-semibold">
-                    <Clock className="w-3.5 h-3.5" />
-                    Time left: {formatCountdown(examRemainSec)}
-                    {examPauseActive && <span className="text-amber-300">(paused)</span>}
-                  </span>
-                  {uploadModal.exam_max_pauses != null && (
-                    <span className="text-white/80">
-                      Pauses used: {examPausesUsed}/{uploadModal.exam_max_pauses}
-                    </span>
+                <>
+                  {examIotPaused && (
+                    <div className="flex items-center gap-3 mb-3 p-3 rounded-xl bg-amber-500 text-white text-xs font-semibold">
+                      <Cpu className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1">IoT Auto-paused — you moved away from your desk.</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleIotResume()}
+                        disabled={uploadMutation.isPending}
+                        className="px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white font-medium transition-colors"
+                      >
+                        Resume
+                      </button>
+                    </div>
                   )}
-                  {uploadModal.due_date && (
-                    <span className="text-white/70">
-                      Due: {new Date(uploadModal.due_date).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                  <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-xl bg-slate-900 text-white text-xs">
+                    <span className="inline-flex items-center gap-1.5 font-semibold">
+                      <Clock className="w-3.5 h-3.5" />
+                      Time left: {formatCountdown(examRemainSec)}
+                      {examPauseActive && <span className="text-amber-300">(paused)</span>}
                     </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={toggleExamPause}
-                    disabled={uploadMutation.isPending}
-                    className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white font-medium"
-                  >
-                    <Pause className="w-3 h-3" />
-                    {examPauseActive ? 'Resume' : 'Pause'}
-                  </button>
-                </div>
+                    {uploadModal.exam_max_pauses != null && (
+                      <span className="text-white/80">
+                        Pauses used: {examPausesUsed}/{uploadModal.exam_max_pauses}
+                      </span>
+                    )}
+                    {uploadModal.due_date && (
+                      <span className="text-white/70">
+                        Due: {new Date(uploadModal.due_date).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                      </span>
+                    )}
+                    {!examIotPaused && (
+                      <button
+                        type="button"
+                        onClick={toggleExamPause}
+                        disabled={uploadMutation.isPending}
+                        className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white font-medium"
+                      >
+                        <Pause className="w-3 h-3" />
+                        {examPauseActive ? 'Resume' : 'Pause'}
+                      </button>
+                    )}
+                  </div>
+                </>
               )}
 
               {!examPreflight && (

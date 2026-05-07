@@ -1495,12 +1495,22 @@ def update_iot_device_fields(
     device: IotDevice,
     location: str | None,
     description: str | None,
+    assigned_student_id: str | None = None,
 ) -> None:
     """Apply non-None field updates to the device."""
+    import uuid as _uuid
     if location is not None:
         device.location = location
     if description is not None:
         device.description = description
+    if assigned_student_id is not None:
+        if assigned_student_id == "":
+            device.assigned_student_id = None
+        else:
+            try:
+                device.assigned_student_id = _uuid.UUID(assigned_student_id)
+            except ValueError:
+                pass
     db.flush()
 
 
