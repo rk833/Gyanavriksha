@@ -15,9 +15,13 @@ import {
 } from '../../services/aiService';
 import { getSubjects } from '../../services/studentService';
 
-const DISCLAIMER = 'AI responses should be verified with your primary curriculum textbooks.';
+const DISCLAIMER = 'Gyani may make mistakes — always verify with your curriculum textbooks.';
 
-function UserBubble({ text, timestamp }) {
+function UserBubble({ text, timestamp, user }) {
+  const initial = user?.full_name?.charAt(0).toUpperCase()
+    || user?.first_name?.charAt(0).toUpperCase()
+    || 'U';
+  const profileImageUrl = user?.profile_image_url;
   return (
     <div className="flex justify-end gap-2 items-end group">
       <div className="max-w-[68%]">
@@ -28,8 +32,10 @@ function UserBubble({ text, timestamp }) {
           {timestamp}
         </p>
       </div>
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold shrink-0 shadow-sm">
-        A
+      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold shrink-0 shadow-sm overflow-hidden">
+        {profileImageUrl
+          ? <img src={profileImageUrl} alt="You" className="w-full h-full object-cover" />
+          : initial}
       </div>
     </div>
   );
@@ -52,8 +58,11 @@ function TypingDots() {
 function BotBubble({ text, citation, timestamp, loading }) {
   return (
     <div className="flex gap-2.5 items-end group">
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center shrink-0 shadow-sm">
-        <Sparkles className="w-3.5 h-3.5 text-white" />
+      <div className="flex flex-col items-center gap-1 shrink-0">
+        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-sm">
+          <Sparkles className="w-3.5 h-3.5 text-white" />
+        </div>
+        <span className="text-[9px] font-bold text-slate-400 tracking-wide">Gyani</span>
       </div>
       <div className="max-w-[75%]">
         {citation && (
@@ -148,7 +157,7 @@ function formatDateFromIso(iso) {
 const WELCOME_MSG = {
   id: 'welcome',
   role: 'bot',
-  text: "Namaste! I'm your AI Tutor. Ask me anything about your curriculum — units, lessons, topics, or concepts.",
+  text: "Namaste! I'm **Gyani**, your AI study companion on Gyanavriksha. Ask me anything about your curriculum — concepts, problems, summaries, or practice questions.",
   timestamp: formatTime(new Date()),
 };
 
@@ -296,7 +305,7 @@ export default function AiTutorPage() {
     setMessages([{
       id: 'welcome',
       role: 'bot',
-      text: 'Session cleared. How can I help you?',
+      text: 'Chat cleared. How can Gyani help you today?',
       timestamp: formatTime(new Date()),
     }]);
     setHistoryId(null);
@@ -415,14 +424,14 @@ export default function AiTutorPage() {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-white/80 backdrop-blur-sm">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center shadow-sm">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-sm">
               <Sparkles className="w-4.5 h-4.5 text-white" />
             </div>
             <div>
-              <p className="font-semibold text-slate-800 text-sm tracking-tight">Curriculum AI Tutor</p>
+              <p className="font-semibold text-slate-800 text-sm tracking-tight">Gyani</p>
               <p className="flex items-center gap-1.5 text-[11px] text-emerald-600 font-medium">
                 <span className={`w-1.5 h-1.5 rounded-full ${sessionActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-                {sessionActive ? 'Always Available' : 'Starting…'}
+                {sessionActive ? 'Online · Gyanavriksha AI' : 'Starting…'}
               </p>
             </div>
           </div>
@@ -472,7 +481,7 @@ export default function AiTutorPage() {
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 chat-surface">
           {messages.map((msg) =>
             msg.role === 'user' ? (
-              <UserBubble key={msg.id} text={msg.text} timestamp={msg.timestamp} />
+              <UserBubble key={msg.id} text={msg.text} timestamp={msg.timestamp} user={user} />
             ) : (
               <BotBubble
                 key={msg.id}
@@ -543,7 +552,7 @@ export default function AiTutorPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
-              placeholder={isListening ? 'Listening…' : 'Ask anything about your curriculum…'}
+              placeholder={isListening ? 'Listening…' : 'Ask Gyani anything…'}
               className="flex-1 bg-transparent text-sm text-slate-700 resize-none focus:outline-none placeholder-slate-400 max-h-28 py-0.5"
               style={{ height: 'auto' }}
               onInput={(e) => {

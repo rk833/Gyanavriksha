@@ -257,6 +257,7 @@ def create_user(
         role=role,
         password_hash=hash_password(password),
         is_email_verified=True,
+        must_change_password=True,
     )
     db.add(user)
     db.flush()
@@ -343,10 +344,12 @@ def reset_password(db: Session, user: User) -> str:
     """Generate a new secure password, hash it, increment token_version, and return the plain-text value.
 
     Incrementing token_version invalidates all existing JWTs for this user.
+    Sets must_change_password so the user is forced to set a new password on next login.
     """
     password = _generate_password()
     user.password_hash = hash_password(password)
     user.token_version = (user.token_version or 0) + 1
+    user.must_change_password = True
     db.flush()
     return password
 
@@ -1345,7 +1348,7 @@ def _generate_mac() -> str:
     return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
 
 
-def _device_to_response_dict(device: IotDevice) -> dict:
+def _device_to_response_dict(device: IotDevice, student_name: str | None = None) -> dict:
     """Map an IotDevice ORM row to the IoTDeviceResponse field set."""
     return {
         "device_id": device.device_id,
@@ -1363,6 +1366,8 @@ def _device_to_response_dict(device: IotDevice) -> dict:
         "latest_distance_cm": None,
         "latest_alert": None,
         "latest_telemetry_at": None,
+        "assigned_student_id": device.assigned_student_id,
+        "assigned_student_name": student_name,
     }
 
 
@@ -1407,9 +1412,17 @@ def list_iot_devices(
         .count()
     )
 
+    # Pre-fetch student names for all assigned devices in a single query
+    assigned_ids = [d.assigned_student_id for d in devices if d.assigned_student_id]
+    student_map: dict = {}
+    if assigned_ids:
+        students = db.query(User).filter(User.user_id.in_(assigned_ids)).all()
+        student_map = {str(s.user_id): s.full_name for s in students}
+
     device_rows = []
     for device in devices:
-        row = _device_to_response_dict(device)
+        s_name = student_map.get(str(device.assigned_student_id)) if device.assigned_student_id else None
+        row = _device_to_response_dict(device, s_name)
         last_light = (
             db.query(SensorLog)
             .filter(SensorLog.device_id == device.device_id, SensorLog.sensor_type == "ldr")
@@ -1500,17 +1513,22 @@ def update_iot_device_fields(
     """Apply non-None field updates to the device."""
     import uuid as _uuid
     if location is not None:
-        device.location = location
+        # Treat empty string as clearing the location (allow null locations)
+        device.location = location if location.strip() else None
     if description is not None:
-        device.description = description
+        device.description = description if description.strip() else None
     if assigned_student_id is not None:
         if assigned_student_id == "":
+            # Empty string = unassign
             device.assigned_student_id = None
         else:
             try:
                 device.assigned_student_id = _uuid.UUID(assigned_student_id)
             except ValueError:
-                pass
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid student ID format: {assigned_student_id!r}",
+                )
     db.flush()
 
 

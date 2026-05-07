@@ -352,8 +352,8 @@ function EnrollmentsPanel({ subject, gradeId, onClose }) {
                     {e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : '—'}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${e.is_active ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {e.is_active ? 'Active' : 'Pending'}
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${e.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {e.status === 'active' ? 'Active' : 'Pending'}
                     </span>
                   </td>
                   <td className="px-4 py-3">

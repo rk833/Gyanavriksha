@@ -1,5 +1,7 @@
 import uuid
+import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,8 @@ from app.core.security import (
 from app.db.models.email_verification import EmailVerification
 from app.db.models.qr_session import QrSession
 from app.db.models.refresh_token import RefreshToken
+from app.db.models.two_factor_email_challenge import TwoFactorEmailChallenge
+from app.db.models.two_factor_trusted_device import TwoFactorTrustedDevice
 from app.db.models.user import User
 from app.schemas.user import (
     LoginResponse,
@@ -24,10 +28,46 @@ from app.schemas.user import (
     UserRegisterRequest,
     UserResponse,
 )
-from app.shared.source_enum import EmailVerificationType, QrSessionStatus
+from app.services import email_service
+from app.shared.source_enum import EmailVerificationType, QrSessionStatus, UserRole
 
 
-# Registration 
+TRUSTED_DEVICE_SKIP_DAYS = 3
+
+
+def revoke_two_factor_trusted_devices(db: Session, user_id: uuid.UUID) -> None:
+    db.query(TwoFactorTrustedDevice).filter(TwoFactorTrustedDevice.user_id == user_id).delete()
+
+
+def _trusted_device_valid(db: Session, user_id: uuid.UUID, raw_token: str) -> bool:
+    token_hash = hash_token(raw_token)
+    row = (
+        db.query(TwoFactorTrustedDevice)
+        .filter(
+            TwoFactorTrustedDevice.user_id == user_id,
+            TwoFactorTrustedDevice.token_hash == token_hash,
+        )
+        .first()
+    )
+    if not row:
+        return False
+    now = datetime.now(timezone.utc)
+    if row.expires_at < now:
+        db.delete(row)
+        return False
+    return True
+
+
+def _create_trusted_device_token(db: Session, user_id: uuid.UUID) -> str:
+    raw = secrets.token_urlsafe(32)
+    db.add(
+        TwoFactorTrustedDevice(
+            user_id=user_id,
+            token_hash=hash_token(raw),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=TRUSTED_DEVICE_SKIP_DAYS),
+        )
+    )
+    return raw
 
 
 def register_user(db: Session, data: UserRegisterRequest) -> User:
@@ -65,7 +105,12 @@ def register_user(db: Session, data: UserRegisterRequest) -> User:
 
 # Login
 
-def authenticate_user(db: Session, email: str, password: str) -> LoginResponse:
+def authenticate_user(
+    db: Session,
+    email: str,
+    password: str,
+    trusted_device_token: str | None = None,
+) -> LoginResponse:
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise ValueError("INVALID_CREDENTIALS")
@@ -90,12 +135,38 @@ def authenticate_user(db: Session, email: str, password: str) -> LoginResponse:
     user.locked_until = None
     user.last_login_at = datetime.now(timezone.utc)
 
-    # Check if 2FA is enabled
-    if user.totp_enabled:
+    # Check if 2FA is enabled (authenticator and/or email)
+    needs_2fa = bool(user.totp_enabled or user.email_2fa_enabled)
+    trust_raw = (trusted_device_token or "").strip()
+    if needs_2fa and trust_raw and _trusted_device_valid(db, user.user_id, trust_raw):
+        token_data = {
+            "sub": str(user.user_id),
+            "email": user.email,
+            "role": user.role.value,
+            "tv": user.token_version,
+        }
+        access_token = create_access_token(token_data)
+        refresh_token = create_refresh_token(token_data)
+        _store_refresh_token(db, user.user_id, refresh_token)
+        db.commit()
+        return LoginResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
+
+    if needs_2fa:
+        methods: list[str] = []
+        if user.totp_enabled:
+            methods.append("totp")
+        if user.email_2fa_enabled:
+            methods.append("email")
         db.commit()
         return LoginResponse(
             requires_2fa=True,
             user_id=user.user_id,
+            two_factor_methods=methods,
         )
 
     token_data = {
@@ -190,6 +261,7 @@ def logout_user(db: Session, user_id: str, refresh_token_str: str | None = None)
     else:
         # Delete all refresh tokens for this user
         db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete()
+        revoke_two_factor_trusted_devices(db, uuid.UUID(str(user_id)))
     db.commit()
 
 
@@ -314,6 +386,7 @@ def reset_password(db: Session, token: str, new_password: str) -> None:
 
     # Force re-login everywhere by clearing all refresh tokens
     db.query(RefreshToken).filter(RefreshToken.user_id == user.user_id).delete()
+    revoke_two_factor_trusted_devices(db, user.user_id)
     db.commit()
 
 
@@ -351,16 +424,85 @@ def verify_2fa_setup(db: Session, user: User, secret: str, code: str) -> None:
     db.commit()
 
 
-def validate_2fa(db: Session, user_id: str, code: str) -> dict:
+def send_2fa_email_otp(db: Session, user_id: str) -> None:
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user or not user.email_2fa_enabled:
+        raise ValueError("EMAIL_2FA_NOT_ENABLED")
+    if not user.is_email_verified:
+        raise ValueError("EMAIL_NOT_VERIFIED")
+
+    raw = f"{secrets.randbelow(1_000_000):06d}"
+    db.query(TwoFactorEmailChallenge).filter(TwoFactorEmailChallenge.user_id == user.user_id).delete()
+    ch = TwoFactorEmailChallenge(
+        user_id=user.user_id,
+        code_hash=hash_token(raw),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+    db.add(ch)
+    db.commit()
+
+    email_service.send_2fa_login_email(user.email, raw, user.full_name)
+    if settings.ENVIRONMENT == "development":
+        print(f"\n[DEV] Email 2FA code for {user.email}: {raw}\n")
+
+
+def enable_email_2fa(db: Session, user: User, password: str) -> None:
+    if not verify_password(password, user.password_hash):
+        raise ValueError("INVALID_PASSWORD")
+    if not user.is_email_verified:
+        raise ValueError("EMAIL_NOT_VERIFIED")
+    user.email_2fa_enabled = True
+    db.commit()
+
+
+def disable_email_2fa(db: Session, user: User, password: str) -> None:
+    if not verify_password(password, user.password_hash):
+        raise ValueError("INVALID_PASSWORD")
+    user.email_2fa_enabled = False
+    db.query(TwoFactorEmailChallenge).filter(TwoFactorEmailChallenge.user_id == user.user_id).delete()
+    revoke_two_factor_trusted_devices(db, user.user_id)
+    db.commit()
+
+
+def validate_2fa(
+    db: Session,
+    user_id: str,
+    code: str,
+    method: str = "totp",
+    *,
+    remember_device: bool = False,
+) -> dict:
     import pyotp  # type: ignore
 
     user = db.query(User).filter(User.user_id == user_id).first()
-    if not user or not user.totp_enabled or not user.totp_secret:
-        raise ValueError("2FA_NOT_ENABLED")
+    if not user:
+        raise ValueError("USER_NOT_FOUND")
 
-    totp = pyotp.TOTP(user.totp_secret)
-    if not totp.verify(code):
-        raise ValueError("INVALID_CODE")
+    if method == "email":
+        if not user.email_2fa_enabled:
+            raise ValueError("EMAIL_2FA_NOT_ENABLED")
+        ch = (
+            db.query(TwoFactorEmailChallenge)
+            .filter(TwoFactorEmailChallenge.user_id == user.user_id)
+            .order_by(TwoFactorEmailChallenge.created_at.desc())
+            .first()
+        )
+        now = datetime.now(timezone.utc)
+        if not ch or ch.expires_at < now:
+            if ch:
+                db.delete(ch)
+                db.commit()
+            raise ValueError("INVALID_CODE")
+        if not verify_token_hash(code, ch.code_hash):
+            raise ValueError("INVALID_CODE")
+        db.query(TwoFactorEmailChallenge).filter(TwoFactorEmailChallenge.user_id == user.user_id).delete()
+    else:
+        if not user.totp_enabled or not user.totp_secret:
+            raise ValueError("2FA_NOT_ENABLED")
+
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(code):
+            raise ValueError("INVALID_CODE")
 
     token_data = {
         "sub": str(user.user_id),
@@ -372,15 +514,22 @@ def validate_2fa(db: Session, user_id: str, code: str) -> dict:
     refresh_token = create_refresh_token(token_data)
     _store_refresh_token(db, user.user_id, refresh_token)
 
+    trusted_raw: str | None = None
+    if remember_device:
+        trusted_raw = _create_trusted_device_token(db, user.user_id)
+
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
 
-    return {
+    out: dict[str, Any] = {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
         "expires_in": settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
+    if trusted_raw:
+        out["trusted_device_token"] = trusted_raw
+    return out
 
 
 def disable_2fa(db: Session, user: User, code: str, password: str) -> None:
@@ -398,6 +547,7 @@ def disable_2fa(db: Session, user: User, code: str, password: str) -> None:
 
     user.totp_secret = None
     user.totp_enabled = False
+    revoke_two_factor_trusted_devices(db, user.user_id)
     db.commit()
 
 
@@ -409,17 +559,40 @@ def change_password(db: Session, user: User, current_password: str, new_password
         raise ValueError("PASSWORD_TOO_SHORT")
 
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    revoke_two_factor_trusted_devices(db, user.user_id)
+    db.commit()
+
+
+def force_change_password(db: Session, user: User, new_password: str) -> None:
+    """Set a new password without requiring the current one.
+
+    Only allowed when must_change_password is True (first-login / admin reset flow).
+    Increments token_version so all other sessions are invalidated.
+    """
+    if not user.must_change_password:
+        raise ValueError("FORCE_CHANGE_NOT_REQUIRED")
+
+    if len(new_password) < 8:
+        raise ValueError("PASSWORD_TOO_SHORT")
+
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    user.token_version = (user.token_version or 0) + 1
+    revoke_two_factor_trusted_devices(db, user.user_id)
     db.commit()
 
 
 # QR session login
 
 def create_qr_session(db: Session) -> dict:
-    session_id = str(uuid.uuid4())
-    qr_data = f"gyanavriksha://auth?session={session_id}"
+    sid = uuid.uuid4()
+    session_id_str = str(sid)
+    qr_data = f"gyanavriksha://auth?session={session_id_str}"
 
     qr_session = QrSession(
-        qr_code_hash=hash_token(session_id),
+        qr_session_id=sid,
+        qr_code_hash=hash_token(session_id_str),
         status=QrSessionStatus.PENDING,
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
     )
@@ -428,13 +601,16 @@ def create_qr_session(db: Session) -> dict:
     db.refresh(qr_session)
 
     return {
-        "session_id": str(qr_session.qr_session_id),
+        "session_id": session_id_str,
         "qr_data": qr_data,
         "expires_in": 120,
     }
 
 
 def scan_qr_session(db: Session, session_id: str, user: User) -> None:
+    if user.role != UserRole.STUDENT:
+        raise ValueError("QR_LOGIN_STUDENT_ONLY")
+
     qr_session = db.query(QrSession).filter(QrSession.qr_session_id == session_id).first()
     if not qr_session:
         raise ValueError("SESSION_NOT_FOUND")
@@ -463,13 +639,30 @@ def get_qr_session_status(db: Session, session_id: str) -> dict:
         qr_session.status = QrSessionStatus.EXPIRED
         db.commit()
 
-    return {"status": qr_session.status.value}
+    result: dict[str, Any] = {"status": qr_session.status.value}
+
+    if qr_session.status == QrSessionStatus.AUTHENTICATED:
+        wa = qr_session.web_access_token
+        wr = qr_session.web_refresh_token
+        if wa and wr:
+            result["access_token"] = wa
+            result["refresh_token"] = wr
+            result["token_type"] = "bearer"
+            result["expires_in"] = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            qr_session.web_access_token = None
+            qr_session.web_refresh_token = None
+            db.commit()
+
+    return result
 
 
 def authenticate_qr_session(db: Session, session_id: str, user: User) -> dict:
     qr_session = db.query(QrSession).filter(QrSession.qr_session_id == session_id).first()
     if not qr_session:
         raise ValueError("SESSION_NOT_FOUND")
+
+    if user.role != UserRole.STUDENT:
+        raise ValueError("QR_LOGIN_STUDENT_ONLY")
 
     if qr_session.status != QrSessionStatus.SCANNED:
         raise ValueError("SESSION_INVALID_STATE")
@@ -487,6 +680,8 @@ def authenticate_qr_session(db: Session, session_id: str, user: User) -> dict:
     refresh_token = create_refresh_token(token_data)
     _store_refresh_token(db, user.user_id, refresh_token)
 
+    qr_session.web_access_token = access_token
+    qr_session.web_refresh_token = refresh_token
     qr_session.status = QrSessionStatus.AUTHENTICATED
     db.commit()
 

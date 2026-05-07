@@ -254,7 +254,7 @@ class IoTDeviceCreateRequest(BaseModel):
 class IoTDeviceUpdateRequest(BaseModel):
     """Request body for partially updating an IoT device record."""
 
-    location: Optional[str] = Field(None, min_length=1, max_length=150)
+    location: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = None
     status: Optional[str] = None
     assigned_student_id: Optional[str] = None
@@ -284,6 +284,8 @@ class IoTDeviceResponse(BaseModel):
     latest_distance_cm: Optional[float] = None
     latest_alert: Optional[str] = None
     latest_telemetry_at: Optional[datetime] = None
+    assigned_student_id: Optional[uuid.UUID] = None
+    assigned_student_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

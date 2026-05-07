@@ -10,8 +10,14 @@ import axios from 'axios';
 
 import { apiClient, clearStoredAuthTokens, subscribeSessionExpired } from '../api/client';
 import { useAppTheme } from '../context/ThemeContext';
+import {
+  isAccessTokenExpired,
+  isBiometricSignInEnabled,
+  refreshSessionWithStoredRefreshToken,
+} from '../services/biometricAuth';
 import SplashScreen from '../screens/SplashScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
+import ForceChangePasswordScreen from '../screens/auth/ForceChangePasswordScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import TwoFactorScreen from '../screens/auth/TwoFactorScreen';
 import QRLoginScreen from '../screens/auth/QRLoginScreen';
@@ -70,27 +76,6 @@ function formatNotificationDate(rawValue: string) {
     day: 'numeric',
   });
 }
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const parts = token.split('.');
-  if (parts.length !== 3) {
-    return null;
-  }
-
-  try {
-  const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-  const paddedPayload = payloadBase64.padEnd(payloadBase64.length + ((4 - (payloadBase64.length % 4)) % 4), '=');
-  const jsonPayload = globalThis.atob(paddedPayload);
-    return JSON.parse(jsonPayload) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function isTokenExpired(token: string) {
-  const payload = decodeJwtPayload(token);
-  const expValue = payload?.exp;
-  return Date.now() >= expValue * 1000;
-}
 
 function PlaceholderScreen({ title }: { title: string }) {
   const { theme } = useAppTheme();
@@ -120,6 +105,7 @@ function GlobalBottomTabBar({ state, navigation }: BottomTabBarProps) {
     'NotificationsScreen',
     'SubmissionsListScreen',
     'HelpScreen',
+    'QRLoginScreen',
   ]);
   if (HIDDEN_SCREENS.has(focusedRouteName ?? '')) {
     return null;
@@ -430,6 +416,19 @@ function AppTabs({ onLogout }: { onLogout: () => void | Promise<void> }) {
         >
           {() => <HelpScreen />}
         </Tab.Screen>
+        <Tab.Screen
+          name="QRLoginScreen"
+          options={{ title: 'Scan QR for web', unmountOnBlur: true }}
+        >
+          {(props) => (
+            <QRLoginScreen
+              {...props}
+              onLoginSuccess={() => {
+                props.navigation.goBack();
+              }}
+            />
+          )}
+        </Tab.Screen>
       </Tab.Navigator>
 
       <Modal visible={isNotificationsVisible} transparent animationType="slide" onRequestClose={closeNotifications}>
@@ -497,6 +496,9 @@ function LoginStack({ onAuthenticated, sessionMessage }: { onAuthenticated: () =
       <Stack.Screen name="ForgotPasswordScreen">
         {(props) => <ForgotPasswordScreen {...props} />}
       </Stack.Screen>
+      <Stack.Screen name="ForceChangePasswordScreen">
+        {(props) => <ForceChangePasswordScreen {...props} onLoginSuccess={onAuthenticated} />}
+      </Stack.Screen>
     </Stack.Navigator>
   );
 }
@@ -539,23 +541,37 @@ export default function AppNavigator() {
     let active = true;
 
     const bootstrap = async () => {
-      const primaryToken = await SecureStore.getItemAsync('access_token');
-      const fallbackToken = primaryToken ?? (await SecureStore.getItemAsync('auth_token'));
+      const access = await SecureStore.getItemAsync('access_token');
+      const fallbackAccess = access ?? (await SecureStore.getItemAsync('auth_token'));
 
       if (!active) {
         return;
       }
 
-      const hasStoredToken = typeof fallbackToken === 'string' && fallbackToken.length > 0;
-      const tokenExpired = hasStoredToken && isTokenExpired(fallbackToken);
-      const hasValidToken = hasStoredToken && !tokenExpired;
-      setIsAuthenticated(hasValidToken);
-      setSessionMessage(tokenExpired ? 'Your session has expired. Please log in again.' : null);
+      if (typeof fallbackAccess === 'string' && fallbackAccess.length > 0 && !isAccessTokenExpired(fallbackAccess)) {
+        setIsAuthenticated(true);
+        setSessionMessage(null);
+        setIsCheckingAuth(false);
+        return;
+      }
+
+      const refreshed = await refreshSessionWithStoredRefreshToken();
+      if (refreshed) {
+        setIsAuthenticated(true);
+        setSessionMessage(null);
+        setIsCheckingAuth(false);
+        return;
+      }
+
+      setIsAuthenticated(false);
+      setSessionMessage(
+        typeof fallbackAccess === 'string' && fallbackAccess.length > 0
+          ? 'Your session has expired. Please log in again.'
+          : null
+      );
       setIsCheckingAuth(false);
 
-      if (!hasValidToken) {
-        await clearStoredAuthTokens();
-      }
+      await clearStoredAuthTokens();
     };
 
     void bootstrap();
@@ -593,9 +609,14 @@ export default function AppNavigator() {
         {isAuthenticated ? (
           <AppTabs
             onLogout={async () => {
-              await clearStoredAuthTokens();
+              const preserveQuickSignIn = await isBiometricSignInEnabled();
+              await clearStoredAuthTokens(preserveQuickSignIn);
               setIsAuthenticated(false);
-              setSessionMessage('Your session has ended. Please log in again.');
+              setSessionMessage(
+                preserveQuickSignIn
+                  ? 'Signed out on this device. Use quick sign-in or your email and password below.'
+                  : 'Your session has ended. Please log in again.'
+              );
             }}
           />
         ) : (

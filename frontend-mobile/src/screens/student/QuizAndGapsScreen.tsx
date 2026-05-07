@@ -151,6 +151,7 @@ function QuizInProgressView({
   onAnswer,
   onSubmit,
   onBack,
+  onRetry,
   isSubmitting,
   theme,
 }: {
@@ -158,6 +159,7 @@ function QuizInProgressView({
   onAnswer: (qIdx: number, optionIdx: number) => void;
   onSubmit: () => void;
   onBack: () => void;
+  onRetry: () => void;
   isSubmitting: boolean;
   theme: ReturnType<typeof useAppTheme>['theme'];
 }) {
@@ -189,13 +191,25 @@ function QuizInProgressView({
               A knowledge gap was resolved by this quiz.
             </Text>
           ) : null}
-          <TouchableOpacity
-            style={[styles.backButton, { backgroundColor: theme.colors.primary }]}
-            activeOpacity={0.85}
-            onPress={onBack}
-          >
-            <Text style={styles.backButtonText}>Back to Quizzes</Text>
-          </TouchableOpacity>
+          <View style={styles.resultActions}>
+            <TouchableOpacity
+              style={[
+                styles.retryButton,
+                { borderColor: theme.colors.primary, backgroundColor: theme.colors.surface },
+              ]}
+              activeOpacity={0.85}
+              onPress={onRetry}
+            >
+              <Text style={[styles.retryButtonText, { color: theme.colors.primary }]}>Retry Quiz</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.backButton, { backgroundColor: theme.colors.primary }]}
+              activeOpacity={0.85}
+              onPress={onBack}
+            >
+              <Text style={styles.backButtonText}>Back to Quizzes</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     );
@@ -502,6 +516,12 @@ export default function QuizAndGapsScreen() {
     }
   }, [loadQuizzes, post, quizInProgress]);
 
+  const handleRetryQuiz = useCallback(() => {
+    setQuizInProgress((prev) =>
+      prev ? { ...prev, answers: {}, submitted: false, submitResult: null } : prev
+    );
+  }, []);
+
   // ── Computed ──
 
   const quizStats = useMemo(() => {
@@ -551,6 +571,7 @@ export default function QuizAndGapsScreen() {
           onAnswer={handleAnswer}
           onSubmit={() => void handleSubmit()}
           onBack={() => setQuizInProgress(null)}
+          onRetry={handleRetryQuiz}
           isSubmitting={isSubmitting}
           theme={theme}
         />
@@ -1156,7 +1177,17 @@ const styles = StyleSheet.create({
   resultPctText: { fontSize: 14, fontWeight: '700' },
   resultTitle: { fontSize: 22, fontWeight: '800' },
   resultFeedback: { fontSize: 13, lineHeight: 20, textAlign: 'center' },
-  backButton: { borderRadius: 14, paddingVertical: 12, paddingHorizontal: 28 },
+  resultActions: { width: '100%', gap: 12, marginTop: 4 },
+  retryButton: {
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderWidth: 2,
+    alignItems: 'center',
+    width: '100%',
+  },
+  retryButtonText: { fontSize: 14, fontWeight: '800' },
+  backButton: { borderRadius: 14, paddingVertical: 12, paddingHorizontal: 28, width: '100%', alignItems: 'center' },
   backButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
   quizProgressBar: {
     height: 6,

@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models.notification import Notification
-from app.shared.source_enum import NotificationType
+from app.shared.source_enum import NotificationChannel, NotificationType
 
 
 def get_notifications(
@@ -96,3 +96,26 @@ def mark_all_as_read(db: Session, user_id: uuid.UUID) -> int:
     )
     db.commit()
     return count
+
+
+def create_notification(
+    db: Session,
+    recipient_id: uuid.UUID,
+    notification_type: NotificationType,
+    title: str,
+    body: str,
+    related_resource_id: str | None = None,
+) -> Notification:
+    """Create and persist an in-app notification row."""
+    notif = Notification(
+        recipient_id=recipient_id,
+        type=notification_type,
+        title=title,
+        body=body,
+        channel=NotificationChannel.IN_APP,
+        related_resource_id=related_resource_id,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db.add(notif)
+    db.flush()
+    return notif

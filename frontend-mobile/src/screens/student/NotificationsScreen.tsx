@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -29,6 +30,16 @@ type NotificationItem = {
   created_at: string;
 };
 
+// ─── Constants ─────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { key: '', label: 'All' },
+  { key: 'unread', label: 'Unread' },
+  { key: 'grading_done', label: 'Grading' },
+  { key: 'quiz_assigned', label: 'Quizzes' },
+  { key: 'posture_alert', label: 'IoT' },
+] as const;
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function parseApiError(error: unknown, fallback: string) {
@@ -53,21 +64,24 @@ function timeAgo(dateStr: string) {
 
 function notifIcon(type: string): keyof typeof MaterialIcons.glyphMap {
   const t = (type ?? '').toLowerCase();
-  if (t.includes('iot') || t.includes('desk') || t.includes('absence')) return 'sensors';
-  if (t.includes('grade') || t.includes('result')) return 'grading';
+  if (t === 'grading_done' || t.includes('grade') || t.includes('result')) return 'grading';
+  if (t === 'submission_received' || t.includes('submission')) return 'assignment-turned-in';
   if (t.includes('quiz')) return 'quiz';
-  if (t.includes('assignment') || t.includes('submission')) return 'assignment';
+  if (t.includes('assignment')) return 'assignment';
+  if (t.includes('iot') || t.includes('desk') || t.includes('absence') || t.includes('posture')) return 'sensors';
   if (t.includes('announce') || t.includes('broadcast')) return 'campaign';
-  if (t.includes('alert') || t.includes('warn')) return 'warning';
+  if (t.includes('alert') || t.includes('warn') || t.includes('risk')) return 'warning';
   return 'notifications';
 }
 
 function notifColor(type: string) {
   const t = (type ?? '').toLowerCase();
-  if (t.includes('iot') || t.includes('desk') || t.includes('absence')) return '#DC2626';
-  if (t.includes('grade') || t.includes('result')) return '#15803D';
+  if (t === 'grading_done' || t.includes('grade') || t.includes('result')) return '#15803D';
+  if (t === 'submission_received' || t.includes('submission')) return '#2563EB';
   if (t.includes('quiz')) return '#7C3AED';
-  if (t.includes('assignment')) return '#2563EB';
+  if (t.includes('assignment')) return '#0369A1';
+  if (t.includes('iot') || t.includes('desk') || t.includes('absence') || t.includes('posture')) return '#DC2626';
+  if (t.includes('risk')) return '#B91C1C';
   if (t.includes('announce')) return '#B45309';
   return '#64748B';
 }
@@ -81,45 +95,74 @@ export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [markingAll, setMarkingAll] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>('');
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await get<NotificationItem[] | { items?: NotificationItem[]; notifications?: NotificationItem[] }>(
-        '/api/students/notifications'
-      );
-      if (Array.isArray(res)) {
-        setNotifications(res);
-      } else {
-        setNotifications(res.items ?? res.notifications ?? []);
+  const fetchPage = useCallback(
+    async (tab: string, pg: number, append = false) => {
+      if (pg === 1) setError(null);
+      try {
+        const params: Record<string, string | number | boolean> = { page: pg, per_page: 20 };
+        if (tab === 'unread') params.read = false;
+        else if (tab) params.type = tab;
+
+        const res = await get<
+          NotificationItem[] | { items?: NotificationItem[]; notifications?: NotificationItem[]; total_pages?: number }
+        >('/api/students/notifications', { params });
+
+        let items: NotificationItem[];
+        let totalPages = 1;
+        if (Array.isArray(res)) {
+          items = res;
+        } else {
+          items = res.items ?? res.notifications ?? [];
+          totalPages = res.total_pages ?? 1;
+        }
+        setHasMore(pg < totalPages);
+        setNotifications((prev) => (append ? [...prev, ...items] : items));
+      } catch (err) {
+        setError(parseApiError(err, 'Could not load notifications.'));
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setIsLoadingMore(false);
       }
-    } catch (err) {
-      setError(parseApiError(err, 'Could not load notifications.'));
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, [get]);
+    },
+    [get]
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    setPage(1);
+    setIsLoading(true);
+    void fetchPage(activeTab, 1);
+  }, [activeTab, fetchPage]);
 
-  const onRefresh = useCallback(async () => {
+  const onRefresh = useCallback(() => {
     setIsRefreshing(true);
-    await load();
-  }, [load]);
+    setPage(1);
+    void fetchPage(activeTab, 1);
+  }, [activeTab, fetchPage]);
+
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    const next = page + 1;
+    setPage(next);
+    setIsLoadingMore(true);
+    void fetchPage(activeTab, next, true);
+  }, [isLoadingMore, hasMore, page, activeTab, fetchPage]);
 
   const markRead = useCallback(
     async (id: string) => {
       try {
         await patch(`/api/students/notifications/${id}/read`, {});
         setNotifications((prev) => prev.map((n) => (n.notification_id === id ? { ...n, is_read: true } : n)));
-      } catch {
-        // silent fail — UI already responded
-      }
+      } catch { /* silent */ }
     },
     [patch]
   );
@@ -129,9 +172,7 @@ export default function NotificationsScreen() {
     try {
       await patch('/api/students/notifications/read-all', {});
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    } catch (err) {
-      // no-op
-    } finally {
+    } catch { /* no-op */ } finally {
       setMarkingAll(false);
     }
   }, [patch]);
@@ -140,8 +181,35 @@ export default function NotificationsScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.screen }]} edges={['top', 'left', 'right']}>
-      <ScreenHeader title="Notifications" subtitle="Inbox" showBack />
-      {/* Header actions */}
+      <ScreenHeader title="Notifications" subtitle="Your inbox" showBack />
+
+      {/* ── Tab bar ── */}
+      <View style={[styles.tabWrap, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
+          {TABS.map((t) => {
+            const active = activeTab === t.key;
+            return (
+              <TouchableOpacity
+                key={t.key}
+                onPress={() => setActiveTab(t.key)}
+                style={[
+                  styles.tab,
+                  active
+                    ? { backgroundColor: theme.colors.primary }
+                    : { backgroundColor: theme.colors.screen, borderColor: theme.colors.border, borderWidth: 1 },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabText, { color: active ? '#FFFFFF' : theme.colors.muted }]}>
+                  {t.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* ── Mark-all bar ── */}
       {unreadCount > 0 && (
         <View style={[styles.headerBar, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
           <Text style={[styles.unreadCount, { color: theme.colors.primary }]}>
@@ -168,7 +236,7 @@ export default function NotificationsScreen() {
         <View style={styles.errorCard}>
           <MaterialIcons name="notifications-off" size={32} color="#9F1239" />
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={[styles.retryBtn, { backgroundColor: theme.colors.primary }]} onPress={() => void load()}>
+          <TouchableOpacity style={[styles.retryBtn, { backgroundColor: theme.colors.primary }]} onPress={() => { setIsLoading(true); void fetchPage(activeTab, 1); }}>
             <Text style={styles.retryBtnText}>Retry</Text>
           </TouchableOpacity>
         </View>
@@ -178,13 +246,28 @@ export default function NotificationsScreen() {
           keyExtractor={(item) => item.notification_id}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => void onRefresh()} tintColor={theme.colors.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={() => void onRefresh()}
+              tintColor={theme.colors.primary}
+            />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.3}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <MaterialIcons name="notifications" size={44} color={theme.colors.muted} />
               <Text style={[styles.emptyTitle, { color: theme.colors.primary }]}>All caught up!</Text>
-              <Text style={[styles.emptySubtitle, { color: theme.colors.muted }]}>No notifications yet.</Text>
+              <Text style={[styles.emptySubtitle, { color: theme.colors.muted }]}>
+                {activeTab === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
+              </Text>
             </View>
+          }
+          ListFooterComponent={
+            isLoadingMore ? (
+              <ActivityIndicator color={theme.colors.primary} style={{ marginVertical: 16 }} />
+            ) : null
           }
           renderItem={({ item }) => {
             const color = notifColor(item.type);
@@ -193,10 +276,15 @@ export default function NotificationsScreen() {
                 activeOpacity={item.is_read ? 1 : 0.85}
                 onPress={() => !item.is_read && void markRead(item.notification_id)}
               >
-                <View style={[
-                  styles.notifCard,
-                  { backgroundColor: item.is_read ? theme.colors.surface : `${color}0D`, borderColor: item.is_read ? theme.colors.border : `${color}40` },
-                ]}>
+                <View
+                  style={[
+                    styles.notifCard,
+                    {
+                      backgroundColor: item.is_read ? theme.colors.surface : `${color}0D`,
+                      borderColor: item.is_read ? theme.colors.border : `${color}40`,
+                    },
+                  ]}
+                >
                   <View style={[styles.notifIconWrap, { backgroundColor: `${color}18` }]}>
                     <MaterialIcons name={notifIcon(item.type)} size={20} color={color} />
                   </View>
@@ -235,6 +323,14 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
+  tabWrap: { borderBottomWidth: 1 },
+  tabScroll: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
+  tab: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  tabText: { fontSize: 12, fontWeight: '700' },
   headerBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -289,8 +385,18 @@ const styles = StyleSheet.create({
   notifTitle: { flex: 1, fontSize: 13, fontWeight: '800' },
   unreadDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   notifText: { fontSize: 12, lineHeight: 17 },
-  notifFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
+  notifFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
   notifTime: { fontSize: 10, fontWeight: '600' },
   typeBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  typeBadgeText: { fontSize: 9, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
+  typeBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
 });

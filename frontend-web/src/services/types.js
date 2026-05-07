@@ -28,6 +28,7 @@
  * @property {string} refresh_token
  * @property {string} token_type
  * @property {number} expires_in
+ * @property {string|null|undefined} [trusted_device_token] Present when user chose "remember this device" after 2FA.
  */
 
 /**

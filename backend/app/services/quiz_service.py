@@ -546,15 +546,27 @@ def submit_micro_quiz_answers(
         raise ValueError(f"Expected {n} answers, got {len(selected_indices)}")
 
     if quiz.status == MicroQuizStatus.COMPLETED and quiz.score_percentage is not None:
-        sp = float(quiz.score_percentage)
-        correct = int(round((sp / 100.0) * n))
-        # Re-submit: still try to resolve a matching gap (e.g. quiz had no gap_id, or first save failed)
-        knowledge_gap_resolved = _apply_micro_quiz_gap_resolution(db, student_id, quiz, sp)
+        # Retry: re-score from submitted answers and update the stored result.
+        correct = 0
+        for q, idx in zip(questions, selected_indices, strict=True):
+            if idx is None:
+                continue
+            picked = _option_text_at(q.options, idx)
+            ca = str(q.correct_answer or "")
+            if picked is not None and _normalize_mc_text(str(picked)) == _normalize_mc_text(ca):
+                correct += 1
+
+        pct = (correct / n) * 100.0 if n else 0.0
+        quiz.score_percentage = round(pct, 2)
+        quiz.completed_at = datetime.now(timezone.utc)
+
+        knowledge_gap_resolved = _apply_micro_quiz_gap_resolution(db, student_id, quiz, pct)
+
         db.commit()
         db.refresh(quiz)
         return {
             "quiz": quiz,
-            "correct_count": min(correct, n),
+            "correct_count": correct,
             "total_questions": n,
             "knowledge_gap_resolved": knowledge_gap_resolved,
         }

@@ -8,6 +8,7 @@ import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
 import TwoFactorSetup from './pages/auth/TwoFactorSetup';
 import QRLogin from './pages/auth/QRLogin';
+import ForceChangePassword from './pages/auth/ForceChangePassword';
 
 // Public Pages
 import About from './pages/About';
@@ -85,6 +86,7 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/2fa-setup" element={<TwoFactorSetup />} />
           <Route path="/qr-login" element={<QRLogin />} />
+          <Route path="/force-change-password" element={<ForceChangePassword />} />
 
           {/* Student Routes */}
           <Route

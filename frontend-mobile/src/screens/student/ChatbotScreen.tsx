@@ -4,6 +4,7 @@ import {
   Animated,
   Easing,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -133,7 +134,17 @@ function ThinkingDots({ dotColor }: { dotColor: string }) {
 
 // ─── Bubble ───────────────────────────────────────────────────────────────────
 
-function Bubble({ message, theme, userLabel }: { message: Message; theme: ThemePalette; userLabel: string }) {
+function Bubble({
+  message,
+  theme,
+  userLabel,
+  profileImageUrl,
+}: {
+  message: Message;
+  theme: ThemePalette;
+  userLabel: string;
+  profileImageUrl?: string | null;
+}) {
   const isUser = message.role === 'user';
   const userInitial =
     userLabel.trim().length > 0 ? userLabel.trim().charAt(0).toUpperCase() : 'U';
@@ -183,7 +194,7 @@ function Bubble({ message, theme, userLabel }: { message: Message; theme: ThemeP
           ]}
         >
           {!isUser ? (
-            <Text style={[styles.senderLabel, { color: c.muted }]}>✦ AI Tutor</Text>
+            <Text style={[styles.senderLabel, { color: c.muted }]}>✦ Gyani</Text>
           ) : null}
           {message.thinking ? (
             <ThinkingDots dotColor={c.inactive} />
@@ -221,7 +232,11 @@ function Bubble({ message, theme, userLabel }: { message: Message; theme: ThemeP
 
       {isUser && (
         <View style={[styles.userAvatar, { backgroundColor: c.primary }]}>
-          <Text style={[styles.userAvatarText, { color: c.surface }]}>{userInitial}</Text>
+          {profileImageUrl ? (
+            <Image source={{ uri: profileImageUrl }} style={styles.userAvatarImg} />
+          ) : (
+            <Text style={[styles.userAvatarText, { color: c.surface }]}>{userInitial}</Text>
+          )}
         </View>
       )}
     </View>
@@ -230,7 +245,7 @@ function Bubble({ message, theme, userLabel }: { message: Message; theme: ThemeP
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-const WELCOME = "Namaste! I'm your AI Tutor. Ask me anything about your curriculum — units, lessons, or concepts you'd like to understand better.";
+const WELCOME = "Namaste! I'm Gyani, your AI study companion on Gyanavriksha. Ask me anything about your curriculum — concepts, problems, summaries, or practice questions.";
 
 export default function ChatbotScreen() {
   const { get, post } = useApi();
@@ -261,6 +276,7 @@ export default function ChatbotScreen() {
   const [speechAvailable, setSpeechAvailable] = useState(false);
   const [profileId, setProfileId] = useState<string>('');
   const [profileName, setProfileName] = useState<string>('Student');
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
   const speechModuleRef = useRef<{
     requestPermissionsAsync: () => Promise<{ granted: boolean }>;
     start: (options: Record<string, unknown>) => void;
@@ -271,10 +287,10 @@ export default function ChatbotScreen() {
   // Suggestions
   const showSuggestions = messages.length === 1;
   const suggestions = [
-    { icon: 'lightbulb', label: 'Explain a concept', prompt: 'Explain photosynthesis in simple terms.' },
-    { icon: 'help-outline', label: 'Solve a problem', prompt: 'Help me solve a quadratic equation step by step.' },
-    { icon: 'menu-book', label: 'Summarize a topic', prompt: 'Summarize the French Revolution in 5 bullet points.' },
-    { icon: 'quiz', label: 'Practice question', prompt: 'Give me a practice question on Newton\'s laws of motion.' },
+    { icon: 'lightbulb', label: 'Explain a concept', prompt: 'Explain photosynthesis in simple terms.', iconBg: '#FEF9C3', iconColor: '#CA8A04' },
+    { icon: 'help-outline', label: 'Solve a problem', prompt: 'Help me solve a quadratic equation step by step.', iconBg: '#DCFCE7', iconColor: '#15803D' },
+    { icon: 'menu-book', label: 'Summarize a topic', prompt: 'Summarize the French Revolution in 5 bullet points.', iconBg: '#EFF6FF', iconColor: '#2563EB' },
+    { icon: 'quiz', label: 'Practice quiz', prompt: "Give me a practice question on Newton's laws of motion.", iconBg: '#F3E8FF', iconColor: '#9333EA' },
   ];
 
   // ── Load subjects once ──
@@ -298,6 +314,9 @@ export default function ChatbotScreen() {
         const firstName = typeof profile.first_name === 'string' ? profile.first_name.trim() : '';
         if (fullName) setProfileName(fullName);
         else if (firstName) setProfileName(firstName);
+        if (typeof profile.profile_image_url === 'string' && profile.profile_image_url.trim()) {
+          setProfileImageUrl(profile.profile_image_url.trim());
+        }
       } catch {
         // optional
       }
@@ -583,11 +602,11 @@ export default function ChatbotScreen() {
             </View>
             <View style={styles.headerText}>
               <Text style={[styles.headerTitle, { color: theme.colors.primary }]} numberOfLines={1}>
-                AI Study Tutor
+                Gyani
               </Text>
               <View style={styles.headerStatusRow}>
-                <View style={[styles.headerPulse, { backgroundColor: theme.colors.muted }]} />
-                <Text style={[styles.headerStatusText, { color: theme.colors.muted }]}>Always available</Text>
+                <View style={[styles.headerPulse, { backgroundColor: '#22C55E' }]} />
+                <Text style={[styles.headerStatusText, { color: '#22C55E' }]}>Online · Gyanavriksha AI</Text>
               </View>
             </View>
 
@@ -759,19 +778,28 @@ export default function ChatbotScreen() {
           contentContainerStyle={styles.messagesContent}
           data={messages}
           keyExtractor={(m) => m.id}
-          renderItem={({ item }) => <Bubble message={item} theme={theme} userLabel={profileName} />}
+          renderItem={({ item }) => <Bubble message={item} theme={theme} userLabel={profileName} profileImageUrl={profileImageUrl} />}
           showsVerticalScrollIndicator={false}
           ListFooterComponent={
             showSuggestions ? (
               <View style={styles.suggestionsWrap}>
                 <View style={styles.welcomeBranding}>
-                  <View style={[styles.welcomeIconWrap, { backgroundColor: theme.colors.primarySoft, shadowColor: theme.colors.shadow }]}>
-                    <MaterialIcons name="auto-awesome" size={32} color={theme.colors.primary} />
+                  <View style={[styles.welcomeIconOuter, { borderColor: `${theme.colors.primary}22` }]}>
+                    <View style={[styles.welcomeIconWrap, { backgroundColor: theme.colors.primarySoft, shadowColor: theme.colors.shadow }]}>
+                      <MaterialIcons name="auto-awesome" size={34} color={theme.colors.primary} />
+                    </View>
                   </View>
-                  <Text style={[styles.welcomeTitle, { color: theme.colors.primary }]}>What can I help you with?</Text>
+                  <Text style={[styles.welcomeTitle, { color: theme.colors.primary }]}>Meet Gyani ✦</Text>
                   <Text style={[styles.welcomeSub, { color: theme.colors.muted }]}>
-                    I can explain concepts, solve problems, quiz you, and more.
+                    Gyanavriksha's AI companion — explain concepts, solve problems, summarise topics, or quiz you on your curriculum.
                   </Text>
+                  <View style={[styles.welcomeTagRow]}>
+                    {['RAG-powered', 'Curriculum-aware', 'Always on'].map((tag) => (
+                      <View key={tag} style={[styles.welcomeTag, { backgroundColor: theme.colors.primarySoft, borderColor: `${theme.colors.primary}33` }]}>
+                        <Text style={[styles.welcomeTagText, { color: theme.colors.primary }]}>{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
                 <Text style={[styles.suggestionsLabel, { color: theme.colors.muted }]}>Try a prompt</Text>
                 <View style={styles.suggestionsGrid}>
@@ -782,8 +810,8 @@ export default function ChatbotScreen() {
                       activeOpacity={0.82}
                       onPress={() => void sendMessage(s.prompt)}
                     >
-                      <View style={[styles.suggestionIcon, { backgroundColor: theme.colors.primarySoft }]}>
-                        <MaterialIcons name={s.icon as keyof typeof MaterialIcons.glyphMap} size={17} color={theme.colors.primary} />
+                      <View style={[styles.suggestionIcon, { backgroundColor: s.iconBg }]}>
+                        <MaterialIcons name={s.icon as keyof typeof MaterialIcons.glyphMap} size={17} color={s.iconColor} />
                       </View>
                       <Text style={[styles.suggestionText, { color: theme.colors.text }]} numberOfLines={2}>
                         {s.label}
@@ -824,7 +852,7 @@ export default function ChatbotScreen() {
             </TouchableOpacity>
             <TextInput
               style={[styles.input, { color: theme.colors.text }]}
-              placeholder="Ask your AI Tutor…"
+              placeholder="Ask Gyani anything…"
               placeholderTextColor={theme.colors.muted}
               value={inputText}
               onChangeText={setInputText}
@@ -856,7 +884,7 @@ export default function ChatbotScreen() {
             )}
           </View>
           <Text style={[styles.disclaimer, { color: theme.colors.muted }]}>
-            AI responses may be inaccurate — verify with textbooks.
+            Gyani may make mistakes — always verify with your textbooks.
           </Text>
         </View>
       </KeyboardAvoidingView>
@@ -1061,8 +1089,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
     marginBottom: 2,
+    overflow: 'hidden',
   },
   userAvatarText: { fontSize: 12, fontWeight: '800' },
+  userAvatarImg: { width: 30, height: 30, borderRadius: 10 },
 
   bubbleWrap: { maxWidth: '80%' },
   bubbleWrapBot: { alignItems: 'flex-start' },
@@ -1117,20 +1147,36 @@ const styles = StyleSheet.create({
   // ── Welcome branding + Suggestions ────────────────────────────────────────
   suggestionsWrap: { paddingTop: 8, gap: 16 },
   welcomeBranding: { alignItems: 'center', paddingVertical: 20, gap: 10 },
-  welcomeIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 24,
+  welcomeIconOuter: {
+    width: 96,
+    height: 96,
+    borderRadius: 32,
+    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    marginBottom: 2,
   },
-  welcomeTitle: { fontSize: 18, fontWeight: '800', textAlign: 'center', letterSpacing: -0.3 },
-  welcomeSub: { fontSize: 13, textAlign: 'center', lineHeight: 19, paddingHorizontal: 16, fontWeight: '500' },
+  welcomeIconWrap: {
+    width: 76,
+    height: 76,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 5,
+  },
+  welcomeTitle: { fontSize: 20, fontWeight: '900', textAlign: 'center', letterSpacing: -0.4 },
+  welcomeSub: { fontSize: 13, textAlign: 'center', lineHeight: 20, paddingHorizontal: 16, fontWeight: '500' },
+  welcomeTagRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'center' },
+  welcomeTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  welcomeTagText: { fontSize: 10, fontWeight: '800' },
   suggestionsLabel: {
     fontSize: 10,
     fontWeight: '900',

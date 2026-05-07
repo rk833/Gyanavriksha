@@ -18,6 +18,9 @@ from app.api.instructor.application import service
 from app.core.database import get_db
 from app.db.models.user import User
 from app.schemas.common import PaginatedResponse
+from app.schemas.notification import NotificationResponse, UnreadCountResponse
+from app.schemas.user import MessageResponse
+from app.services import notification_service
 from app.schemas.instructor import (
     AssignmentCreateRequest,
     AssignmentUpdateRequest,
@@ -403,3 +406,63 @@ def update_profile(
         str(current_user.user_id),
         data.model_dump(exclude_unset=True),
     )
+
+
+# ── Notifications ────────────────────────────────────────────────────────────
+
+@router.get("/notifications", response_model=PaginatedResponse[NotificationResponse])
+def list_notifications(
+    type: str | None = Query(None),
+    read: bool | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Return paginated notifications for the current instructor."""
+    items, total, unread_count = notification_service.get_notifications(
+        db, current_user.user_id, type_filter=type, is_read=read, page=page, per_page=per_page,
+    )
+    total_pages = max(1, -(-total // per_page))
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "unread_count": unread_count,
+    }
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+def get_unread_count(
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Return the count of unread notifications for the current instructor."""
+    count = notification_service.get_unread_count(db, current_user.user_id)
+    return {"count": count}
+
+
+@router.patch("/notifications/{notification_id}/read", response_model=NotificationResponse)
+def mark_notification_read(
+    notification_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Mark a single notification as read."""
+    notif = notification_service.mark_as_read(db, current_user.user_id, notification_id)
+    if not notif:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return notif
+
+
+@router.patch("/notifications/read-all", response_model=MessageResponse)
+def mark_all_read(
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Mark all notifications as read for this instructor."""
+    count = notification_service.mark_all_as_read(db, current_user.user_id)
+    return {"message": f"{count} notification(s) marked as read."}

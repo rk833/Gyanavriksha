@@ -247,7 +247,9 @@ class InstructorProfileResponse(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    is_email_verified: bool = False
     totp_enabled: bool = False
+    email_2fa_enabled: bool = False
     profile_image_url: str | None = None
     created_at: datetime
     subjects: list[InstructorSubjectResponse] = []

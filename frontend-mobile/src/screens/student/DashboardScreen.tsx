@@ -112,6 +112,7 @@ function scoreColor(score: number | null) {
 // ─── Skeleton ──────────────────────────────────────────────────────────────────
 
 function Skeleton({ width, height, radius = 8 }: { width: number | `${number}%`; height: number; radius?: number }) {
+  const { theme } = useAppTheme();
   const pulse = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
     const anim = Animated.loop(
@@ -123,7 +124,7 @@ function Skeleton({ width, height, radius = 8 }: { width: number | `${number}%`;
     anim.start();
     return () => anim.stop();
   }, []);
-  return <Animated.View style={{ width, height, borderRadius: radius, backgroundColor: '#E2E8F0', opacity: pulse }} />;
+  return <Animated.View style={{ width, height, borderRadius: radius, backgroundColor: theme.colors.border, opacity: pulse }} />;
 }
 
 // ─── Animated stat counter ─────────────────────────────────────────────────────
@@ -240,6 +241,21 @@ export default function DashboardScreen({ navigation }: Props) {
     ]).start();
   }, []);
 
+  // Live unread count — polls every 30 s so the bell badge updates after grading
+  const [liveUnread, setLiveUnread] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await get<{ count: number }>('/api/students/notifications/unread-count');
+        if (!cancelled) setLiveUnread(res.count ?? 0);
+      } catch { /* silent */ }
+    };
+    void poll();
+    const id = setInterval(() => void poll(), 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [get]);
+
   const loadDashboard = useCallback(async () => {
     try {
       const res = await get<DashboardResponse>('/api/students/dashboard');
@@ -331,7 +347,8 @@ export default function DashboardScreen({ navigation }: Props) {
   const gapsCount = dashboard?.knowledge_gaps_count ?? 0;
   const totalSubs = dashboard?.total_submissions ?? 0;
   const enrolledCount = dashboard?.enrolled_subjects?.length ?? 0;
-  const unread = dashboard?.notifications_unread_count ?? 0;
+  // Prefer the live-polled count; fall back to the dashboard snapshot
+  const unread = liveUnread ?? dashboard?.notifications_unread_count ?? 0;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.screen }]} edges={['top', 'left', 'right']}>
@@ -346,18 +363,28 @@ export default function DashboardScreen({ navigation }: Props) {
             </Text>
           </View>
         </View>
-        <TouchableOpacity
-          style={[styles.bellBtn, { backgroundColor: theme.colors.primarySoft }]}
-          activeOpacity={0.85}
-          onPress={() => goTo('NotificationsScreen')}
-        >
-          <MaterialIcons name="notifications-none" size={20} color={theme.colors.primary} />
-          {unread > 0 && (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>{unread > 9 ? '9+' : unread}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.headerIconBtn, { backgroundColor: theme.colors.primarySoft }]}
+            activeOpacity={0.85}
+            onPress={() => goTo('QRLoginScreen')}
+            accessibilityLabel="Scan QR to sign in on the web"
+          >
+            <MaterialIcons name="qr-code-scanner" size={20} color={theme.colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.bellBtn, { backgroundColor: theme.colors.primarySoft }]}
+            activeOpacity={0.85}
+            onPress={() => goTo('NotificationsScreen')}
+          >
+            <MaterialIcons name="notifications-none" size={20} color={theme.colors.primary} />
+            {unread > 0 && (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText}>{unread > 9 ? '9+' : unread}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -370,7 +397,7 @@ export default function DashboardScreen({ navigation }: Props) {
       >
         <Animated.View style={{ opacity: contentOpacity, transform: [{ translateY: contentY }], gap: 14 }}>
           {/* ─── Hero card ─── */}
-          <View style={styles.heroCard}>
+          <View style={[styles.heroCard, { backgroundColor: theme.colors.primary, shadowColor: theme.colors.primary }]}>
             <View style={styles.heroOrb1} />
             <View style={styles.heroOrb2} />
             <View style={styles.heroOrb3} />
@@ -462,8 +489,8 @@ export default function DashboardScreen({ navigation }: Props) {
                     activeOpacity={0.88}
                     onPress={() => goTo('LibraryScreen')}
                   >
-                    <MaterialIcons name="menu-book" size={16} color="#0B2645" />
-                    <Text style={styles.heroPrimaryText}>Resume learning</Text>
+                    <MaterialIcons name="menu-book" size={16} color={theme.colors.primary} />
+                    <Text style={[styles.heroPrimaryText, { color: theme.colors.primary }]}>Resume learning</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.heroSecondary}
@@ -529,7 +556,7 @@ export default function DashboardScreen({ navigation }: Props) {
           </View>
 
           {/* ─── IoT Smart Desk ─── */}
-          <TouchableOpacity style={styles.iotCard} activeOpacity={0.88} onPress={() => goTo('IoTStatusScreen')}>
+          <TouchableOpacity style={[styles.iotCard, { backgroundColor: theme.colors.primary, shadowColor: theme.colors.primary }]} activeOpacity={0.88} onPress={() => goTo('IoTStatusScreen')}>
             <View style={styles.iotHeader}>
               <View style={styles.iotIconRing}>
                 <View style={styles.iotIconCenter}>
@@ -701,6 +728,14 @@ const styles = StyleSheet.create({
   headerText: { flex: 1, minWidth: 0 },
   headerGreeting: { fontSize: 11, fontWeight: '600' },
   headerName: { fontSize: 18, fontWeight: '900', marginTop: 1 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bellBtn: {
     width: 40,
     height: 40,
@@ -732,9 +767,7 @@ const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 22,
     overflow: 'hidden',
-    backgroundColor: '#0B2645',
     minHeight: 200,
-    shadowColor: '#0B2645',
     shadowOpacity: 0.25,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -880,7 +913,7 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     paddingVertical: 12,
   },
-  heroPrimaryText: { color: '#0B2645', fontSize: 13, fontWeight: '900' },
+  heroPrimaryText: { fontSize: 13, fontWeight: '900' },
   heroSecondary: {
     flex: 1,
     flexDirection: 'row',
@@ -911,10 +944,8 @@ const styles = StyleSheet.create({
   // IoT
   iotCard: {
     borderRadius: 18,
-    backgroundColor: '#1E3A5F',
     padding: 16,
     gap: 14,
-    shadowColor: '#1E3A5F',
     shadowOpacity: 0.18,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },

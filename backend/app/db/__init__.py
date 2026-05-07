@@ -5,6 +5,8 @@ from app.db.models import user
 from app.db.models import qr_session
 from app.db.models import refresh_token
 from app.db.models import email_verification
+from app.db.models import two_factor_email_challenge
+from app.db.models import two_factor_trusted_device
 
 # Domain 2: Academic Structure 
 from app.db.models import grade
