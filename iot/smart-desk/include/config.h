@@ -10,7 +10,7 @@
 #define MQTT_PASSWORD ""
 
 #define DEVICE_ID "ESP32-Aayush"
-#define DEVICE_API_KEY "Y19jDS2IVANecdQTYRK9AKdIvp3z34ZgfZO8uR6PvS4"
+#define DEVICE_API_KEY "zyGn4NMcydepKClcq_dYdgWU_GjdHuHIVNA5kCNz9Iw"
 #define FIRMWARE_VERSION "0.2.0"
 
 #define TOPIC_LIGHT "gyanavriksha/devices/" DEVICE_ID "/sensors/light"

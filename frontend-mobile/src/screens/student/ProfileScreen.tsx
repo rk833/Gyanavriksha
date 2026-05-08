@@ -6,6 +6,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   SectionList,
   StyleSheet,
@@ -390,6 +391,7 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
   const { request, patch } = useApi();
   const { profile, isLoading, error, reload } = useStudentProfile();
   const [connectedDevicesSummary, setConnectedDevicesSummary] = useState('Checking...');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [gradingAlertsEnabled, setGradingAlertsEnabled] = useState(true);
   const [quizRemindersEnabled, setQuizRemindersEnabled] = useState(true);
@@ -476,6 +478,23 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
       active = false;
     };
   }, [request]);
+
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await reload();
+      try {
+        const response = await request<Record<string, unknown>>('get', '/api/students/iot/status');
+        const devices = (response.devices as unknown[] | undefined) ?? [];
+        const count = (response.device_count as number | undefined) ?? devices.length;
+        setConnectedDevicesSummary(count > 0 ? `${count} connected` : 'No devices connected');
+      } catch {
+        setConnectedDevicesSummary('Not available yet');
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [reload, request]);
 
   useEffect(() => {
     const p = profile?.notification_preferences;
@@ -659,6 +678,13 @@ function ProfileHomeScreen({ navigation, onLogout, onOpenHomeNotifications }: Sc
         stickySectionHeadersEnabled={false}
         contentContainerStyle={phStyles.listContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void onRefresh()}
+            tintColor={theme.colors.primary}
+          />
+        }
 
         /* ── Hero profile banner ── */
         ListHeaderComponent={

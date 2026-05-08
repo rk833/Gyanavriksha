@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -246,16 +247,12 @@ function Bubble({
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-const WELCOME = "Namaste! I'm Gyani, your AI study companion on Gyanavriksha. Ask me anything about your curriculum — concepts, problems, summaries, or practice questions.";
-
 export default function ChatbotScreen() {
   const { get, post } = useApi();
   const { theme } = useAppTheme();
   const flatListRef = useRef<FlatList<Message>>(null);
 
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 'welcome', role: 'assistant', content: WELCOME, timestamp: new Date() },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [historyId, setHistoryId] = useState<string | null>(null);
@@ -270,6 +267,7 @@ export default function ChatbotScreen() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const [uploadingNote, setUploadingNote] = useState(false);
@@ -278,6 +276,8 @@ export default function ChatbotScreen() {
   const [profileId, setProfileId] = useState<string>('');
   const [profileName, setProfileName] = useState<string>('Student');
   const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
+  const voiceBaseInputRef = useRef('');
+  const voiceLiveTranscriptRef = useRef('');
   const speechModuleRef = useRef<{
     requestPermissionsAsync: () => Promise<{ granted: boolean }>;
     start: (options: Record<string, unknown>) => void;
@@ -286,7 +286,7 @@ export default function ChatbotScreen() {
   } | null>(null);
 
   // Suggestions
-  const showSuggestions = messages.length === 1;
+  const showSuggestions = messages.length === 0;
   const suggestions = [
     { icon: 'lightbulb', label: 'Explain a concept', prompt: 'Explain photosynthesis in simple terms.', iconBg: '#FEF9C3', iconColor: '#CA8A04' },
     { icon: 'help-outline', label: 'Solve a problem', prompt: 'Help me solve a quadratic equation step by step.', iconBg: '#DCFCE7', iconColor: '#15803D' },
@@ -354,8 +354,27 @@ export default function ChatbotScreen() {
           });
           const onResult = speech.addListener('result', (event: unknown) => {
             const first = (event as { results?: Array<{ transcript?: string }> }).results?.[0];
-            const transcript = first?.transcript ?? '';
-            if (transcript) setInputText(transcript);
+            const transcript = (first?.transcript ?? '').trim();
+            if (!transcript) return;
+
+            const prev = voiceLiveTranscriptRef.current.trim();
+            let next = transcript;
+
+            // Some engines emit cumulative text, others emit chunks.
+            // Keep both cases stable so pausing doesn't overwrite prior speech.
+            if (prev.length > 0) {
+              if (transcript.startsWith(prev)) {
+                next = transcript;
+              } else if (prev.startsWith(transcript)) {
+                next = prev;
+              } else {
+                next = `${prev} ${transcript}`.trim();
+              }
+            }
+
+            voiceLiveTranscriptRef.current = next;
+            const merged = [voiceBaseInputRef.current.trim(), next].filter(Boolean).join(' ').trim();
+            setInputText(merged);
           });
           cleanup = [
             () => onStart?.remove?.(),
@@ -481,7 +500,7 @@ export default function ChatbotScreen() {
             } as Message;
           })
           .filter((m) => m.content.trim().length > 0);
-        setMessages(loaded.length ? loaded : [{ id: 'welcome', role: 'assistant', content: WELCOME, timestamp: new Date() }]);
+        setMessages(loaded);
         setHistoryId(detail.history_id);
         setSelectedSubject(detail.subject_id ?? null);
         setShowHistory(false);
@@ -497,7 +516,7 @@ export default function ChatbotScreen() {
 
   const startNewChat = useCallback(() => {
     setHistoryId(null);
-    setMessages([{ id: 'welcome', role: 'assistant', content: WELCOME, timestamp: new Date() }]);
+    setMessages([]);
     setError(null);
     setShowHistory(false);
   }, []);
@@ -529,15 +548,28 @@ export default function ChatbotScreen() {
         setError('Microphone permission is required for voice input.');
         return;
       }
+      voiceBaseInputRef.current = inputText.trim();
+      voiceLiveTranscriptRef.current = '';
       speech.start({
         lang: 'en-US',
         interimResults: true,
-        continuous: false,
+        // Keep listening until the user explicitly presses Stop.
+        continuous: true,
       });
     } catch {
       setError('Voice input is unavailable on this build. Use text input.');
     }
   }, [isListening]);
+
+  const stopVoiceInput = useCallback(() => {
+    const speech = speechModuleRef.current;
+    if (!speech) return;
+    try {
+      speech.stop();
+    } catch {
+      // no-op
+    }
+  }, []);
 
   const uploadPersonalNote = useCallback(async () => {
     if (uploadingNote) return;
@@ -587,6 +619,34 @@ export default function ChatbotScreen() {
       setUploadingNote(false);
     }
   }, [post, profileId, selectedSubjectName, uploadingNote]);
+
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await loadSessions();
+      try {
+        const profile = await get<Record<string, unknown>>('/api/students/profile');
+        if (typeof profile.user_id === 'string') setProfileId(profile.user_id);
+        const fullName = typeof profile.full_name === 'string' ? profile.full_name.trim() : '';
+        const firstName = typeof profile.first_name === 'string' ? profile.first_name.trim() : '';
+        if (fullName) setProfileName(fullName);
+        else if (firstName) setProfileName(firstName);
+        if (typeof profile.profile_image_url === 'string' && profile.profile_image_url.trim()) {
+          setProfileImageUrl(profile.profile_image_url.trim());
+        }
+      } catch {
+        // optional
+      }
+      try {
+        const res = await get<EnrollmentResponse>('/api/students/enrollments');
+        setSubjects(res.items ?? []);
+      } catch {
+        // optional
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [get, loadSessions]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.screen }]} edges={['top', 'left', 'right']}>
@@ -782,6 +842,13 @@ export default function ChatbotScreen() {
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => <Bubble message={item} theme={theme} userLabel={profileName} profileImageUrl={profileImageUrl} />}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={() => void onRefresh()}
+              tintColor={theme.colors.primary}
+            />
+          }
           ListFooterComponent={
             showSuggestions ? (
               <View style={styles.suggestionsWrap}>
@@ -793,7 +860,7 @@ export default function ChatbotScreen() {
                   </View>
                   <Text style={[styles.welcomeTitle, { color: theme.colors.primary }]}>Meet Gyani ✦</Text>
                   <Text style={[styles.welcomeSub, { color: theme.colors.muted }]}>
-                    Gyanavriksha's AI companion — explain concepts, solve problems, summarise topics, or quiz you on your curriculum.
+                    {`Namaste, ${profileName.split(' ')[0] || 'Student'}! Gyanavriksha's AI companion — explain concepts, solve problems, summarise topics, or quiz you on your curriculum.`}
                   </Text>
                   <View style={[styles.welcomeTagRow]}>
                     {['RAG-powered', 'Curriculum-aware', 'Always on'].map((tag) => (
@@ -840,6 +907,24 @@ export default function ChatbotScreen() {
 
         {/* ── Input bar ── */}
         <View style={[styles.inputBarWrap, { backgroundColor: theme.colors.screen, borderTopColor: theme.colors.border }]}>
+          {isListening && (
+            <View style={[styles.listeningBanner, { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.border }]}>
+              <View style={styles.listeningInfo}>
+                <View style={[styles.listeningDot, { backgroundColor: theme.colors.primary }]} />
+                <Text style={[styles.listeningText, { color: theme.colors.primary }]}>
+                  Listening… tap Stop when done
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.stopListeningBtn, { backgroundColor: theme.colors.primary }]}
+                activeOpacity={0.8}
+                onPress={stopVoiceInput}
+              >
+                <MaterialIcons name="stop" size={14} color={theme.colors.surface} />
+                <Text style={[styles.stopListeningText, { color: theme.colors.surface }]}>Stop</Text>
+              </TouchableOpacity>
+            </View>
+          )}
           <View style={[styles.inputRow, { backgroundColor: theme.colors.surface, borderColor: inputText.trim() ? theme.colors.primary : theme.colors.border }]}>
             <TouchableOpacity
               style={[styles.voiceBtn, isListening && { backgroundColor: theme.colors.primarySoft, borderRadius: 20 }]}
@@ -1282,5 +1367,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 6,
     fontWeight: '500',
+  },
+  listeningBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  listeningInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  listeningDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  listeningText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  stopListeningBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  stopListeningText: {
+    fontSize: 11,
+    fontWeight: '800',
   },
 });

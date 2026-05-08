@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import axios from 'axios';
@@ -71,6 +71,7 @@ export default function SubmissionResultScreen({ navigation, route }: Submission
   const [detail, setDetail] = useState<SubmissionDetail | null>(null);
   const [grading, setGrading] = useState<GradingResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isTriggering, setIsTriggering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,6 +138,15 @@ export default function SubmissionResultScreen({ navigation, route }: Submission
     }
   }, [isTriggering, load, post, submissionId]);
 
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [load]);
+
   const goBack = useCallback(() => {
     if (navigation.goBack) {
       navigation.goBack();
@@ -153,7 +163,17 @@ export default function SubmissionResultScreen({ navigation, route }: Submission
         title="Submission Result"
         subtitle={subjectName ? `${subjectName} · ${assignmentTitle}` : assignmentTitle}
       />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void onRefresh()}
+            tintColor="#2563EB"
+          />
+        }
+      >
         {isLoading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator color="#2563EB" size="large" />

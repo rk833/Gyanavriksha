@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Animated,
   Linking,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -103,6 +104,12 @@ const CONTACT_EMAIL = 'support@gyanavriksha.edu';
 export default function HelpScreen() {
   const { theme } = useAppTheme();
   const [activeTab, setActiveTab] = useState<Tab>('faq');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    setTimeout(() => setIsRefreshing(false), 350);
+  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.screen }]} edges={['top', 'left', 'right']}>
@@ -129,7 +136,17 @@ export default function HelpScreen() {
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+          />
+        }
+      >
         {/* ── FAQ ── */}
         {activeTab === 'faq' && (
           <View style={styles.section}>

@@ -56,6 +56,34 @@ Start the Metro bundler and QR menu:
 npm start
 ```
 
+### Run on a physical Android device (recommended for microphone features)
+
+For native modules like speech recognition / microphone input, use a **development build** (not Expo Go):
+
+```bash
+# from frontend-mobile/
+npx expo run:android --device
+```
+
+If your phone is connected over USB and the app cannot reach Metro, set your machine LAN IP before running:
+
+```bash
+# Git Bash
+export REACT_NATIVE_PACKAGER_HOSTNAME=192.168.110.123
+npx expo run:android --device
+```
+
+```powershell
+# PowerShell
+$env:REACT_NATIVE_PACKAGER_HOSTNAME="192.168.110.123"
+npx expo run:android --device
+```
+
+> Replace `192.168.110.123` with your computer's current LAN IP.
+> Keep `.env` aligned with the same host for API calls:
+>
+> `EXPO_PUBLIC_API_BASE_URL=http://<LAN-IP>:8000`
+
 Useful variants:
 
 ```bash
@@ -72,6 +100,11 @@ npm run web
 
 - **Expo Go**: Scan the QR code from the terminal or Dev Tools (USB debugging on Android; Camera app on iOS).
 - **Native run** (`expo run:android` / `expo run:ios`): Requires local Android/iOS toolchain and generates a dev build.
+
+### Microphone / speech input note
+
+- **Works in development build** (`npx expo run:android --device`)
+- **Not available in Expo Go** for this project, because it uses native speech plugins not bundled in the store client.
 
 ## Project scripts
 

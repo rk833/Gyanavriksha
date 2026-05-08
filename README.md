@@ -108,6 +108,38 @@ npm install
 npm start
 ```
 
+#### Physical Android device (recommended for microphone / speech features)
+
+Use a development build instead of Expo Go:
+
+```bash
+cd frontend-mobile
+npx expo run:android --device
+```
+
+If Metro is not reachable from your phone, set your machine LAN IP before running:
+
+```bash
+# Git Bash
+export REACT_NATIVE_PACKAGER_HOSTNAME=192.168.110.123
+npx expo run:android --device
+```
+
+```powershell
+# PowerShell
+$env:REACT_NATIVE_PACKAGER_HOSTNAME="192.168.110.123"
+npx expo run:android --device
+```
+
+Also set mobile API base URL in `frontend-mobile/.env`:
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://192.168.110.123:8000
+```
+
+> Replace `192.168.110.123` with your computer's current LAN IP.
+> For this project, microphone speech input works in dev build and not in Expo Go.
+
 ### Notes
 
 - **Alembic migrations** live in `backend/alembic/versions/`. To create a new migration:
