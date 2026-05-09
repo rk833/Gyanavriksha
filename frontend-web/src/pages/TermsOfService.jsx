@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs -- section refs for hash/table-of-contents scroll */
 import { useEffect, useRef, useState } from 'react';
 import {
   ChevronRight,
@@ -14,7 +15,6 @@ import {
   Download,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import useAuth from '../hooks/useAuth';
 
 function PublicHeader() {
   return (
@@ -141,11 +141,7 @@ async function downloadTermsPdf() {
 
     doc.save('Gyanavriksha-Terms-of-Service.pdf');
   } catch (err) {
-    // Dependency not installed or import failed
-    // eslint-disable-next-line no-console
     console.error('Failed to load jspdf dynamically', err);
-    // Minimal user feedback; avoid adding new toast dependency here
-    // eslint-disable-next-line no-alert
     alert('Unable to generate PDF. Please run `npm install` in the frontend and reload the dev server.');
   }
 }
@@ -225,7 +221,7 @@ function TermsContent({ refsMap }) {
         </aside>
         <div className="flex-1 space-y-16">
           <section ref={refsMap.acceptance} className="scroll-mt-32" id="acceptance">
-            <div className="p-8 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+            <div className="p-8 bg-surface-container-lowest rounded-xl border border-outline-variant/25 shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
               <h2 className="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
                 <ShieldCheck className="w-6 h-6 text-secondary" />
                 1. Acceptance of Terms
@@ -238,7 +234,7 @@ function TermsContent({ refsMap }) {
           </section>
 
           <section ref={refsMap.description} className="scroll-mt-32" id="description">
-            <div className="p-8 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+            <div className="p-8 bg-surface-container-lowest rounded-xl border border-outline-variant/25 shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
               <h2 className="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
                 <GraduationCap className="w-6 h-6 text-secondary" />
                 2. Service Description (Academic Project)
@@ -251,7 +247,7 @@ function TermsContent({ refsMap }) {
           </section>
 
           <section ref={refsMap.accounts} className="scroll-mt-32" id="accounts">
-            <div className="p-8 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+            <div className="p-8 bg-surface-container-lowest rounded-xl border border-outline-variant/25 shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
               <h2 className="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
                 <KeyRound className="w-6 h-6 text-secondary" />
                 3. User Accounts and Security
@@ -259,7 +255,7 @@ function TermsContent({ refsMap }) {
               <div className="space-y-6 text-on-surface-variant leading-relaxed">
                 <p>To access full features, users must create an account. You are responsible for maintaining the confidentiality of your credentials.</p>
                 <div className="bg-surface-container-low p-6 rounded-lg border-l-4 border-secondary flex flex-col md:flex-row gap-6 items-start">
-                  <div className="flex-shrink-0 bg-white p-4 rounded-xl shadow-sm">
+                  <div className="flex-shrink-0 bg-surface p-4 rounded-xl shadow-sm border border-outline-variant/20">
                     <div className="w-24 h-24 bg-surface-container flex items-center justify-center rounded">
                       <QrCode className="w-10 h-10 text-outline" />
                     </div>
@@ -275,7 +271,7 @@ function TermsContent({ refsMap }) {
           </section>
 
           <section ref={refsMap.policy} className="scroll-mt-32" id="policy">
-            <div className="p-8 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+            <div className="p-8 bg-surface-container-lowest rounded-xl border border-outline-variant/25 shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
               <h2 className="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
                 <Gavel className="w-6 h-6 text-secondary" />
                 4. Acceptable Use Policy
@@ -315,7 +311,7 @@ function TermsContent({ refsMap }) {
           </section>
 
           <section ref={refsMap.termination} className="scroll-mt-32" id="termination">
-            <div className="p-8 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+            <div className="p-8 bg-surface-container-lowest rounded-xl border border-outline-variant/25 shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
               <h2 className="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
                 <XCircle className="w-6 h-6 text-secondary" />
                 6. Termination
@@ -328,7 +324,7 @@ function TermsContent({ refsMap }) {
         </div>
       </div>
 
-      <div className="mt-20 p-10 bg-surface-container-high rounded-2xl text-center" id="contact">
+      <div className="mt-20 p-10 bg-surface-container-high rounded-2xl text-center border border-outline-variant/30" id="contact">
         <h3 className="text-2xl font-bold text-primary mb-4">Have questions about our legal terms?</h3>
         <p className="text-on-surface-variant mb-8 max-w-xl mx-auto">Our legal and compliance team is here to help you understand your rights and responsibilities within the Knowledge Sanctuary.</p>
         <div className="flex flex-wrap justify-center gap-4">
@@ -336,7 +332,7 @@ function TermsContent({ refsMap }) {
             <Mail className="w-5 h-5" />
             Contact Legal Support
           </a>
-          <button onClick={downloadTermsPdf} className="px-8 py-3 border border-outline-variant text-primary rounded-xl font-bold hover:bg-white transition-all inline-flex items-center gap-2">
+          <button onClick={downloadTermsPdf} type="button" className="px-8 py-3 border border-outline-variant text-primary rounded-xl font-bold hover:bg-surface transition-all inline-flex items-center gap-2">
             <Download className="w-5 h-5" />
             Download PDF Version
           </button>
@@ -348,7 +344,6 @@ function TermsContent({ refsMap }) {
 
 export default function TermsOfService() {
   const { pathname, hash } = useLocation();
-  const { user } = useAuth();
   const isAuthenticatedRoute = pathname.startsWith('/student') || pathname.startsWith('/instructor') || pathname.startsWith('/admin');
   const refsMap = {
     acceptance: useRef(null),
@@ -376,16 +371,16 @@ export default function TermsOfService() {
         targetRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
     }
-  }, [hash]);
+  }, [hash]); // eslint-disable-line react-hooks/exhaustive-deps -- hash anchor scroll; refs stable
 
   const content = <TermsContent refsMap={refsMap} />;
 
   if (isAuthenticatedRoute) {
-    return content;
+    return <div className="text-on-surface">{content}</div>;
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f9fc] text-[#191c1e]">
+    <div className="min-h-screen bg-background text-on-surface">
       <PublicHeader />
       <main className="pt-24 pb-20 max-w-[1200px] mx-auto px-6">{content}</main>
       <PublicFooter />

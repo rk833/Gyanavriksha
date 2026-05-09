@@ -550,6 +550,27 @@ function ApiSection({ form, onChange, onSave, saving, saved }) {
 
   return (
     <div className="space-y-6">
+      <SectionLabel>API rate baseline</SectionLabel>
+      <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
+        <FieldRow label="Security dashboard threshold (req/min)">
+          <input
+            type="number"
+            min={100}
+            max={1000000}
+            value={form.rate_limit_threshold ?? 2500}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10);
+              onChange('rate_limit_threshold', Number.isFinite(n) ? n : 2500);
+            }}
+            className="w-full max-w-xs border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </FieldRow>
+        <p className="text-xs text-slate-400">
+          Used on Security &amp; Integrity for the rate-limit card and live load percentage. Actual enforcement uses server env{' '}
+          <span className="font-mono">RATE_LIMIT_CALLS</span> per route per client.
+        </p>
+      </div>
+
       <SectionLabel>Integration API Keys</SectionLabel>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
@@ -938,6 +959,7 @@ export default function AdminSettings() {
       gemini_api_key: '',
       mqtt_broker_credentials: '',
       webhook_url: settingsData.webhook_url ?? '',
+      rate_limit_threshold: settingsData.rate_limit_threshold ?? 2500,
       _google_hint: settingsData.google_vision_key_hint ?? '',
       _gemini_hint: settingsData.gemini_key_hint ?? '',
     });
@@ -981,7 +1003,11 @@ export default function AdminSettings() {
   };
 
   const buildApiPayload = () => {
-    const p = { webhook_url: form.webhook_url || undefined };
+    const rl = Number.parseInt(String(form.rate_limit_threshold ?? ''), 10);
+    const p = {
+      webhook_url: form.webhook_url || undefined,
+      rate_limit_threshold: Number.isFinite(rl) ? rl : 2500,
+    };
     if (form.google_vision_api_key) p.google_vision_api_key = form.google_vision_api_key;
     if (form.gemini_api_key) p.gemini_api_key = form.gemini_api_key;
     if (form.mqtt_broker_host) p.mqtt_broker_host = form.mqtt_broker_host;

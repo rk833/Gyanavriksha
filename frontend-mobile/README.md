@@ -121,4 +121,47 @@ npm run web
 - **Stale bundle**: `npx expo start --clear`.
 - **401 / login loops**: Ensure backend is up, CORS is not blocking your origin for web, and device clock is correct.
 
+### Android `expo run:android` on Windows: “Filename longer than 260 characters” / `CMAKE_OBJECT_PATH_MAX`
+
+CMake/Ninja places C++ outputs under paths like:
+
+`...\android\app\.cxx\Debug\...\react-native-safe-area-context\node_modules\...`
+
+Deep folders plus a long workspace path (e.g. `D:\Level 5 Sem 2\System Development Project\...\frontend-mobile`) often exceed Windows’ legacy **260 character** limit, so `:app:buildCMakeDebug` fails with `ninja: error: Stat(...): Filename longer than 260 characters`.
+
+Pick **one** of these fixes (recommended order):
+
+1. **Use a shorter project path (most reliable)**  
+   Clone or copy **`frontend-mobile`** (or the whole repo) to something brief, then rebuild from there, for example:
+
+   - `D:\gv\frontend-mobile`
+   - `C:\work\gv-mobile`
+
+   Then inside that folder:
+
+   ```bash
+   cd android && .\gradlew clean && cd ..
+   npx expo run:android --device
+   ```
+
+2. **Enable Windows long paths (Windows 10+)**  
+   Run **PowerShell as Administrator**:
+
+   ```powershell
+   New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+   ```
+
+   Restart the PC, open a **new** terminal, and build again.
+
+3. **Map a drive letter for a shorter path**  
+   In `cmd`:
+
+   ```bat
+   subst G: "D:\Level 5 Sem 2\System Development Project\Gyanavriksha\frontend-mobile"
+   ```
+
+   Run `cd /d G:\` and execute `npx expo run:android --device` from `G:`.
+
+The `[CXX5304] SDK XML versions` CMake lines are a separate toolchain mismatch warning and are not the crash; the decisive error is **`Filename longer than 260 characters`** / object path warnings.
+
 For full-stack setup (Postgres, Redis, MQTT, AI service), use the **repository root** `README.md` and Docker Compose.

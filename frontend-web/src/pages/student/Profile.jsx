@@ -145,7 +145,10 @@ export default function StudentProfile() {
               </button>
             </div>
             <div className="space-y-3">
-              {enrollments.map((enr) => (
+              {enrollments.map((enr) => {
+                const pctRaw = Number(enr.completion_percentage);
+                const pctSafe = Number.isFinite(pctRaw) ? Math.min(Math.max(pctRaw, 0), 100) : 0;
+                return (
                 <div key={enr.enrollment_id} className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-primary-light flex items-center justify-center">
@@ -154,18 +157,19 @@ export default function StudentProfile() {
                     <span className="text-sm font-medium text-slate-700">{enr.subject_name}</span>
                   </div>
                   <div className="flex items-center gap-3 w-40">
-                    <div className="flex-1 bg-slate-100 rounded-full h-2">
+                    <div className="flex-1 bg-slate-100 rounded-full h-2 min-w-0">
                       <div
-                        className="bg-primary rounded-full h-2 transition-all"
-                        style={{ width: `${enr.completion_percentage}%` }}
+                        className="bg-primary rounded-full h-2 transition-all max-w-full"
+                        style={{ width: `${pctSafe}%` }}
                       />
                     </div>
-                    <span className="text-xs text-slate-500 w-10 text-right">
-                      {enr.completion_percentage}%
+                    <span className="text-xs text-slate-500 w-10 text-right shrink-0">
+                      {pctSafe.toFixed(pctSafe % 1 === 0 ? 0 : 1)}%
                     </span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {enrollments.length === 0 && (
                 <p className="text-sm text-slate-400 text-center py-4">No subjects enrolled</p>
               )}

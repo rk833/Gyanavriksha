@@ -28,6 +28,7 @@ export default function AtRiskStudentsPage() {
   const [loading, setLoading] = useState(true);
   const [subjects, setSubjects] = useState([]);
   const [subjectId, setSubjectId] = useState('');
+  const [gradeId, setGradeId] = useState('');
   const [page, setPage] = useState(1);
   const [riskBand, setRiskBand] = useState('all');
   const [tableQuery, setTableQuery] = useState('');
@@ -38,20 +39,43 @@ export default function AtRiskStudentsPage() {
     getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {});
   }, []);
 
+  const gradeOptions = useMemo(() => {
+    const scoped = subjectId
+      ? subjects.filter((s) => String(s.subject_id) === subjectId)
+      : subjects;
+    const m = new Map();
+    scoped.forEach((s) => {
+      if (s.grade_id != null && s.grade_name) {
+        m.set(s.grade_id, s.grade_name);
+      }
+    });
+    return [...m.entries()].sort((a, b) => a[0] - b[0]);
+  }, [subjects, subjectId]);
+
+  useEffect(() => {
+    if (!gradeId) return;
+    const allowed = new Set(gradeOptions.map(([id]) => String(id)));
+    if (!allowed.has(String(gradeId))) {
+      setGradeId('');
+      setPage(1);
+    }
+  }, [subjectId, gradeOptions, gradeId]);
+
   useEffect(() => {
     setLoading(true);
     const params = { page, per_page: perPage };
     if (subjectId) params.subject_id = Number(subjectId);
+    if (gradeId) params.grade_id = Number(gradeId);
     getAtRiskStudents(params)
       .then((res) => setData(res.data))
       .catch(() => toast.error('Failed to load at-risk students'))
       .finally(() => setLoading(false));
-  }, [page, subjectId]);
+  }, [page, subjectId, gradeId]);
 
   useEffect(() => {
     setRiskBand('all');
     setTableQuery('');
-  }, [subjectId]);
+  }, [subjectId, gradeId]);
 
   const filteredItems = useMemo(() => {
     const items = data.items || [];
@@ -64,38 +88,31 @@ export default function AtRiskStudentsPage() {
       if (q) {
         const factors = (student.risk_factors || []).join(' ');
         const subs = (student.subjects_at_risk || []).join(' ');
-        const blob = `${student.full_name ?? ''} ${student.email ?? ''} ${factors} ${subs}`.toLowerCase();
+        const gradeText = (student.grade_name ?? '').toString();
+        const blob = `${student.full_name ?? ''} ${student.email ?? ''} ${gradeText} ${factors} ${subs}`.toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
     });
   }, [data.items, riskBand, tableQuery]);
 
-  const hasListFilters = riskBand !== 'all' || Boolean(tableQuery.trim());
+  const hasListFilters =
+    riskBand !== 'all'
+    || Boolean(tableQuery.trim())
+    || Boolean(gradeId)
+    || Boolean(subjectId);
 
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center">
-            <AlertTriangle className="w-5 h-5 text-red-500" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-primary-dark">At-Risk Students</h1>
-            <p className="text-sm text-slate-500">Students who need extra attention based on performance patterns.</p>
-          </div>
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
+          <AlertTriangle className="w-5 h-5 text-red-500" />
         </div>
-        <select
-          value={subjectId}
-          onChange={(e) => { setSubjectId(e.target.value); setPage(1); }}
-          className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-        >
-          <option value="">All Subjects</option>
-          {subjects.map((s) => (
-            <option key={s.subject_id} value={s.subject_id}>{s.subject_name}</option>
-          ))}
-        </select>
+        <div>
+          <h1 className="text-2xl font-bold text-primary-dark">At-Risk Students</h1>
+          <p className="text-sm text-slate-500">Students who need extra attention based on performance patterns.</p>
+        </div>
       </div>
 
       {/* Info Banner */}
@@ -121,11 +138,33 @@ export default function AtRiskStudentsPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-100">
+          <div className="flex flex-col lg:flex-row flex-wrap items-stretch lg:items-center gap-2 sm:gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-100">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
               <ListFilter className="w-3.5 h-3.5" />
-              Filter
+              Filters
             </div>
+            <select
+              value={gradeId}
+              onChange={(e) => { setGradeId(e.target.value); setPage(1); }}
+              className="flex-1 min-w-[140px] sm:max-w-[200px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white text-primary-dark focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Filter by grade"
+            >
+              <option value="">All grades</option>
+              {gradeOptions.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+            <select
+              value={subjectId}
+              onChange={(e) => { setSubjectId(e.target.value); setPage(1); }}
+              className="flex-1 min-w-[140px] sm:max-w-[220px] border border-primary-light rounded-lg px-2.5 py-2 text-sm bg-white text-primary-dark focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
+              aria-label="Filter by subject"
+            >
+              <option value="">All subjects</option>
+              {subjects.map((s) => (
+                <option key={s.subject_id} value={s.subject_id}>{s.subject_name}</option>
+              ))}
+            </select>
             <select
               value={riskBand}
               onChange={(e) => setRiskBand(e.target.value)}
@@ -141,22 +180,28 @@ export default function AtRiskStudentsPage() {
               type="search"
               value={tableQuery}
               onChange={(e) => setTableQuery(e.target.value)}
-              placeholder="Search name, email, factors, subjects…"
+              placeholder="Search name, email, grade, factors…"
               className="flex-1 min-w-[180px] border border-primary-light rounded-lg px-3 py-2 text-sm bg-white text-primary-dark placeholder:text-slate-400 focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
               aria-label="Search at-risk students"
             />
             {hasListFilters ? (
               <button
                 type="button"
-                onClick={() => { setRiskBand('all'); setTableQuery(''); }}
-                className="text-xs font-medium text-primary hover:underline whitespace-nowrap px-1 py-2 sm:py-0"
+                onClick={() => {
+                  setRiskBand('all');
+                  setTableQuery('');
+                  setGradeId('');
+                  setSubjectId('');
+                  setPage(1);
+                }}
+                className="text-xs font-medium text-primary hover:underline whitespace-nowrap px-1 py-2 lg:py-0"
               >
-                Clear filters
+                Clear all filters
               </button>
             ) : null}
           </div>
           <p className="text-[11px] text-slate-400 px-0.5">
-            Filters apply to students on page {page}. Use the subject control above to narrow the roster from the server.
+            Grade and subject narrow the list from the server; risk and search refine the current page.
           </p>
 
           {filteredItems.length === 0 ? (
@@ -178,6 +223,9 @@ export default function AtRiskStudentsPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-primary-dark">{student.full_name}</h3>
                     <p className="text-xs text-slate-500">{student.email}</p>
+                    {student.grade_name ? (
+                      <p className="text-xs font-medium text-primary-dark mt-0.5">Grade: {student.grade_name}</p>
+                    ) : null}
                   </div>
                 </div>
                 <div className="text-right">
@@ -218,8 +266,8 @@ export default function AtRiskStudentsPage() {
                 </div>
               )}
 
-              {/* Subjects at Risk */}
-              {student.subjects_at_risk?.length > 0 && (
+              {/* Subjects at Risk: only courses with graded work averaging &lt; 60% (see instructor_service.get_at_risk_students) */}
+              {student.subjects_at_risk?.length > 0 ? (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 mb-1">Subjects at Risk</p>
                   <div className="flex flex-wrap gap-1">
@@ -230,12 +278,17 @@ export default function AtRiskStudentsPage() {
                     ))}
                   </div>
                 </div>
-              )}
+              ) : (student.total_submissions ?? 0) === 0 ? (
+                <p className="text-[11px] text-slate-400 leading-snug mt-1">
+                  No subject row: tags appear only after the student has <span className="font-medium text-slate-500">graded</span> work in a
+                  course—and only if that course&apos;s average is below 60%. With no submissions, there is nothing to attribute per subject.
+                </p>
+              ) : null}
             </div>
           ))}
           <div className="text-[11px] text-slate-400">
             Showing {filteredItems.length} of {data.items.length} on this page
-            {data.total != null ? ` · ${data.total} total matching subject` : ''}
+            {data.total != null ? ` · ${data.total} total matching filters` : ''}
           </div>
         </div>
       )}

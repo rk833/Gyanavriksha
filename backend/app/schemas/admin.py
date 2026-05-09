@@ -409,6 +409,7 @@ class AdminSettingsResponse(BaseModel):
     notification_prefs: Optional[dict] = None
     appearance_prefs: Optional[dict] = None
     webhook_url: Optional[str] = None
+    rate_limit_threshold: int = Field(default=2500, ge=100, le=1_000_000)
 
 
 class AdminSettingsUpdateRequest(BaseModel):
@@ -425,6 +426,7 @@ class AdminSettingsUpdateRequest(BaseModel):
     notification_prefs: Optional[dict] = None
     appearance_prefs: Optional[dict] = None
     webhook_url: Optional[str] = None
+    rate_limit_threshold: Optional[int] = Field(None, ge=100, le=1_000_000)
 
 
 class IntegrationTestRequest(BaseModel):

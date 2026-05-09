@@ -4,6 +4,7 @@ Sprint 4 Phases 1-5: GD-82 to GD-96
 """
 import os
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -448,20 +449,22 @@ def get_instructor_subject_detail(
         avg_score = round(float(student_submissions.avg_score), 1) if student_submissions.avg_score else None
         last_active = student_submissions.last_active
 
-        # Graded submissions for completion
+        # Distinct published assignments this student completed (avoid >100% on resubmits)
         graded = (
-            db.query(func.count(Submission.submission_id))
+            db.query(func.count(func.distinct(Submission.assignment_id)))
             .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
             .filter(
                 Submission.student_id == s.student_id,
                 Assignment.subject_id == subject_id,
                 Assignment.instructor_id == instructor_id,
+                Assignment.is_published == True,
                 Submission.processing_status == SubmissionProcessingStatus.DONE,
             )
             .scalar()
             or 0
         )
-        completion = round((graded / published_count) * 100, 1) if published_count > 0 else 0.0
+        completion_raw = round((graded / published_count) * 100, 1) if published_count > 0 else 0.0
+        completion = min(completion_raw, 100.0)
 
         students.append(
             {
@@ -1153,6 +1156,7 @@ def get_at_risk_students(
     db: Session,
     instructor_id: str,
     subject_id: int | None = None,
+    grade_id: int | None = None,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list[dict], int]:
@@ -1175,21 +1179,50 @@ def get_at_risk_students(
         or 0
     )
 
-    # Get all enrolled students
-    enrolled = (
+    enrollment_filters = [
+        StudentEnrollment.subject_id.in_(subject_ids),
+        StudentEnrollment.is_active == True,
+    ]
+    if grade_id is not None:
+        enrollment_filters.append(StudentEnrollment.grade_id == grade_id)
+
+    enrollment_rows = (
         db.query(
             User.user_id.label("student_id"),
             User.full_name,
             User.email,
+            Grade.grade_id,
+            Grade.grade_name,
+            Grade.grade_level,
         )
         .join(StudentEnrollment, StudentEnrollment.student_id == User.user_id)
-        .filter(
-            StudentEnrollment.subject_id.in_(subject_ids),
-            StudentEnrollment.is_active == True,
-        )
-        .distinct()
+        .join(Grade, Grade.grade_id == StudentEnrollment.grade_id)
+        .filter(*enrollment_filters)
         .all()
     )
+
+    students_by_id: dict = defaultdict(
+        lambda: {"full_name": "", "email": "", "grades_by_id": {}}
+    )
+    for row in enrollment_rows:
+        sid = row.student_id
+        slot = students_by_id[sid]
+        slot["full_name"] = row.full_name
+        slot["email"] = row.email
+        slot["grades_by_id"][row.grade_id] = (row.grade_name, row.grade_level)
+
+    enrolled = []
+    for sid, meta in students_by_id.items():
+        grades_sorted = sorted(meta["grades_by_id"].items(), key=lambda kv: kv[1][1])
+        grade_label = ", ".join(v[0] for _, v in grades_sorted) if grades_sorted else None
+        enrolled.append(
+            {
+                "student_id": sid,
+                "full_name": meta["full_name"],
+                "email": meta["email"],
+                "grade_name": grade_label,
+            }
+        )
 
     now = datetime.now(timezone.utc)
     at_risk = []
@@ -1209,7 +1242,7 @@ def get_at_risk_students(
             )
             .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
             .filter(
-                Submission.student_id == student.student_id,
+                Submission.student_id == student["student_id"],
                 Assignment.instructor_id == instructor_id,
                 Assignment.subject_id.in_(subject_ids),
             )
@@ -1263,7 +1296,7 @@ def get_at_risk_students(
                     db.query(func.avg(Submission.score_percentage))
                     .join(Assignment, Assignment.assignment_id == Submission.assignment_id)
                     .filter(
-                        Submission.student_id == student.student_id,
+                        Submission.student_id == student["student_id"],
                         Assignment.subject_id == sid,
                         Submission.score_percentage.isnot(None),
                     )
@@ -1275,9 +1308,10 @@ def get_at_risk_students(
                         subjects_at_risk.append(subj)
 
             at_risk.append({
-                "student_id": student.student_id,
-                "full_name": student.full_name,
-                "email": student.email,
+                "student_id": student["student_id"],
+                "full_name": student["full_name"],
+                "email": student["email"],
+                "grade_name": student.get("grade_name"),
                 "risk_score": risk_score,
                 "risk_factors": risk_factors,
                 "subjects_at_risk": subjects_at_risk,
@@ -1300,6 +1334,7 @@ def get_concept_heatmap(
     db: Session,
     instructor_id: str,
     subject_id: int | None = None,
+    grade_id: int | None = None,
     timeframe: str = "all",
 ) -> dict:
     """Get concept heatmap from knowledge gaps (submissions and AI tutor chat) and heatmap entries.
@@ -1314,14 +1349,24 @@ def get_concept_heatmap(
     if not subject_ids:
         return {"heatmap_entries": [], "emerging_friction": [], "teaching_insight": None}
 
+    enrollment_scope = [
+        StudentEnrollment.subject_id.in_(subject_ids),
+        StudentEnrollment.is_active == True,
+    ]
+    if grade_id is not None:
+        enrollment_scope.append(StudentEnrollment.grade_id == grade_id)
+
     total_enrolled = (
         db.query(func.count(func.distinct(StudentEnrollment.student_id)))
-        .filter(
-            StudentEnrollment.subject_id.in_(subject_ids),
-            StudentEnrollment.is_active == True,
-        )
+        .filter(*enrollment_scope)
         .scalar()
         or 0
+    )
+
+    eligible_student_ids_sq = (
+        db.query(StudentEnrollment.student_id)
+        .filter(*enrollment_scope)
+        .distinct()
     )
 
     # Knowledge gaps from graded work (submission_id) and from AI tutor chat (history_id → chat_history)
@@ -1330,6 +1375,7 @@ def get_concept_heatmap(
             KnowledgeGap.topic_tag,
             KnowledgeGap.concept_name,
             Subject.subject_name,
+            Grade.grade_name.label("catalog_grade_name"),
             func.count(func.distinct(KnowledgeGap.student_id)).label("affected_count"),
             func.avg(
                 case(
@@ -1339,9 +1385,13 @@ def get_concept_heatmap(
             ).label("avg_score"),
         )
         .join(Subject, Subject.subject_id == KnowledgeGap.subject_id)
+        .join(Grade, Grade.grade_id == Subject.grade_id)
         .outerjoin(Submission, Submission.submission_id == KnowledgeGap.submission_id)
         .outerjoin(ChatHistory, ChatHistory.history_id == KnowledgeGap.history_id)
-        .filter(KnowledgeGap.subject_id.in_(subject_ids))
+        .filter(
+            KnowledgeGap.subject_id.in_(subject_ids),
+            KnowledgeGap.student_id.in_(eligible_student_ids_sq),
+        )
     )
 
     if timeframe == "7d":
@@ -1356,6 +1406,7 @@ def get_concept_heatmap(
             KnowledgeGap.topic_tag,
             KnowledgeGap.concept_name,
             Subject.subject_name,
+            Grade.grade_name,
         )
         .order_by(desc(func.count(func.distinct(KnowledgeGap.student_id))))
         .all()
@@ -1369,6 +1420,7 @@ def get_concept_heatmap(
             "topic_tag": r.topic_tag,
             "concept_name": r.concept_name,
             "subject_name": r.subject_name,
+            "grade_name": r.catalog_grade_name,
             "struggle_percentage": struggle_pct,
             "affected_student_count": r.affected_count,
             "avg_score": avg,
@@ -1381,14 +1433,17 @@ def get_concept_heatmap(
             ConceptHeatmapEntry.topic_tag,
             ConceptHeatmapEntry.concept_name,
             Subject.subject_name,
+            Grade.grade_name.label("catalog_grade_name"),
             func.count(func.distinct(ConceptHeatmapEntry.student_id)).label(
                 "ch_affected_count"
             ),
         )
         .join(Subject, Subject.subject_id == ConceptHeatmapEntry.subject_id)
+        .join(Grade, Grade.grade_id == Subject.grade_id)
         .filter(
             ConceptHeatmapEntry.subject_id.in_(subject_ids),
             ConceptHeatmapEntry.student_id.isnot(None),
+            ConceptHeatmapEntry.student_id.in_(eligible_student_ids_sq),
         )
     )
     if timeframe == "7d":
@@ -1403,6 +1458,7 @@ def get_concept_heatmap(
             ConceptHeatmapEntry.topic_tag,
             ConceptHeatmapEntry.concept_name,
             Subject.subject_name,
+            Grade.grade_name,
         )
         .order_by(desc(func.count(func.distinct(ConceptHeatmapEntry.student_id))))
         .all()
@@ -1417,6 +1473,7 @@ def get_concept_heatmap(
                 "topic_tag": r.topic_tag,
                 "concept_name": r.concept_name,
                 "subject_name": r.subject_name,
+                "grade_name": r.catalog_grade_name,
                 "struggle_percentage": struggle_pct,
                 "affected_student_count": affected,
                 "avg_score": None,

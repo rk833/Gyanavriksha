@@ -2,6 +2,7 @@
 import ipaddress
 import os
 import secrets
+import time
 import socket
 import string
 import uuid
@@ -11,9 +12,12 @@ import urllib.request
 from pathlib import Path
 
 from fastapi import HTTPException
+
+import redis as redis_sync
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.api.middleware.rate_limiter import AGGREGATE_RPM_PREFIX
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models.assignment import Assignment
@@ -1914,6 +1918,23 @@ def _set_setting(db: Session, key: str, value: object) -> None:
     db.flush()
 
 
+def _aggregate_rpm_usage_pct(threshold_per_min: int) -> float | None:
+    """Share of current calendar-minute request volume vs security-dashboard threshold (Redis)."""
+    if threshold_per_min <= 0:
+        return None
+    key = f"{AGGREGATE_RPM_PREFIX}{int(time.time() // 60)}"
+    try:
+        r = redis_sync.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            raw = r.get(key)
+            rpm = int(raw) if raw not in (None, "") else 0
+        finally:
+            r.close()
+        return round(min(100.0, 100.0 * rpm / float(threshold_per_min)), 1)
+    except Exception:
+        return None
+
+
 def _compute_security_score(two_fa: dict, last_audit: dict | None) -> int:
     """Derive overall security score (0-100) from 2FA coverage and integrity audit."""
     score = int(two_fa["compliance_percentage"] * 0.4)
@@ -1958,9 +1979,10 @@ def get_security_overview(db: Session) -> dict:
                 "audit_time": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
             }
     threshold = int(_get_setting(db, "rate_limit_threshold") or 2500)
+    usage_pct = _aggregate_rpm_usage_pct(threshold)
     return {
         "jwt_rbac_status": _build_rbac_status(db),
-        "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": None},
+        "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": usage_pct},
         "device_auth": {
             "active_api_keys_count": iot_key_count,
             "ingest_accepted_count": ingest_ok,
@@ -2075,6 +2097,7 @@ def get_admin_settings(db: Session) -> dict:
         "notification_prefs": raw_notif if isinstance(raw_notif, dict) else None,
         "appearance_prefs": raw_appearance if isinstance(raw_appearance, dict) else None,
         "webhook_url": _get_setting(db, "webhook_url"),
+        "rate_limit_threshold": int(_get("rate_limit_threshold", 2500)),
     }
 
 

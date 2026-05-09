@@ -301,6 +301,7 @@ def get_velocity_analytics(
 )
 def get_at_risk_students(
     subject_id: int | None = Query(None),
+    grade_id: int | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
@@ -311,6 +312,7 @@ def get_at_risk_students(
         db,
         str(current_user.user_id),
         subject_id=subject_id,
+        grade_id=grade_id,
         page=page,
         per_page=per_page,
     )
@@ -319,13 +321,14 @@ def get_at_risk_students(
 @router.get("/analytics/concept-heatmap", response_model=ConceptHeatmapResponse)
 def get_concept_heatmap(
     subject_id: int | None = Query(None),
+    grade_id: int | None = Query(None),
     timeframe: str = Query("all", pattern="^(7d|30d|all)$"),
     current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
     db: Session = Depends(get_db),
 ):
     """Return concept heatmap data showing topic-level knowledge struggle areas."""
     return service.get_concept_heatmap(
-        db, str(current_user.user_id), subject_id, timeframe
+        db, str(current_user.user_id), subject_id, grade_id, timeframe
     )
 
 

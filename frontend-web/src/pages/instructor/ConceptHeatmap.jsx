@@ -37,6 +37,7 @@ export default function ConceptHeatmapPage() {
   const [loading, setLoading] = useState(true);
   const [subjects, setSubjects] = useState([]);
   const [subjectId, setSubjectId] = useState('');
+  const [gradeId, setGradeId] = useState('');
   const [timeframe, setTimeframe] = useState('all');
   const [tableSubject, setTableSubject] = useState('');
   const [struggleBand, setStruggleBand] = useState('all');
@@ -46,21 +47,43 @@ export default function ConceptHeatmapPage() {
     getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {});
   }, []);
 
+  const gradeOptions = useMemo(() => {
+    const scoped = subjectId
+      ? subjects.filter((s) => String(s.subject_id) === subjectId)
+      : subjects;
+    const m = new Map();
+    scoped.forEach((s) => {
+      if (s.grade_id != null && s.grade_name) {
+        m.set(s.grade_id, s.grade_name);
+      }
+    });
+    return [...m.entries()].sort((a, b) => a[0] - b[0]);
+  }, [subjects, subjectId]);
+
+  useEffect(() => {
+    if (!gradeId) return;
+    const allowed = new Set(gradeOptions.map(([id]) => String(id)));
+    if (!allowed.has(String(gradeId))) {
+      setGradeId('');
+    }
+  }, [subjectId, gradeOptions, gradeId]);
+
   useEffect(() => {
     setLoading(true);
     const params = { timeframe };
     if (subjectId) params.subject_id = Number(subjectId);
+    if (gradeId) params.grade_id = Number(gradeId);
     getConceptHeatmap(params)
       .then((res) => setData(res.data))
       .catch(() => toast.error('Failed to load heatmap'))
       .finally(() => setLoading(false));
-  }, [subjectId, timeframe]);
+  }, [subjectId, gradeId, timeframe]);
 
   useEffect(() => {
     setTableSubject('');
     setStruggleBand('all');
     setTableQuery('');
-  }, [subjectId, timeframe]);
+  }, [subjectId, gradeId, timeframe]);
 
   const subjectOptionsInData = useMemo(() => {
     const names = new Set(
@@ -76,7 +99,7 @@ export default function ConceptHeatmapPage() {
       if (tableSubject && entry.subject_name !== tableSubject) return false;
       if (!matchesStruggleBand(Number(entry.struggle_percentage) || 0, struggleBand)) return false;
       if (q) {
-        const blob = `${entry.topic_tag ?? ''} ${entry.concept_name ?? ''} ${entry.subject_name ?? ''}`.toLowerCase();
+        const blob = `${entry.topic_tag ?? ''} ${entry.concept_name ?? ''} ${entry.subject_name ?? ''} ${entry.grade_name ?? ''}`.toLowerCase();
         if (!blob.includes(q)) return false;
       }
       return true;
@@ -111,30 +134,48 @@ export default function ConceptHeatmapPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-6">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary-light flex items-center justify-center">
+          <div className="w-10 h-10 rounded-lg bg-primary-light flex items-center justify-center shrink-0">
             <Grid3X3 className="w-5 h-5 text-primary" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-primary-dark">Concept Heatmap</h1>
             <p className="text-sm text-slate-500">Identify topic areas where students struggle most.</p>
+            {gradeId ? (
+              <p className="text-xs text-primary-dark font-medium mt-1">
+                Cohort filter: learners enrolled at the grade you selected below.
+              </p>
+            ) : null}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <select
+            aria-label="Time range"
             value={timeframe}
             onChange={(e) => setTimeframe(e.target.value)}
-            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary min-w-[8.5rem]"
           >
             <option value="all">All Time</option>
             <option value="30d">Last 30 Days</option>
             <option value="7d">Last 7 Days</option>
           </select>
           <select
+            aria-label="Filter by grade"
+            value={gradeId}
+            onChange={(e) => setGradeId(e.target.value)}
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary min-w-[9.5rem]"
+          >
+            <option value="">All grades</option>
+            {gradeOptions.map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter by subject"
             value={subjectId}
             onChange={(e) => setSubjectId(e.target.value)}
-            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary min-w-[10rem]"
           >
             <option value="">All Subjects</option>
             {subjects.map((s) => (
@@ -213,7 +254,7 @@ export default function ConceptHeatmapPage() {
               type="search"
               value={tableQuery}
               onChange={(e) => setTableQuery(e.target.value)}
-              placeholder="Search topic, concept, subject…"
+              placeholder="Search topic, concept, subject, grade…"
               className="flex-1 min-w-[180px] border border-primary-light rounded-lg px-3 py-2 text-sm bg-white text-primary-dark placeholder:text-slate-400 focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none"
               aria-label="Search heatmap rows"
             />
@@ -242,6 +283,7 @@ export default function ConceptHeatmapPage() {
                     <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Topic</th>
                     <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Concept</th>
                     <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Grade</th>
                     <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Struggle %</th>
                     <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Affected</th>
                     <th className="text-center py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Avg Score</th>
@@ -260,6 +302,7 @@ export default function ConceptHeatmapPage() {
                         </td>
                         <td className="py-3 px-3 text-sm text-slate-600">{entry.concept_name}</td>
                         <td className="py-3 px-3 text-sm text-slate-500">{entry.subject_name}</td>
+                        <td className="py-3 px-3 text-sm text-slate-600">{entry.grade_name ?? '—'}</td>
                         <td className="py-3 px-3 text-center">
                           <div className="flex items-center justify-center gap-2">
                             <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">

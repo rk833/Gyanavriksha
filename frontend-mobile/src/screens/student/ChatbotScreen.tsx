@@ -6,13 +6,16 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -147,6 +150,7 @@ function Bubble({
   userLabel: string;
   profileImageUrl?: string | null;
 }) {
+  const [citationOpen, setCitationOpen] = useState(false);
   const isUser = message.role === 'user';
   const userInitial =
     userLabel.trim().length > 0 ? userLabel.trim().charAt(0).toUpperCase() : 'U';
@@ -179,12 +183,35 @@ function Bubble({
 
       <View style={[styles.bubbleWrap, isUser ? styles.bubbleWrapUser : styles.bubbleWrapBot]}>
         {!isUser && message.citation ? (
-          <View style={[styles.citationRow, { borderLeftColor: c.border }]}>
-            <MaterialIcons name="description" size={10} color={c.muted} />
-            <Text style={[styles.citationText, { color: c.muted }]} numberOfLines={1}>
-              Source: {message.citation}
-            </Text>
-          </View>
+          <>
+            <View style={[styles.citationRow, { borderLeftColor: c.border }]}>
+              <MaterialIcons name="description" size={10} color={c.muted} style={styles.citationIcon} />
+              <View style={styles.citationTextCol}>
+                <Text style={[styles.citationText, { color: c.muted }]} numberOfLines={2}>
+                  Source: {message.citation}
+                </Text>
+                <Pressable hitSlop={8} onPress={() => setCitationOpen(true)} style={styles.citationReadMoreHit}>
+                  <Text style={[styles.citationReadMore, { color: c.primary }]}>Read more</Text>
+                </Pressable>
+              </View>
+            </View>
+            <Modal transparent visible={citationOpen} animationType="fade" onRequestClose={() => setCitationOpen(false)}>
+              <View style={styles.citationModalRoot}>
+                <Pressable style={StyleSheet.absoluteFill} onPress={() => setCitationOpen(false)} accessibilityRole="button" accessibilityLabel="Close source dialog" />
+                <View style={[styles.citationModalCard, { backgroundColor: c.surface, borderColor: c.border }]}>
+                  <Text style={[styles.citationModalTitle, { color: c.primary }]}>Source</Text>
+                  <ScrollView style={styles.citationModalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+                    <Text style={[styles.citationModalBody, { color: c.text }]} selectable>
+                      {message.citation}
+                    </Text>
+                  </ScrollView>
+                  <TouchableOpacity style={[styles.citationModalClose, { backgroundColor: c.primarySoft }]} onPress={() => setCitationOpen(false)} activeOpacity={0.85}>
+                    <Text style={[styles.citationModalCloseLabel, { color: c.primary }]}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
+          </>
         ) : null}
 
         <View
@@ -248,6 +275,10 @@ function Bubble({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function ChatbotScreen() {
+  const { height: windowHeight } = useWindowDimensions();
+  const historyPanelMaxHeight = Math.min(360, Math.round(windowHeight * 0.44));
+  const historyListMaxHeight = Math.max(140, historyPanelMaxHeight - 126);
+
   const { get, post } = useApi();
   const { theme } = useAppTheme();
   const flatListRef = useRef<FlatList<Message>>(null);
@@ -768,10 +799,19 @@ export default function ChatbotScreen() {
 
         {/* ── History panel ── */}
         {showHistory && (
-          <View style={[styles.historyPanel, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
+          <View
+            style={[
+              styles.historyPanel,
+              {
+                backgroundColor: theme.colors.surface,
+                borderBottomColor: theme.colors.border,
+                maxHeight: historyPanelMaxHeight,
+              },
+            ]}
+          >
             <View style={styles.historyPanelHeader}>
               <Text style={[styles.historyPanelTitle, { color: theme.colors.primary }]}>Recent chats</Text>
-              <TouchableOpacity onPress={() => setShowHistory(false)}>
+              <TouchableOpacity onPress={() => setShowHistory(false)} hitSlop={10}>
                 <MaterialIcons name="close" size={18} color={theme.colors.muted} />
               </TouchableOpacity>
             </View>
@@ -785,7 +825,7 @@ export default function ChatbotScreen() {
                 onChangeText={setHistorySearch}
               />
               {historySearch.length > 0 ? (
-                <TouchableOpacity onPress={() => setHistorySearch('')}>
+                <TouchableOpacity onPress={() => setHistorySearch('')} hitSlop={10}>
                   <MaterialIcons name="close" size={14} color={theme.colors.muted} />
                 </TouchableOpacity>
               ) : null}
@@ -795,34 +835,43 @@ export default function ChatbotScreen() {
                 <ThinkingDots dotColor={theme.colors.inactive} />
               </View>
             ) : filteredSessions.length === 0 ? (
-              <View style={styles.historyEmpty}>
+              <View style={[styles.historyEmpty, { maxHeight: historyListMaxHeight }]}>
                 <MaterialIcons name="forum" size={26} color={theme.colors.inactive} />
                 <Text style={[styles.historyEmptyText, { color: theme.colors.muted }]}>
                   No matching chats
                 </Text>
               </View>
             ) : (
-              filteredSessions.slice(0, 10).map((s) => (
-                <TouchableOpacity
-                  key={s.history_id}
-                  style={[styles.historyItem, { borderTopColor: theme.colors.border }]}
-                  activeOpacity={0.85}
-                  onPress={() => void loadPastSession(s)}
-                >
-                  <View style={[styles.historyItemIcon, { backgroundColor: theme.colors.primarySoft }]}>
-                    <MaterialIcons name="chat-bubble-outline" size={14} color={theme.colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.historyItemPreview, { color: theme.colors.primary }]} numberOfLines={1}>
-                      {s.preview ?? s.subject_name ?? `Session ${s.history_id.slice(0, 8)}`}
-                    </Text>
-                    <Text style={[styles.historyItemDate, { color: theme.colors.muted }]}>
-                      {formatDate(s.updated_at)}
-                    </Text>
-                  </View>
-                  <MaterialIcons name="chevron-right" size={18} color={theme.colors.inactive} />
-                </TouchableOpacity>
-              ))
+              <ScrollView
+                style={[styles.historyListScroll, { maxHeight: historyListMaxHeight }]}
+                contentContainerStyle={styles.historyListContent}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
+                {filteredSessions.map((s) => (
+                  <TouchableOpacity
+                    key={s.history_id}
+                    style={[styles.historyItem, { borderTopColor: theme.colors.border }]}
+                    activeOpacity={0.85}
+                    onPress={() => void loadPastSession(s)}
+                    disabled={!!loadingSessionId}
+                  >
+                    <View style={[styles.historyItemIcon, { backgroundColor: theme.colors.primarySoft }]}>
+                      <MaterialIcons name="chat-bubble-outline" size={14} color={theme.colors.primary} />
+                    </View>
+                    <View style={styles.historyItemTextCol}>
+                      <Text style={[styles.historyItemPreview, { color: theme.colors.primary }]} numberOfLines={2}>
+                        {s.preview ?? s.subject_name ?? `Session ${s.history_id.slice(0, 8)}`}
+                      </Text>
+                      <Text style={[styles.historyItemMeta, { color: theme.colors.muted }]} numberOfLines={1}>
+                        {(s.subject_name ? `${s.subject_name} · ` : '') + formatDate(s.updated_at)}
+                      </Text>
+                    </View>
+                    <MaterialIcons name="chevron-right" size={18} color={theme.colors.inactive} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             )}
           </View>
         )}
@@ -1085,8 +1134,13 @@ const styles = StyleSheet.create({
   historyPanel: {
     borderBottomWidth: 1,
     paddingVertical: 4,
-    maxHeight: 320,
+    overflow: 'hidden',
+    ...(Platform.OS === 'android'
+      ? { elevation: 8, zIndex: 4 }
+      : { zIndex: 4, shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } }),
   },
+  historyListScroll: { flexGrow: 0 },
+  historyListContent: { flexGrow: 0, paddingBottom: 10 },
   historyPanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1118,8 +1172,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  historyItemPreview: { fontSize: 13, fontWeight: '700' },
-  historyItemDate: { fontSize: 10, marginTop: 1, fontWeight: '600' },
+  historyItemTextCol: { flex: 1, minWidth: 0 },
+  historyItemPreview: { fontSize: 13, fontWeight: '700', lineHeight: 18 },
+  historyItemMeta: { fontSize: 10, marginTop: 3, fontWeight: '600' },
   sessionLoadingBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1185,15 +1240,55 @@ const styles = StyleSheet.create({
   bubbleWrapBot: { alignItems: 'flex-start' },
   bubbleWrapUser: { alignItems: 'flex-end' },
 
+  citationModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 28,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  citationModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '72%',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
+  },
+  citationModalTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  citationModalScroll: { maxHeight: 280 },
+  citationModalBody: { fontSize: 14, lineHeight: 22, fontWeight: '500' },
+  citationModalClose: {
+    marginTop: 12,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  citationModalCloseLabel: { fontSize: 14, fontWeight: '800' },
+
   citationRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    alignItems: 'flex-start',
+    gap: 6,
     paddingLeft: 8,
     marginBottom: 5,
     borderLeftWidth: 2,
   },
-  citationText: { fontSize: 9, fontWeight: '600', maxWidth: 200 },
+  citationIcon: { marginTop: 2, flexShrink: 0 },
+  citationTextCol: { flex: 1, minWidth: 0 },
+  citationText: { fontSize: 10, fontWeight: '600', lineHeight: 15 },
+  citationReadMoreHit: { alignSelf: 'flex-start', marginTop: 4, paddingVertical: 2 },
+  citationReadMore: { fontSize: 11, fontWeight: '800' },
 
   bubble: {
     paddingHorizontal: 14,

@@ -834,6 +834,25 @@ class TestAtRiskStudents:
         assert data["total"] >= 1
         if data["total"] > 0:
             assert data["items"][0]["risk_score"] > 30
+            assert data["items"][0].get("grade_name")
+
+        # Wrong grade filter excludes the student
+        resp_other = client.get(
+            "/api/instructors/analytics/at-risk",
+            headers=_auth_header(token),
+            params={"grade_id": 999_999_999},
+        )
+        assert resp_other.status_code == 200
+        assert resp_other.json()["total"] == 0
+
+        # Matching grade filter still returns the student
+        resp_grade = client.get(
+            "/api/instructors/analytics/at-risk",
+            headers=_auth_header(token),
+            params={"grade_id": grade_id},
+        )
+        assert resp_grade.status_code == 200
+        assert resp_grade.json()["total"] >= 1
 
 
 # -- Phase 5 helpers --
@@ -960,6 +979,51 @@ class TestConceptHeatmap:
         assert len(data["heatmap_entries"]) >= 1
         assert data["heatmap_entries"][0]["topic_tag"] == "Calculus"
         assert data["teaching_insight"] is not None
+        assert "grade_name" in data["heatmap_entries"][0]
+
+    def test_heatmap_grade_query_filters_student_cohort(self):
+        """`grade_id` limits gaps/entries to students with that enrollment grade."""
+        email, instructor_id = _create_user("hm_gr_filt")
+        grade_enrolled, subject_id = _create_grade_and_subject("hm_gr_filt")
+
+        db = TestSession()
+        other = Grade(
+            grade_name=f"Grade Other {RUN_ID}_hmgf",
+            grade_level=5,
+            description="Other cohort",
+        )
+        db.add(other)
+        db.flush()
+        grade_other = other.grade_id
+        db.commit()
+        db.close()
+
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+        _, stu_id = _create_user("hm_gr_filt_stu", role="student")
+        _enroll_student(stu_id, grade_enrolled, subject_id)
+        sub_uuid = _create_submission(stu_id, assignment_id, subject_id, score=40.0, status_val=SubmissionProcessingStatus.DONE)
+        _create_knowledge_gap(stu_id, subject_id, sub_uuid, topic_tag="GradeFilterTopic", concept_name="X")
+
+        token = _login(email)
+
+        resp_match = client.get(
+            "/api/instructors/analytics/concept-heatmap",
+            headers=_auth_header(token),
+            params={"grade_id": grade_enrolled},
+        )
+        assert resp_match.status_code == 200
+        tags_match = [e["topic_tag"] for e in resp_match.json()["heatmap_entries"]]
+        assert "GradeFilterTopic" in tags_match
+
+        resp_nomatch = client.get(
+            "/api/instructors/analytics/concept-heatmap",
+            headers=_auth_header(token),
+            params={"grade_id": grade_other},
+        )
+        assert resp_nomatch.status_code == 200
+        tags_other = [e["topic_tag"] for e in resp_nomatch.json()["heatmap_entries"]]
+        assert "GradeFilterTopic" not in tags_other
 
     def test_heatmap_includes_chat_linked_gaps_without_submission(self):
         """Gaps from AI tutor (history_id → chat_history, no submission) must appear."""

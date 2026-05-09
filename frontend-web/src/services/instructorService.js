@@ -145,7 +145,7 @@ export const getVelocityAnalytics = (params = {}) =>
 /**
  * Fetch paginated at-risk students identified by the analytics engine.
  *
- * @param {{ subject_id?: number, page?: number, per_page?: number }} params
+ * @param {{ subject_id?: number, grade_id?: number, page?: number, per_page?: number }} params
  * @returns {Promise<import('./types').PaginatedResponse>}
  */
 export const getAtRiskStudents = (params = {}) =>
@@ -154,7 +154,7 @@ export const getAtRiskStudents = (params = {}) =>
 /**
  * Fetch concept heatmap data showing topic-level knowledge struggle areas.
  *
- * @param {{ subject_id?: number, timeframe?: '7d'|'30d'|'all' }} params
+ * @param {{ subject_id?: number, grade_id?: number, timeframe?: '7d'|'30d'|'all' }} params
  * @returns {Promise<import('./types').ConceptHeatmapResponse>}
  */
 export const getConceptHeatmap = (params = {}) =>

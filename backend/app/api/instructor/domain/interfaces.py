@@ -134,6 +134,7 @@ class IInstructorService(Protocol):
         db: Session,
         instructor_id: str,
         subject_id: "int | None",
+        grade_id: "int | None",
         page: int,
         per_page: int,
     ) -> "tuple[list, int]":
@@ -145,6 +146,7 @@ class IInstructorService(Protocol):
         db: Session,
         instructor_id: str,
         subject_id: "int | None",
+        grade_id: "int | None",
         timeframe: str,
     ) -> dict:
         """Return concept heatmap data for topic-level struggle analysis."""

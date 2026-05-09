@@ -71,7 +71,11 @@ def get_enrolled_subject_ids(db: Session, user_id: uuid.UUID) -> list[int]:
 def get_enrollment_completion(
     db: Session, user_id: uuid.UUID, subject_id: int
 ) -> float:
-    """Calculate completion percentage for a subject enrollment."""
+    """Calculate completion percentage for a subject enrollment.
+
+    Uses **distinct assignments** with at least one graded (done) submission, so repeated
+    resubmits for the same task do not push the percentage above 100%.
+    """
     total_assignments = (
         db.query(func.count(Assignment.assignment_id))
         .filter(
@@ -83,16 +87,21 @@ def get_enrollment_completion(
     if not total_assignments:
         return 0.0
 
-    graded_submissions = (
-        db.query(func.count(Submission.submission_id))
+    graded_distinct_assignments = (
+        db.query(func.count(func.distinct(Submission.assignment_id)))
+        .join(Assignment, Submission.assignment_id == Assignment.assignment_id)
         .filter(
             Submission.student_id == user_id,
-            Submission.subject_id == subject_id,
-            Submission.processing_status == "done",
+            Assignment.subject_id == subject_id,
+            Assignment.is_published == True,
+            Submission.processing_status == SubmissionProcessingStatus.DONE,
         )
         .scalar()
+        or 0
     )
-    return round((graded_submissions / total_assignments) * 100, 1)
+
+    pct = round((graded_distinct_assignments / total_assignments) * 100, 1)
+    return min(pct, 100.0)
 
 
 def get_student_dashboard_data(db: Session, user_id: uuid.UUID) -> dict:

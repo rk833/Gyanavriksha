@@ -45,7 +45,7 @@ export default function StudentAssignments() {
   const { user } = useAuth();
   const submittedSuccessRef = useRef(false);
   const [subjectFilter, setSubjectFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('open');
   const [dueDateFilter, setDueDateFilter] = useState('');
   const [page, setPage] = useState(1);
   const [uploadModal, setUploadModal] = useState(null);
@@ -372,8 +372,12 @@ export default function StudentAssignments() {
       ) : assignments.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-2xl border border-slate-100">
           <FileText className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-600 font-medium">No assignments yet</p>
-          <p className="text-xs text-slate-400 mt-1">Published work from your instructors will show here.</p>
+          <p className="text-slate-600 font-medium">No assignments found</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {statusFilter === 'open'
+              ? 'Nothing open right now — open the Status menu and choose All status or Closed.'
+              : 'Published work from your instructors will show here.'}
+          </p>
         </div>
       ) : (
         <div className="space-y-4">

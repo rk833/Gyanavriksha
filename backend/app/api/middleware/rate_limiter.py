@@ -11,6 +11,9 @@ frontend can surface quota information without issuing a separate request.
 The middleware fails open: if the Redis connection is unavailable the request
 is allowed through so an outage in the cache layer does not take down the API.
 
+Each handled request also bumps an aggregate Redis counter keyed by UTC minute
+(``metrics:rpm:{unix_minutes}``, TTL five minutes), used only for dashboards.
+
 Doc/schema routes (``/docs``, ``/redoc``, ``/openapi.json``) are exempt.
 Rate limiting is also skipped entirely when ``ENVIRONMENT == "testing"``.
 """
@@ -39,6 +42,22 @@ def _is_exempt(path: str) -> bool:
 def _build_key(client: str, window: int, method: str, route: str) -> str:
     """Build the Redis counter key for this client/window/endpoint combination."""
     return f"rate:{client}:{window}:{method}:{route}"
+
+
+AGGREGATE_RPM_PREFIX = "metrics:rpm:"
+"""Redis key prefix for total API requests counted per UTC minute bucket (see ``_bump_aggregate_rpm``)."""
+
+
+async def _bump_aggregate_rpm() -> None:
+    """Increment a global rolling counter for approximate requests-per-minute dashboards."""
+    bucket = int(time.time() // 60)
+    key = f"{AGGREGATE_RPM_PREFIX}{bucket}"
+    try:
+        n = await redis.incr(key)
+        if n == 1:
+            await redis.expire(key, 300)
+    except Exception:
+        pass
 
 
 def _rate_limit_headers(calls: int, count: int, reset_ts: int) -> dict:
@@ -75,6 +94,7 @@ async def rate_limit_middleware(request: Request, call_next):
         """
     if settings.ENVIRONMENT == "testing" or _is_exempt(request.url.path):
         return await call_next(request)
+    await _bump_aggregate_rpm()
     calls = settings.RATE_LIMIT_CALLS
     period = settings.RATE_LIMIT_PERIOD
     client = request.client.host

@@ -62,6 +62,32 @@
     background-color: #0b1220 !important;
   }
 
+  html[data-theme='dark'] .bg-surface,
+  html[data-theme='dark'] .bg-surface-container-lowest {
+    background-color: #111827 !important;
+  }
+
+  html[data-theme='dark'] .bg-surface-container-low {
+    background-color: #1f2937 !important;
+  }
+
+  html[data-theme='dark'] .bg-surface-container,
+  html[data-theme='dark'] .bg-surface-container-high {
+    background-color: #252f41 !important;
+  }
+
+  html[data-theme='dark'] .text-on-surface {
+    color: #e5e7eb !important;
+  }
+
+  html[data-theme='dark'] .text-on-surface-variant {
+    color: #b6c2d1 !important;
+  }
+
+  html[data-theme='dark'] .border-outline-variant {
+    border-color: #334155 !important;
+  }
+
   html[data-theme='dark'] .text-primary-dark,
   html[data-theme='dark'] .text-slate-900,
   html[data-theme='dark'] .text-slate-700,

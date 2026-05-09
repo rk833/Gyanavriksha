@@ -194,6 +194,7 @@ class AtRiskStudentResponse(BaseModel):
     student_id: uuid.UUID
     full_name: str
     email: str
+    grade_name: str | None = None
     risk_score: float = 0.0
     risk_factors: list[str] = []
     subjects_at_risk: list[str] = []
@@ -208,6 +209,7 @@ class ConceptHeatmapEntryResponse(BaseModel):
     topic_tag: str
     concept_name: str
     subject_name: str
+    grade_name: str | None = None
     struggle_percentage: float = 0.0
     affected_student_count: int = 0
     avg_score: float | None = None

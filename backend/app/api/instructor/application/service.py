@@ -321,6 +321,7 @@ def get_at_risk_students(
     db: Session,
     instructor_id: str,
     subject_id: "int | None",
+    grade_id: "int | None",
     page: int,
     per_page: int,
 ) -> PaginatedResponse[AtRiskStudentResponse]:
@@ -329,6 +330,7 @@ def get_at_risk_students(
         db,
         instructor_id,
         subject_id=subject_id,
+        grade_id=grade_id,
         page=page,
         per_page=per_page,
     )
@@ -341,6 +343,7 @@ def get_concept_heatmap(
     db: Session,
     instructor_id: str,
     subject_id: "int | None",
+    grade_id: "int | None",
     timeframe: str,
 ) -> ConceptHeatmapResponse:
     """Return concept heatmap data highlighting topic-level struggle areas."""
@@ -349,6 +352,7 @@ def get_concept_heatmap(
             db,
             instructor_id,
             subject_id=subject_id,
+            grade_id=grade_id,
             timeframe=timeframe,
         )
     )
