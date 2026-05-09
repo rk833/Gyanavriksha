@@ -5,6 +5,21 @@ Follow it slowly, one step at a time.
 
 ---
 
+## Wokwi Starter Diagram JSON
+
+If you want a quick simulator starter, use:
+
+- `iot/smart-desk/diagram.json`
+
+It currently includes:
+
+- ESP32 DevKit board
+- Serial monitor TX/RX wiring
+
+You can open that file in Wokwi and then add LDR, HC-SR04, and LED parts step by step using the same pin map from this guide.
+
+---
+
 ## 1) What You Are Building
 
 You will connect:

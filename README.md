@@ -30,8 +30,13 @@ This project targets **Students**, **Instructors**, and **Administrators** with 
 From the repository root (where `docker-compose.yml` lives):
 
 ```bash
-docker-compose up --build
+docker compose up --build -d
+docker compose exec backend uv run alembic upgrade head
+docker compose exec backend uv run python -m app.scripts.seed_demo_data
+docker compose exec backend uv run python -m app.scripts.index_curriculum_docs
 ```
+
+This starts containers in detached mode, applies migrations, seeds demo data, and indexes curriculum docs into ChromaDB.
 
 ### Stop services
 

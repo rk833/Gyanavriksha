@@ -1,0 +1,14 @@
+node_modules
+.expo
+android
+ios
+.git
+.gitignore
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+dist
+build
+.DS_Store
+Thumbs.db
