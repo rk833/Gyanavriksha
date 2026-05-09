@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -27,6 +28,10 @@ _ALLOWED_ATTACHMENT_TYPES = {
 def _safe_filename(name: str) -> str:
     stripped = re.sub(r"[^a-zA-Z0-9._-]+", "_", (name or "").strip())
     return stripped[:180] or "attachment"
+
+
+def _ticket_attachment_download_url(ticket_id: uuid.UUID) -> str:
+    return f"/api/support/admin/tickets/{ticket_id}/attachment"
 
 
 @router.post("/tickets", response_model=SupportTicketResponse, status_code=status.HTTP_201_CREATED)
@@ -166,10 +171,38 @@ def list_support_tickets(
             attachment_name=t.attachment_name,
             attachment_content_type=t.attachment_content_type,
             attachment_size_bytes=t.attachment_size_bytes,
+            attachment_download_url=(
+                _ticket_attachment_download_url(t.ticket_id)
+                if t.attachment_name and t.attachment_path
+                else None
+            ),
             created_at=t.created_at,
+            updated_at=t.updated_at,
         )
         for t in tickets
     ]
+
+
+@router.get("/admin/tickets/{ticket_id}/attachment")
+def get_ticket_attachment(
+    ticket_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    ticket = db.query(SupportTicket).filter(SupportTicket.ticket_id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not ticket.attachment_path or not ticket.attachment_name:
+        raise HTTPException(status_code=404, detail="No attachment found for this ticket")
+
+    file_path = Path(ticket.attachment_path)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Attachment file not found on server")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=ticket.attachment_content_type or "application/octet-stream",
+        filename=ticket.attachment_name,
+    )
 
 
 @router.patch("/admin/tickets/{ticket_id}")

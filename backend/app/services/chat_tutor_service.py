@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.models.chat_history import ChatHistory
 from app.db.models.instructor_subject import InstructorSubject
 from app.db.models.subject import Subject
+from app.core.database import SessionLocal
 from app.services import chat_log_io
 from app.services import heatmap_service
 from app.services import quiz_service
@@ -20,6 +22,24 @@ from app.services import rag_service
 from app.services import student_service
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_post_chat_jobs(history_id: uuid.UUID) -> None:
+    """Run heavy post-chat jobs off the request path in a fresh DB session."""
+    db = SessionLocal()
+    try:
+        try:
+            await heatmap_service.process_chat_heatmap(db, history_id)
+        except Exception as exc:
+            logger.warning("Heatmap processing failed for chat %s: %s", history_id, exc)
+            db.rollback()
+        try:
+            await quiz_service.detect_gaps_for_quiz(db, history_id)
+        except Exception as exc:
+            logger.warning("Quiz gap detection failed for chat %s: %s", history_id, exc)
+            db.rollback()
+    finally:
+        db.close()
 
 
 def _update_summary_preview(chat: ChatHistory, answer_preview: str, turn_pairs: int) -> None:
@@ -44,6 +64,44 @@ async def tutor_chat_turn(
     grade: int | None,
 ) -> dict[str, Any]:
     """Run RAG for the student, optionally persist to ``ChatHistory`` and transcript file."""
+    chat: ChatHistory | None = None
+    rag_query = query
+
+    if history_id is not None:
+        chat = (
+            db.query(ChatHistory)
+            .filter(
+                ChatHistory.history_id == history_id,
+                ChatHistory.student_id == student_id,
+            )
+            .first()
+        )
+        if not chat:
+            raise ValueError("Chat session not found")
+        if subject_id is not None and chat.subject_id != subject_id:
+            raise ValueError("Subject does not match this chat session")
+
+        transcript = chat_log_io.load_transcript(chat.file_path)
+        turns = transcript.get("turns", [])
+        if isinstance(turns, list) and turns:
+            recent = [
+                t for t in turns
+                if t.get("role") in ("user", "assistant") and (t.get("content") or "").strip()
+            ][-6:]
+            if recent:
+                history_lines: list[str] = []
+                for t in recent:
+                    role = "Student" if t.get("role") == "user" else "Tutor"
+                    content = str(t.get("content") or "").strip()
+                    history_lines.append(f"{role}: {content}")
+                rag_query = (
+                    f"Current student message:\n{query.strip()}\n\n"
+                    "Recent conversation (oldest to newest):\n"
+                    f"{chr(10).join(history_lines)}\n\n"
+                    "Instruction: resolve pronouns like 'it/that/this' using the recent conversation, "
+                    "and answer the current student message."
+                )
+
     enrollment = None
     if subject_id is not None:
         enrollment = student_service.verify_student_enrollment(db, student_id, subject_id)
@@ -66,7 +124,7 @@ async def tutor_chat_turn(
 
     rag = await rag_service.query_rag(
         user_type="student",
-        query=query,
+        query=rag_query,
         grade=grade,
         subject=subject_name,
         instructor_id=instructor_id_for_subject,
@@ -88,21 +146,10 @@ async def tutor_chat_turn(
         }
 
     rel_path: str
-    chat: ChatHistory
 
     if history_id is not None:
-        chat = (
-            db.query(ChatHistory)
-            .filter(
-                ChatHistory.history_id == history_id,
-                ChatHistory.student_id == student_id,
-            )
-            .first()
-        )
-        if not chat:
+        if chat is None:
             raise ValueError("Chat session not found")
-        if chat.subject_id != subject_id:
-            raise ValueError("Subject does not match this chat session")
         rel_path = chat.file_path
         chat_log_io.append_exchange(rel_path, query, answer, src_strings)
         data = chat_log_io.load_transcript(rel_path)
@@ -127,14 +174,8 @@ async def tutor_chat_turn(
 
     db.commit()
     db.refresh(chat)
-    try:
-        await heatmap_service.process_chat_heatmap(db, chat.history_id)
-    except Exception as exc:
-        logger.warning("Heatmap processing failed for chat %s: %s", chat.history_id, exc)
-    try:
-        await quiz_service.detect_gaps_for_quiz(db, chat.history_id)
-    except Exception as exc:
-        logger.warning("Quiz gap detection failed for chat %s: %s", chat.history_id, exc)
+    # Run expensive analytics/gap jobs in background so chat replies return quickly.
+    asyncio.create_task(_run_post_chat_jobs(chat.history_id))
 
     return {
         "answer": answer,

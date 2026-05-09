@@ -23,7 +23,9 @@ class SupportTicketAdminItem(BaseModel):
     attachment_name: str | None = None
     attachment_content_type: str | None = None
     attachment_size_bytes: int | None = None
+    attachment_download_url: str | None = None
     created_at: datetime
+    updated_at: datetime
 
 
 class SupportTicketCreateForm(BaseModel):

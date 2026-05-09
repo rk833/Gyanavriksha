@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getSecurityOverview, getSecurityEvents, runIntegrityAudit } from '../../services/adminService';
+import { fmtDateTime } from '../../utils/dateUtils';
 
 const SEVERITY_BY_EVENT = {
   LOGIN_FAILED: 'warning',
@@ -49,6 +50,26 @@ function buildEvents(raw) {
     severity: SEVERITY_BY_EVENT[e.event_type] ?? 'info',
     time_ago: timeAgo(e.timestamp),
   }));
+}
+
+function formatAuditTime(value) {
+  if (value == null || value === '') return '—';
+  if (typeof value === 'number') {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? '—' : value.toLocaleString();
+  }
+  const raw = String(value).trim();
+  // Backward compatibility: previously stored as "YYYY-MM-DD HH:MM:SS UTC".
+  const legacyUtc = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC$/.exec(raw);
+  if (legacyUtc) {
+    const normalized = `${legacyUtc[1]}T${legacyUtc[2]}Z`;
+    const d = new Date(normalized);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+  }
+  return fmtDateTime(raw);
 }
 
 function CircularScore({ score }) {
@@ -223,7 +244,7 @@ function IntegrityCard({ overview, auditResult, onRunAudit, running, onViewLogs 
         <div>
           <p className="text-xs text-primary-light uppercase tracking-wider mb-1">Last Audit Time</p>
           <p className="font-medium text-white text-sm">
-            {typeof auditTime === 'string' ? (() => { const h = auditTime.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(auditTime); return new Date(h ? auditTime : auditTime + 'Z').toLocaleString(); })() : new Date(auditTime).toLocaleString()}
+            {formatAuditTime(auditTime)}
           </p>
         </div>
       </div>

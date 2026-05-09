@@ -50,6 +50,8 @@ export default function Login() {
     return from.startsWith(rolePrefix) ? from : dashboard;
   };
 
+  const normalizeRole = (role) => String(role || '').trim().toLowerCase();
+
   const suggestTwoFactorIfDisabled = (user) => {
     const has2fa = user?.totp_enabled === true || user?.email_2fa_enabled === true;
     if (!has2fa) {
@@ -124,9 +126,14 @@ export default function Login() {
         setTwoFAUserId(data.user_id);
         toast.success('Enter a verification code to continue');
       } else {
-        const actualRole = data.user?.role;
+        const actualRole = normalizeRole(data.user?.role);
         if (!actualRole) {
           toast.error('Could not determine account role');
+          await logout();
+          return;
+        }
+        if (actualRole !== normalizeRole(selectedRole)) {
+          toast.error(`This account is ${actualRole}. Please select ${actualRole} role to sign in.`);
           await logout();
           return;
         }
@@ -156,9 +163,16 @@ export default function Login() {
     setLoading(true);
     try {
       const data = await complete2FA(email.trim(), twoFAUserId, twoFACode, verifyMethod, rememberDevice3Days);
-      const actualRole = data.user?.role;
+      const actualRole = normalizeRole(data.user?.role);
       if (!actualRole) {
         toast.error('Could not determine account role');
+        await logout();
+        setNeeds2FA(false);
+        setTwoFACode('');
+        return;
+      }
+      if (actualRole !== normalizeRole(selectedRole)) {
+        toast.error(`This account is ${actualRole}. Please select ${actualRole} role to sign in.`);
         await logout();
         setNeeds2FA(false);
         setTwoFACode('');

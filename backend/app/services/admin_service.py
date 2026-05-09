@@ -1915,6 +1915,19 @@ def get_security_overview(db: Session) -> dict:
     ingest_rejected = int(_get_setting(db, "iot_ingest_rejected") or 0)
     integrity_violations = int(_get_setting(db, "iot_integrity_violations") or 0)
     last_audit = _get_setting(db, "last_integrity_audit")
+    if isinstance(last_audit, dict) and not last_audit.get("audit_time"):
+        latest_audit_log = (
+            db.query(AuditLog.created_at)
+            .filter(AuditLog.action == "INTEGRITY_AUDIT_RUN")
+            .order_by(AuditLog.created_at.desc())
+            .first()
+        )
+        if latest_audit_log and latest_audit_log[0]:
+            ts = latest_audit_log[0]
+            last_audit = {
+                **last_audit,
+                "audit_time": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            }
     threshold = int(_get_setting(db, "rate_limit_threshold") or 2500)
     return {
         "jwt_rbac_status": _build_rbac_status(db),

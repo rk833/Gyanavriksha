@@ -48,6 +48,10 @@ class RAGService:
             "Answer directly, clearly, and helpfully — as a good teacher would. "
             "Do NOT say 'Based on the provided text' or 'According to the context'. "
             "Just answer naturally. "
+            "When the user asks a follow-up like 'it', 'that', 'this', or 'tell me more', "
+            "use the recent conversation in the input to resolve what it refers to. "
+            "Stay focused on that resolved topic and do not switch to unrelated textbook sections. "
+            "If the reference is genuinely ambiguous, ask one short clarifying question. "
             "If the student asks to list units, chapters, or topics, list them all that appear in the context. "
             "If the information is not in the context, say you don't have that detail yet and suggest "
             "the student check their textbook for the full list. "
@@ -57,6 +61,11 @@ class RAGService:
             ("system", system_prompt),
             ("human", "{input}"),
         ])
+        # Keep chat latency predictable: retrieve enough context for quality,
+        # but cap payload size before LLM invocation.
+        self.retriever_k = 8
+        self.retriever_fetch_k = 32
+        self.max_context_docs = 12
 
     def get_collection(self, user_type: str, grade: Optional[int] = None, instructor_id: Optional[str] = None, class_id: Optional[str] = None, student_id: Optional[str] = None):
         if user_type == "admin":
@@ -188,7 +197,7 @@ class RAGService:
                         )
                     )
 
-            search_kwargs: dict = {"k": 15, "fetch_k": 80}
+            search_kwargs: dict = {"k": self.retriever_k, "fetch_k": self.retriever_fetch_k}
             if base_filter:
                 search_kwargs["filter"] = base_filter
             docs.extend(
@@ -241,6 +250,10 @@ class RAGService:
             except Exception:
                 # Keep chat resilient even if grade collection is unavailable.
                 pass
+
+        # Bound final context passed to the LLM to reduce generation latency.
+        if len(context_docs) > self.max_context_docs:
+            context_docs = context_docs[: self.max_context_docs]
 
         question_answer_chain = create_stuff_documents_chain(self.llm, self.prompt)
         response = question_answer_chain.invoke({"input": request.query, "context": context_docs})

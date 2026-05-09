@@ -53,6 +53,7 @@ function TicketDetailModal({ ticket, onClose, onStatusChange, updating, adminNam
   const [selectedStatus, setSelectedStatus] = useState(ticket.status);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
+  const [openingAttachment, setOpeningAttachment] = useState(false);
 
   const handleSave = () => {
     if (selectedStatus !== ticket.status) {
@@ -90,16 +91,53 @@ function TicketDetailModal({ ticket, onClose, onStatusChange, updating, adminNam
     });
   };
 
+  const formatBytes = (bytes) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return 'Unknown size';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const attachmentUrl = ticket.attachment_download_url || null;
+
+  const handleOpenAttachment = async () => {
+    if (!attachmentUrl) {
+      toast.error('Attachment URL is missing');
+      return;
+    }
+    setOpeningAttachment(true);
+    try {
+      const response = await api.get(attachmentUrl, { responseType: 'blob' });
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.download = ticket.attachment_name || 'attachment';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Could not open attachment');
+    } finally {
+      setOpeningAttachment(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-start justify-between p-6 border-b border-slate-100">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/35 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-[121] bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 z-20 flex items-start justify-between p-6 border-b border-slate-200/70 bg-white/70 backdrop-blur-xl">
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
               Ticket #{String(ticket.ticket_id).slice(0, 8).toUpperCase()}
             </p>
             <h2 className="text-lg font-bold text-slate-900 leading-snug">{ticket.subject}</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Created {formatDate(ticket.created_at)}{ticket.updated_at ? ` • Updated ${formatDate(ticket.updated_at)}` : ''}
+            </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors ml-4 flex-shrink-0">
             <X className="w-5 h-5" />
@@ -145,17 +183,40 @@ function TicketDetailModal({ ticket, onClose, onStatusChange, updating, adminNam
           </div>
 
           {/* Attachment */}
-          {ticket.attachment_name && (
-            <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-100 rounded-xl">
-              <Paperclip className="w-4 h-4 text-blue-500 flex-shrink-0" />
-              <span className="text-sm text-blue-700 font-medium truncate">{ticket.attachment_name}</span>
-              {ticket.attachment_size_bytes && (
-                <span className="text-xs text-blue-400 ml-auto flex-shrink-0">
-                  {(ticket.attachment_size_bytes / 1024).toFixed(1)} KB
-                </span>
-              )}
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Attachment</p>
+            {ticket.attachment_name ? (
+              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-white text-blue-600 border border-blue-200 flex items-center justify-center">
+                    <Paperclip className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm text-blue-900 font-semibold truncate">{ticket.attachment_name}</p>
+                    <p className="text-xs text-blue-700">
+                      {formatBytes(ticket.attachment_size_bytes)}{ticket.attachment_content_type ? ` • ${ticket.attachment_content_type}` : ''}
+                    </p>
+                  </div>
+                  {attachmentUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenAttachment()}
+                      disabled={openingAttachment}
+                      className="ml-auto inline-flex items-center rounded-lg bg-white border border-blue-200 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {openingAttachment ? 'Opening…' : 'Open File'}
+                    </button>
+                  ) : (
+                    <span className="ml-auto text-xs font-medium text-amber-600">File unavailable</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                No attachment provided.
+              </div>
+            )}
+          </div>
 
           {/* Reply */}
           <div className="border border-slate-200 rounded-xl overflow-hidden">
