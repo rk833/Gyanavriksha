@@ -1372,6 +1372,25 @@ def _device_to_response_dict(device: IotDevice, student_name: str | None = None)
     }
 
 
+def _effective_device_status(
+    device: IotDevice,
+    *,
+    now: datetime | None = None,
+    stale_after: timedelta = timedelta(seconds=30),
+) -> str:
+    """Return freshness-aware device status used by admin dashboards."""
+    raw = (device.status or "offline").strip().lower()
+    if raw != "online":
+        return raw
+    ts = device.last_seen_at
+    if ts is None:
+        return "offline"
+    ref = now or datetime.now(timezone.utc)
+    if (ref - ts) > stale_after:
+        return "offline"
+    return "online"
+
+
 def node_id_exists(db: Session, node_id: str) -> bool:
     """Return True if a non-decommissioned device with the given node_id already exists."""
     return (
@@ -1393,8 +1412,6 @@ def list_iot_devices(
 ) -> dict:
     """Return paginated device list with network summary stats."""
     query = db.query(IotDevice).filter(IotDevice.status != "decommissioned")
-    if status:
-        query = query.filter(IotDevice.status == status)
     if device_type:
         query = query.filter(IotDevice.device_type == device_type)
     if node_id:
@@ -1402,10 +1419,19 @@ def list_iot_devices(
     if location:
         query = query.filter(IotDevice.location.ilike(f"%{location}%"))
 
-    total_count = query.count()
-    devices = query.offset((page - 1) * per_page).limit(per_page).all()
+    all_devices = query.order_by(IotDevice.registered_at.desc()).all()
+    now = datetime.now(timezone.utc)
+    summary_devices = list(all_devices)
+    status_filter = (status or "").strip().lower()
+    if status_filter:
+        all_devices = [d for d in all_devices if _effective_device_status(d, now=now) == status_filter]
 
-    active_nodes = db.query(IotDevice).filter(IotDevice.status == "online").count()
+    total_count = len(all_devices)
+    start = max((page - 1) * per_page, 0)
+    end = start + per_page
+    devices = all_devices[start:end]
+
+    active_nodes = sum(1 for d in summary_devices if _effective_device_status(d, now=now) == "online")
     threshold = datetime.now(timezone.utc) - timedelta(hours=24)
     alerts_count = (
         db.query(IotDevice)
@@ -1424,6 +1450,7 @@ def list_iot_devices(
     for device in devices:
         s_name = student_map.get(str(device.assigned_student_id)) if device.assigned_student_id else None
         row = _device_to_response_dict(device, s_name)
+        row["status"] = _effective_device_status(device, now=now)
         last_light = (
             db.query(SensorLog)
             .filter(SensorLog.device_id == device.device_id, SensorLog.sensor_type == "ldr")
@@ -1589,8 +1616,10 @@ def update_iot_device_status(
 
 def get_iot_network_health(db: Session) -> dict:
     """Return overall IoT network health KPIs."""
-    total = db.query(IotDevice).filter(IotDevice.status != "decommissioned").count()
-    online = db.query(IotDevice).filter(IotDevice.status == "online").count()
+    devices = db.query(IotDevice).filter(IotDevice.status != "decommissioned").all()
+    total = len(devices)
+    now = datetime.now(timezone.utc)
+    online = sum(1 for d in devices if _effective_device_status(d, now=now) == "online")
     threshold = datetime.now(timezone.utc) - timedelta(hours=24)
     alerts = (
         db.query(IotDevice)

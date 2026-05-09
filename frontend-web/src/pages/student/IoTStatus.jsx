@@ -8,7 +8,8 @@ import {
 import { getIotStatus } from '../../services/studentService';
 import { getWebSocketOrigin } from '../../lib/wsOrigin';
 
-const POLL_INTERVAL_MS = 45_000;
+const POLL_INTERVAL_MS = 15_000;
+const DEVICE_STALE_MS = 30_000;
 
 const QUERY_KEY_IOT_STATUS = ['student', 'iot-status'];
 
@@ -65,6 +66,15 @@ function formatRelative(isoStr) {
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function isFreshHeartbeat(isoStr) {
+  if (!isoStr) return false;
+  const hasOff = isoStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(isoStr);
+  const d = new Date(hasOff ? isoStr : `${isoStr}Z`);
+  const ms = d.getTime();
+  if (Number.isNaN(ms)) return false;
+  return Date.now() - ms <= DEVICE_STALE_MS;
 }
 
 function getPostureLabel(cm) {
@@ -203,13 +213,17 @@ export default function IoTStatus() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const devices = data?.devices || [];
+  const devices = (data?.devices || []).map((d) => ({
+    ...d,
+    status: d.status === 'online' && !isFreshHeartbeat(d.last_seen_at) ? 'offline' : d.status,
+  }));
   const distCm = data?.latest_distance_cm ?? null;
   const ldrVal = data?.latest_ldr_value ?? null;
   const ledOn = data?.latest_led_activated ?? null;
   const distAt = data?.latest_distance_at;
   const ldrAt = data?.latest_ldr_at;
   const connected = devices.some((d) => d.status === 'online');
+  const hasRegisteredDevice = devices.length > 0;
 
   const posture = getPostureLabel(distCm);
   const presence = getPresenceLabel(distCm);
@@ -268,6 +282,16 @@ export default function IoTStatus() {
         <div className="flex items-center gap-3 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
           <span>Could not load IoT data. Make sure your device is connected and try refreshing.</span>
+        </div>
+      )}
+
+      {/* Device disconnected banner */}
+      {!isPending && !isError && hasRegisteredDevice && !connected && (
+        <div className="flex items-center gap-3 p-4 rounded-2xl bg-orange-50 border border-orange-200 text-orange-800 text-sm">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span>
+            Physical IoT device is disconnected (offline). Power on your ESP32 and reconnect to Wi-Fi/MQTT.
+          </span>
         </div>
       )}
 

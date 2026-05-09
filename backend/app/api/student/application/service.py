@@ -624,8 +624,15 @@ def get_ai_tutor_session(
 
 def get_iot_status(db: Session, student_id: uuid.UUID) -> dict:
     """Return latest sensor readings and IoT devices linked to the current student."""
+    from datetime import datetime, timedelta, timezone
+
     from app.db.models.iot_device import IotDevice
     from app.db.models.sensor_log import SensorLog
+
+    # Device is considered offline if no heartbeat/telemetry for this duration.
+    # Keeps UI from showing stale "online" state after physical disconnection.
+    stale_after = timedelta(seconds=30)
+    now = datetime.now(timezone.utc)
 
     devices = (
         db.query(IotDevice)
@@ -667,12 +674,16 @@ def get_iot_status(db: Session, student_id: uuid.UUID) -> dict:
     device_list = []
     for d in devices:
         did_str = str(d.device_id)
+        effective_status = d.status
+        if d.status == "online":
+            if not d.last_seen_at or (now - d.last_seen_at) > stale_after:
+                effective_status = "offline"
         device_list.append({
             "device_id": did_str,
             "node_id": d.node_id,
             "device_label": d.device_label,
             "device_type": d.device_type,
-            "status": d.status,
+            "status": effective_status,
             "is_active": d.is_active,
             "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
             "firmware_version": d.firmware_version,
