@@ -41,11 +41,11 @@ cd ai-service
 uv venv .venv
 uv sync
 
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Open:
 
-- `http://localhost:8000/docs`
-- `http://localhost:8000/health`
+- `http://localhost:8001/docs`
+- `http://localhost:8001/health`
 

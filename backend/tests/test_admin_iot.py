@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -66,6 +67,7 @@ def _create_device(node_id: str, admin_id, status: str = "offline") -> IotDevice
         mqtt_topic_prefix=f"iot/{node_id}",
         device_mac=":".join(uuid.uuid4().hex[:12][i : i + 2] for i in range(0, 12, 2)),
         status=status,
+        last_seen_at=datetime.now(timezone.utc) if status == "online" else None,
         registered_by=admin_id,
     )
     db.add(device)

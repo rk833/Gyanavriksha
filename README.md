@@ -30,8 +30,13 @@ This project targets **Students**, **Instructors**, and **Administrators** with 
 From the repository root (where `docker-compose.yml` lives):
 
 ```bash
-docker-compose up --build
+docker compose up --build -d
+docker compose exec backend uv run alembic upgrade head
+docker compose exec backend uv run python -m app.scripts.seed_demo_data
+docker compose exec backend uv run python -m app.scripts.index_curriculum_docs
 ```
+
+This starts containers in detached mode, applies migrations, seeds demo data, and indexes curriculum docs into ChromaDB.
 
 ### Stop services
 
@@ -89,7 +94,7 @@ uv venv .venv
 uv sync
 
 # Start AI service
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### Frontend Web (local)
@@ -107,6 +112,38 @@ cd frontend-mobile
 npm install
 npm start
 ```
+
+#### Physical Android device (recommended for microphone / speech features)
+
+Use a development build instead of Expo Go:
+
+```bash
+cd frontend-mobile
+npx expo run:android --device
+```
+
+If Metro is not reachable from your phone, set your machine LAN IP before running:
+
+```bash
+# Git Bash
+export REACT_NATIVE_PACKAGER_HOSTNAME=192.168.110.123
+npx expo run:android --device
+```
+
+```powershell
+# PowerShell
+$env:REACT_NATIVE_PACKAGER_HOSTNAME="192.168.110.123"
+npx expo run:android --device
+```
+
+Also set mobile API base URL in `frontend-mobile/.env`:
+
+```env
+EXPO_PUBLIC_API_BASE_URL=http://192.168.110.123:8000
+```
+
+> Replace `192.168.110.123` with your computer's current LAN IP.
+> For this project, microphone speech input works in dev build and not in Expo Go.
 
 ### Notes
 

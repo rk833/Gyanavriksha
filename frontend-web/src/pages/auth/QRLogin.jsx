@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import QRCode from 'react-qr-code';
 import { QrCode, Loader2, ArrowLeft, RefreshCw, CheckCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import AuthLayout from '../../layouts/AuthLayout';
+import useAuth from '../../hooks/useAuth';
 
 export default function QRLogin() {
   const navigate = useNavigate();
+  const { fetchUser } = useAuth();
   const pollRef = useRef(null);
 
   const [sessionId, setSessionId] = useState('');
@@ -44,14 +47,23 @@ export default function QRLogin() {
         if (data.status === 'scanned') {
           setStatus('scanned');
         } else if (data.status === 'authenticated') {
-          clearInterval(pollRef.current);
-          setStatus('authenticated');
-          if (data.access_token) {
+          if (data.access_token && data.refresh_token) {
+            clearInterval(pollRef.current);
+            setStatus('authenticated');
             localStorage.setItem('access_token', data.access_token);
             localStorage.setItem('refresh_token', data.refresh_token);
+            try {
+              await fetchUser();
+            } catch {
+              /* fetchUser clears user on failure */
+            }
+            toast.success('Signed in successfully');
+            navigate('/student/dashboard', { replace: true });
+          } else {
+            clearInterval(pollRef.current);
+            setStatus('expired');
+            toast.error('This QR sign-in was already used. Generate a new code.');
           }
-          toast.success('Signed in successfully');
-          setTimeout(() => navigate('/student/dashboard', { replace: true }), 1000);
         } else if (data.status === 'expired') {
           clearInterval(pollRef.current);
           setStatus('expired');
@@ -59,12 +71,12 @@ export default function QRLogin() {
       } catch {
         // Ignore polling errors
       }
-    }, 2000);
+    }, 1500);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [sessionId, status, navigate]);
+  }, [sessionId, status, navigate, fetchUser]);
 
   useEffect(() => {
     if (status !== 'pending' && status !== 'scanned') return;
@@ -132,9 +144,10 @@ export default function QRLogin() {
     <AuthLayout>
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-primary-light p-8">
         <div className="text-center mb-6">
-          <h2 className="text-2xl font-bold text-primary-dark">Scan to Sign In</h2>
+          <h2 className="text-2xl font-bold text-primary-dark">Sign in on the web</h2>
           <p className="text-slate-500 mt-1">
-            Use the Gyanavriksha mobile app to scan this QR code and log in instantly.
+            Log in with your student account on the mobile app, then scan this code to open the web portal on this
+            computer.
           </p>
         </div>
 
@@ -149,12 +162,8 @@ export default function QRLogin() {
               <p className="text-sm">Failed to load</p>
             </div>
           ) : (
-            <div className="relative">
-              <div className="p-2 border-2 border-primary-light rounded-lg">
-                <div className="w-52 h-52 bg-white flex items-center justify-center">
-                  <QrCode className="w-32 h-32 text-primary-dark" />
-                </div>
-              </div>
+            <div className="relative inline-flex p-3 border-2 border-primary-light rounded-lg bg-white">
+              <QRCode value={qrData} size={208} level="M" />
               <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-primary rounded-tl" />
               <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-primary rounded-tr" />
               <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-primary rounded-bl" />
@@ -171,7 +180,7 @@ export default function QRLogin() {
               1
             </span>
             <p className="text-sm text-slate-600">
-              Open the <strong>Gyanavriksha</strong> mobile app on your device
+              Sign in on the app with your <strong>student</strong> email and password (or quick sign-in)
             </p>
           </div>
           <div className="flex items-center gap-3 p-3">
@@ -179,7 +188,7 @@ export default function QRLogin() {
               2
             </span>
             <p className="text-sm text-slate-600">
-              Tap <strong>Scan QR</strong> from the app home screen
+              Open <strong>Scan QR for web login</strong> on the login screen
             </p>
           </div>
           <div className="flex items-center gap-3 p-3">

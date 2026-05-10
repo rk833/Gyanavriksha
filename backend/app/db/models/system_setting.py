@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Integer, String, Text
 
@@ -14,7 +14,7 @@ class SystemSetting(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )
     updated_at = Column(DateTime(timezone=True), nullable=True)

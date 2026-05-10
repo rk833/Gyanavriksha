@@ -8,7 +8,7 @@ client = TestClient(app)
 
 @pytest.fixture
 def heatmap_service():
-    with patch("app.heatmap.service.ChatGoogleGenerativeAI"):
+    with patch("app.heatmap.service.ChatVertexAI"):
         return HeatmapService()
 
 @pytest.mark.asyncio
@@ -23,7 +23,7 @@ async def test_heatmap_service_generate_summary():
         ]
     }
     
-    with patch("app.heatmap.service.ChatGoogleGenerativeAI"):
+    with patch("app.heatmap.service.ChatVertexAI"):
         service = HeatmapService()
         
         # Build a mock chain that supports: prompt | llm | parser → chain.ainvoke(...)
@@ -87,7 +87,7 @@ def test_process_chat_heatmap_endpoint(mock_heatmap_service):
     app.dependency_overrides = {}
 
 def test_heatmap_service_initialization():
-    with patch("app.heatmap.service.ChatGoogleGenerativeAI") as mock_llm:
+    with patch("app.heatmap.service.ChatVertexAI") as mock_llm:
         service = HeatmapService()
         assert service.llm is not None
         assert service.parser is not None

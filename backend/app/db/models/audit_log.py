@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy import BigInteger, Column, DateTime, Enum as SAEnum, ForeignKey, String, Text
@@ -21,6 +21,6 @@ class AuditLog(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   Upload,
   FileText,
@@ -146,6 +147,8 @@ export default function KnowledgeBasePage() {
   const [loading, setLoading] = useState(true);
   const [subjects, setSubjects] = useState([]);
   const [showUpload, setShowUpload] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const page = Number(searchParams.get('page')) || 1;
   const subjectFilter = searchParams.get('subject_id') || '';
@@ -174,14 +177,18 @@ export default function KnowledgeBasePage() {
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
   useEffect(() => { getSubjects().then((r) => setSubjects(r.data || [])).catch(() => {}); }, []);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this document?')) return;
+  const handleDelete = async () => {
+    if (!deleteTarget?.id) return;
+    setDeleting(true);
     try {
-      await deleteDocument(id);
+      await deleteDocument(deleteTarget.id);
       toast.success('Document deleted');
+      setDeleteTarget(null);
       fetchDocs();
     } catch {
       toast.error('Failed to delete');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -303,9 +310,9 @@ export default function KnowledgeBasePage() {
               }`}>
                 {doc.doc_type === 'curriculum_pdf' ? 'Curriculum' : 'Note'}
               </span>
-              <span className="text-xs text-slate-400">{new Date(doc.created_at).toLocaleDateString()}</span>
+              <span className="text-xs text-slate-400">{fmtDate(doc.created_at)}</span>
               <button
-                onClick={() => handleDelete(doc.doc_id)}
+                onClick={() => setDeleteTarget({ id: doc.doc_id, fileName: doc.file_name })}
                 className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition"
                 title="Delete"
               >
@@ -336,6 +343,49 @@ export default function KnowledgeBasePage() {
           onClose={() => setShowUpload(false)}
           onUploaded={() => { setShowUpload(false); fetchDocs(); }}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !deleting && setDeleteTarget(null)} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl border border-primary-light">
+            <div className="p-5 border-b border-primary-light">
+              <h3 className="text-lg font-bold text-primary-dark">Delete document?</h3>
+              <p className="mt-1 text-sm text-slate-500">This action cannot be undone.</p>
+            </div>
+            <div className="p-5">
+              <div className="rounded-lg bg-red-50 border border-red-100 p-3 text-sm text-red-800 break-words">
+                {deleteTarget.fileName}
+              </div>
+            </div>
+            <div className="p-5 pt-0 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleDelete}
+                className="px-4 py-2 rounded-lg text-sm bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-50"
+              >
+                {deleting ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting...
+                  </span>
+                ) : (
+                  'Delete'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

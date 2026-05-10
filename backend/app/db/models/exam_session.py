@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, SmallInteger, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, SmallInteger, String, Text
 
 from app.db.base import Base
 
@@ -20,3 +20,4 @@ class ExamSession(Base):
     pause_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
     total_paused_seconds = Column(Integer, nullable=False, default=0, server_default="0")
     absence_alert_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    ended_reason = Column(Text, nullable=True)

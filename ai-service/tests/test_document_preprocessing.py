@@ -25,21 +25,22 @@ def test_extract_text_txt(tmp_path):
 def test_extract_text_pdf(mock_pdf_reader):
     mock_instance = MagicMock()
     mock_page = MagicMock()
-    mock_page.extract_text.return_value = "pdf content"
+    # Must be >= 30 meaningful chars so _is_watermark_only() returns False
+    mock_page.extract_text.return_value = "This is the extracted pdf content from the document page."
     mock_instance.pages = [mock_page]
     mock_pdf_reader.return_value = mock_instance
-    
+
     preprocessor = DocumentPreprocessor()
     text = preprocessor.extract_text("test.pdf")
-    assert "pdf content" in text
+    assert "extracted pdf content" in text
 
-@patch("app.rag.document_preprocessing.docx.Document")
+@patch("app.rag.document_preprocessing.docx")
 def test_extract_text_docx(mock_docx):
     mock_instance = MagicMock()
     mock_para = MagicMock()
     mock_para.text = "docx content"
     mock_instance.paragraphs = [mock_para]
-    mock_docx.return_value = mock_instance
+    mock_docx.Document.return_value = mock_instance
     
     preprocessor = DocumentPreprocessor()
     text = preprocessor.extract_text("test.docx")

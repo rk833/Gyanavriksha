@@ -75,7 +75,8 @@ async function attemptTokenRefresh() {
   return data.access_token;
 }
 
-const SKIP_REFRESH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh'];
+const SKIP_REFRESH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/auth/2fa/email/send'];
+const AI_TUTOR_CHAT_PATH = '/api/students/ai-tutor/chat';
 
 /**
  * Derive a human-readable wait message from the X-RateLimit-Reset header.
@@ -94,6 +95,7 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const isAiTutorChat = originalRequest?.url?.includes(AI_TUTOR_CHAT_PATH);
     if (error.response?.status === 429) {
       const message = buildRateLimitMessage(error.response);
       return Promise.reject(Object.assign(error, { rateLimitMessage: message }));
@@ -106,23 +108,46 @@ api.interceptors.response.use(
       return new Promise((resolve, reject) => {
         failedQueue.push({ resolve, reject });
       }).then((token) => {
+        originalRequest.headers = originalRequest.headers || {};
         originalRequest.headers.Authorization = `Bearer ${token}`;
         return api(originalRequest);
       });
     }
     originalRequest._retry = true;
     isRefreshing = true;
+    let newToken;
     try {
-      const newToken = await attemptTokenRefresh();
+      newToken = await attemptTokenRefresh();
       processQueue(null, newToken);
-      originalRequest.headers.Authorization = `Bearer ${newToken}`;
-      return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
       clearTokensAndRedirect();
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
+    }
+
+    originalRequest.headers = originalRequest.headers || {};
+    originalRequest.headers.Authorization = `Bearer ${newToken}`;
+
+    try {
+      return await api(originalRequest);
+    } catch (retryError) {
+      // Mid-request expiry edge case:
+      // after a successful refresh, retry AI tutor chat once more.
+      if (
+        isAiTutorChat &&
+        retryError.response?.status === 401 &&
+        !originalRequest._aiTutorPostRefreshRetry
+      ) {
+        originalRequest._aiTutorPostRefreshRetry = true;
+        const latestToken = localStorage.getItem('access_token');
+        if (latestToken) {
+          originalRequest.headers.Authorization = `Bearer ${latestToken}`;
+        }
+        return api(originalRequest);
+      }
+      return Promise.reject(retryError);
     }
   }
 );

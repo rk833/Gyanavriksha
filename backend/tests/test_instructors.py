@@ -19,6 +19,7 @@ from app.db.models.student_enrollment import StudentEnrollment
 from app.db.models.subject import Subject
 from app.db.models.submission import Submission
 from app.db.models.user import User
+from app.db.models.chat_history import ChatHistory
 from app.db.models.concept_heatmap_entry import ConceptHeatmapEntry
 from app.db.models.curriculum_document import CurriculumDocument
 from app.db.models.knowledge_gap import KnowledgeGap
@@ -833,6 +834,25 @@ class TestAtRiskStudents:
         assert data["total"] >= 1
         if data["total"] > 0:
             assert data["items"][0]["risk_score"] > 30
+            assert data["items"][0].get("grade_name")
+
+        # Wrong grade filter excludes the student
+        resp_other = client.get(
+            "/api/instructors/analytics/at-risk",
+            headers=_auth_header(token),
+            params={"grade_id": 999_999_999},
+        )
+        assert resp_other.status_code == 200
+        assert resp_other.json()["total"] == 0
+
+        # Matching grade filter still returns the student
+        resp_grade = client.get(
+            "/api/instructors/analytics/at-risk",
+            headers=_auth_header(token),
+            params={"grade_id": grade_id},
+        )
+        assert resp_grade.status_code == 200
+        assert resp_grade.json()["total"] >= 1
 
 
 # -- Phase 5 helpers --
@@ -853,16 +873,49 @@ def _create_knowledge_gap(student_id, subject_id, submission_id, topic_tag="Alge
     return gap_id
 
 
-def _create_heatmap_entry(subject_id, grade_id, topic_tag="Geometry", concept_name="Triangles"):
+def _create_chat_history(student_id, subject_id, history_id=None):
+    """Minimal ChatHistory row (links tutor AI gaps via knowledge_gaps.history_id)."""
+    db = TestSession()
+    hid = history_id or uuid.uuid4()
+    ch = ChatHistory(
+        history_id=hid,
+        student_id=student_id,
+        subject_id=subject_id,
+        file_path="uploads/chat_logs/test_session.log",
+        summary=None,
+    )
+    db.add(ch)
+    db.commit()
+    db.close()
+    return hid
+
+
+def _create_knowledge_gap_from_chat(student_id, subject_id, history_id, topic_tag="TutorTopic", concept_name="Chat gap"):
+    db = TestSession()
+    gap = KnowledgeGap(
+        student_id=student_id,
+        subject_id=subject_id,
+        submission_id=None,
+        history_id=history_id,
+        topic_tag=topic_tag,
+        concept_name=concept_name,
+    )
+    db.add(gap)
+    db.commit()
+    gap_id = gap.gap_id
+    db.close()
+    return gap_id
+
+
+def _create_heatmap_entry(student_id, subject_id, grade_id, topic_tag="Geometry", concept_name="Triangles"):
     db = TestSession()
     entry = ConceptHeatmapEntry(
+        student_id=student_id,
         subject_id=subject_id,
         grade_id=grade_id,
         topic_tag=topic_tag,
         concept_name=concept_name,
         occurrence_count=5,
-        affected_student_count=3,
-        severity_score=75.0,
     )
     db.add(entry)
     db.commit()
@@ -926,6 +979,71 @@ class TestConceptHeatmap:
         assert len(data["heatmap_entries"]) >= 1
         assert data["heatmap_entries"][0]["topic_tag"] == "Calculus"
         assert data["teaching_insight"] is not None
+        assert "grade_name" in data["heatmap_entries"][0]
+
+    def test_heatmap_grade_query_filters_student_cohort(self):
+        """`grade_id` limits gaps/entries to students with that enrollment grade."""
+        email, instructor_id = _create_user("hm_gr_filt")
+        grade_enrolled, subject_id = _create_grade_and_subject("hm_gr_filt")
+
+        db = TestSession()
+        other = Grade(
+            grade_name=f"Grade Other {RUN_ID}_hmgf",
+            grade_level=5,
+            description="Other cohort",
+        )
+        db.add(other)
+        db.flush()
+        grade_other = other.grade_id
+        db.commit()
+        db.close()
+
+        _assign_instructor(instructor_id, subject_id)
+        assignment_id = _create_assignment(instructor_id, subject_id)
+        _, stu_id = _create_user("hm_gr_filt_stu", role="student")
+        _enroll_student(stu_id, grade_enrolled, subject_id)
+        sub_uuid = _create_submission(stu_id, assignment_id, subject_id, score=40.0, status_val=SubmissionProcessingStatus.DONE)
+        _create_knowledge_gap(stu_id, subject_id, sub_uuid, topic_tag="GradeFilterTopic", concept_name="X")
+
+        token = _login(email)
+
+        resp_match = client.get(
+            "/api/instructors/analytics/concept-heatmap",
+            headers=_auth_header(token),
+            params={"grade_id": grade_enrolled},
+        )
+        assert resp_match.status_code == 200
+        tags_match = [e["topic_tag"] for e in resp_match.json()["heatmap_entries"]]
+        assert "GradeFilterTopic" in tags_match
+
+        resp_nomatch = client.get(
+            "/api/instructors/analytics/concept-heatmap",
+            headers=_auth_header(token),
+            params={"grade_id": grade_other},
+        )
+        assert resp_nomatch.status_code == 200
+        tags_other = [e["topic_tag"] for e in resp_nomatch.json()["heatmap_entries"]]
+        assert "GradeFilterTopic" not in tags_other
+
+    def test_heatmap_includes_chat_linked_gaps_without_submission(self):
+        """Gaps from AI tutor (history_id → chat_history, no submission) must appear."""
+        email, instructor_id = _create_user("hm_chatgap")
+        grade_id, subject_id = _create_grade_and_subject("hm_chatgap")
+        _assign_instructor(instructor_id, subject_id)
+
+        _, stu_id = _create_user("hm_chatgap_stu", role="student")
+        _enroll_student(stu_id, grade_id, subject_id)
+        hid = _create_chat_history(stu_id, subject_id)
+        _create_knowledge_gap_from_chat(
+            stu_id, subject_id, hid, topic_tag="TutorAlgebra", concept_name="From chat session"
+        )
+
+        token = _login(email)
+        resp = client.get("/api/instructors/analytics/concept-heatmap", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        tags = [e["topic_tag"] for e in data["heatmap_entries"]]
+        assert "TutorAlgebra" in tags
 
     def test_heatmap_with_precomputed_entries(self):
         email, instructor_id = _create_user("hm_pre")
@@ -934,7 +1052,7 @@ class TestConceptHeatmap:
 
         _, stu_id = _create_user("hm_pre_stu", role="student")
         _enroll_student(stu_id, grade_id, subject_id)
-        _create_heatmap_entry(subject_id, grade_id, topic_tag="Stats", concept_name="Mean & Median")
+        _create_heatmap_entry(stu_id, subject_id, grade_id, topic_tag="Stats", concept_name="Mean & Median")
 
         token = _login(email)
         resp = client.get("/api/instructors/analytics/concept-heatmap", headers=_auth_header(token))

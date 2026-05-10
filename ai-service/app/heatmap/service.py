@@ -1,9 +1,10 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 import os
+from app.core.google_auth import configure_google_credentials
 
 class ConceptProficiency(BaseModel):
     concept_name: str
@@ -18,7 +19,8 @@ class ChatHeatmapSummary(BaseModel):
 
 class HeatmapService:
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1)
+        configure_google_credentials()
+        self.llm = ChatVertexAI(model_name="gemini-2.5-flash", temperature=0.1)
         
         self.parser = JsonOutputParser(pydantic_object=ChatHeatmapSummary)
         

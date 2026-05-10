@@ -9,8 +9,8 @@
 #define MQTT_USER ""
 #define MQTT_PASSWORD ""
 
-#define DEVICE_ID "smart-desk-001"
-#define DEVICE_API_KEY "your_device_api_key"
+#define DEVICE_ID "ESP32-Aayush"
+#define DEVICE_API_KEY "yLo6RWMl_0_l136wfb1epKAByHIEBfFUAsLg7IkeS2I"
 #define FIRMWARE_VERSION "0.2.0"
 
 #define TOPIC_LIGHT "gyanavriksha/devices/" DEVICE_ID "/sensors/light"

@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { fmtDateTime } from '../../utils/dateUtils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cpu, MapPin, Copy, ChevronRight, ChevronLeft, MoreVertical,
@@ -9,6 +11,7 @@ import toast from 'react-hot-toast';
 import {
   listIotDevices, registerDevice, getIotHealth, getIotDevice, updateIotDevice,
   decommissionDevice, regenerateDeviceKey, updateDeviceStatus, getIotAlerts,
+  getUsers,
 } from '../../services/adminService';
 
 const DEVICE_TYPE_BADGE = {
@@ -41,49 +44,97 @@ function StatusBadge({ status }) {
 
 function ActionsMenu({ device, onDecommission, onRegenerate, onViewDetail, onEdit }) {
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState({});
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuHeight = 170;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < menuHeight
+      ? rect.top - menuHeight + window.scrollY
+      : rect.bottom + window.scrollY + 4;
+    setMenuStyle({
+      position: 'absolute',
+      top,
+      left: rect.right - 192 + window.scrollX,
+      width: 192,
+      zIndex: 9999,
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (btnRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const menu = open ? createPortal(
+    <div ref={menuRef} style={menuStyle} className="bg-white border border-slate-200 rounded-lg shadow-xl py-1">
+      <button
+        onClick={() => { setOpen(false); onViewDetail(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+      >
+        <Eye className="w-4 h-4" /> View Details
+      </button>
+      <button
+        onClick={() => { setOpen(false); onEdit(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+      >
+        <Pencil className="w-4 h-4" /> Edit
+      </button>
+      <button
+        onClick={() => { setOpen(false); onRegenerate(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+      >
+        <RefreshCw className="w-4 h-4" /> Regenerate Key
+      </button>
+      <div className="border-t border-slate-100 my-1" />
+      <button
+        onClick={() => { setOpen(false); onDecommission(device); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 flex items-center gap-2 text-red-600"
+      >
+        <X className="w-4 h-4" /> Decommission
+      </button>
+    </div>,
+    document.body,
+  ) : null;
 
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} className="p-1 rounded hover:bg-slate-100">
+      <button ref={btnRef} onClick={() => setOpen((v) => !v)} className="p-1 rounded hover:bg-slate-100">
         <MoreVertical className="w-4 h-4 text-slate-500" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-7 z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-48 py-1">
-          <button
-            onClick={() => { setOpen(false); onViewDetail(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-          >
-            <Eye className="w-4 h-4" /> View Details
-          </button>
-          <button
-            onClick={() => { setOpen(false); onEdit(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-          >
-            <Pencil className="w-4 h-4" /> Edit
-          </button>
-          <button
-            onClick={() => { setOpen(false); onRegenerate(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-          >
-            <RefreshCw className="w-4 h-4" /> Regenerate Key
-          </button>
-          <div className="border-t border-slate-100 my-1" />
-          <button
-            onClick={() => { setOpen(false); onDecommission(device); }}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 flex items-center gap-2 text-red-600"
-          >
-            <X className="w-4 h-4" /> Decommission
-          </button>
-        </div>
-      )}
+      {menu}
     </div>
   );
 }
 
 function EditDeviceModal({ device, onClose, onSuccess }) {
-  const [form, setForm] = useState({ location: device.location ?? '', description: device.description ?? '' });
+  const [form, setForm] = useState({
+    location: device.location ?? '',
+    description: device.description ?? '',
+    assigned_student_id: device.assigned_student_id ? String(device.assigned_student_id) : '',
+  });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const { data: studentsData } = useQuery({
+    queryKey: ['admin', 'users', 'students'],
+    queryFn: async () => {
+      const res = await getUsers({ role: 'student', per_page: 200 });
+      return res.data?.users || [];
+    },
+  });
+  const students = studentsData || [];
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -108,6 +159,21 @@ function EditDeviceModal({ device, onClose, onSuccess }) {
         </div>
         <p className="text-xs text-slate-500 mb-4">Node: <span className="font-mono font-semibold text-primary-dark">{device.node_id}</span></p>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Assign to Student</label>
+            <select
+              value={form.assigned_student_id}
+              onChange={(e) => set('assigned_student_id', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">— Unassigned —</option>
+              {students.map((s) => (
+                <option key={s.user_id} value={s.user_id}>
+                  {s.full_name} ({s.email})
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
             <input
@@ -202,7 +268,7 @@ function DeviceDetailModal({ deviceId, onClose }) {
               </div>
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Last Seen</p>
-                <p className="text-slate-600">{detail?.last_seen_at ? new Date(detail.last_seen_at).toLocaleString() : 'Never'}</p>
+                <p className="text-slate-600">{fmtDateTime(detail?.last_seen_at) || 'Never'}</p>
               </div>
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Status</p>
@@ -254,7 +320,7 @@ function DeviceDetailModal({ deviceId, onClose }) {
                     <tbody className="divide-y divide-slate-50">
                       {telemetry.map((t, i) => (
                         <tr key={i} className="hover:bg-slate-50/50">
-                          <td className="px-3 py-2 text-slate-500">{t.recorded_at ? new Date(t.recorded_at).toLocaleString() : '—'}</td>
+                          <td className="px-3 py-2 text-slate-500">{fmtDateTime(t.recorded_at)}</td>
                           <td className="px-3 py-2 text-slate-600">{t.sensor_type ?? '—'}</td>
                           <td className="px-3 py-2 font-mono text-primary-dark">{t.ldr_value != null ? t.ldr_value : '—'}</td>
                           <td className="px-3 py-2 font-mono text-slate-600">{t.distance_cm != null ? `${t.distance_cm} cm` : '—'}</td>
@@ -568,7 +634,7 @@ export default function DeviceManagement() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-primary-light bg-slate-50">
-              {['Node ID', 'Device Type', 'Location', 'Snapshots', 'Status', 'Last Seen', 'Actions'].map((h) => (
+              {['Node ID', 'Device Type', 'Location', 'Assigned To', 'Snapshots', 'Status', 'Last Seen', 'Actions'].map((h) => (
                 <th key={h} className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -576,14 +642,14 @@ export default function DeviceManagement() {
           <tbody className="divide-y divide-slate-50">
             {isLoading && (
               <tr>
-                <td colSpan={7} className="text-center py-12">
+                <td colSpan={8} className="text-center py-12">
                   <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto" />
                 </td>
               </tr>
             )}
             {!isLoading && devices.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center py-12 text-slate-400 text-sm">No devices registered</td>
+                <td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No devices registered</td>
               </tr>
             )}
             {devices.map((d) => (
@@ -595,7 +661,12 @@ export default function DeviceManagement() {
                 <td className="px-4 py-3"><DeviceTypeBadge type={d.device_type} /></td>
                 <td className="px-4 py-3 text-slate-500 flex items-center gap-1">
                   <MapPin className="w-3.5 h-3.5 shrink-0" />
-                  {d.location ?? '—'}
+                  {d.location || '—'}
+                </td>
+                <td className="px-4 py-3 text-xs text-slate-600">
+                  {d.assigned_student_name
+                    ? <span className="bg-primary-light text-primary-dark font-semibold px-2 py-0.5 rounded-full">{d.assigned_student_name}</span>
+                    : <span className="text-slate-400">Unassigned</span>}
                 </td>
                 <td className="px-4 py-3 text-xs text-slate-500">
                   <div>Light: {d.latest_light != null ? d.latest_light : '—'}</div>
@@ -603,7 +674,7 @@ export default function DeviceManagement() {
                   <div>Alert: {d.latest_alert ?? 'none'}</div>
                 </td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
-                <td className="px-4 py-3 text-slate-400 text-xs">{d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Never'}</td>
+                <td className="px-4 py-3 text-slate-400 text-xs">{fmtDateTime(d.last_seen_at) || 'Never'}</td>
                 <td className="px-4 py-3">
                   <ActionsMenu
                     device={d}
@@ -715,7 +786,7 @@ export default function DeviceManagement() {
                   <span className="text-slate-500"> · {a.event_type}</span>
                   <span className="text-slate-400"> · {a.message}</span>
                 </div>
-                <div className="text-slate-400">{new Date(a.recorded_at).toLocaleString()}</div>
+                <div className="text-slate-400">{fmtDateTime(a.recorded_at)}</div>
               </div>
             ))}
           </div>

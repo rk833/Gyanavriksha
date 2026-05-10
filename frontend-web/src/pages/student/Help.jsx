@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   HelpCircle,
   ChevronDown,
@@ -114,6 +115,8 @@ function FAQItem({ question, answer }) {
 }
 
 export default function StudentHelp() {
+  const navigate = useNavigate();
+
   return (
     <div className="max-w-4xl">
       <div className="flex items-center gap-3 mb-6">
@@ -164,7 +167,8 @@ export default function StudentHelp() {
             Email Support
           </a>
           <button
-            onClick={() => {}}
+            type="button"
+            onClick={() => navigate('/student/ai-tutor')}
             className="inline-flex items-center gap-2 bg-white/10 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-white/20 transition-colors border border-white/20"
           >
             <MessageSquare className="w-4 h-4" />

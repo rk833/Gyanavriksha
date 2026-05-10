@@ -27,6 +27,9 @@ class SubmissionDetailResponse(SubmissionListItem):
     image_path: str
     image_quality_score: float | None = None
     is_exam_submission: bool = False
+    assignment_description: str | None = None
+    assignment_max_score: float = 100.0
+    uploaded_files: list[dict] = []
     feedback: "SubmissionFeedbackResponse | None" = None
     knowledge_gaps: list["KnowledgeGapBrief"] | None = None
 
@@ -39,6 +42,11 @@ class SubmissionFeedbackResponse(BaseModel):
     rag_chunks_used: list[str] | None = None
     llm_model_used: str | None = None
     knowledge_gap_detected: bool = False
+    score_percentage: float | None = None
+    strengths: str | None = None
+    improvements: str | None = None
+    graded_by: uuid.UUID | None = None
+    ai_snapshot: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

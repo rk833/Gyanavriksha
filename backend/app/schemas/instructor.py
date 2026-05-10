@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +75,9 @@ class AssignmentCreateRequest(BaseModel):
     topic_tags: list[str] | None = None
     max_score: float = Field(100.0, gt=0)
     is_exam_mode: bool = False
+    exam_duration_minutes: int | None = Field(None, ge=1, le=600)
+    exam_max_pauses: int | None = Field(None, ge=0, le=30)
+    exam_strict_proctor: bool = False
 
 
 class AssignmentUpdateRequest(BaseModel):
@@ -83,6 +87,9 @@ class AssignmentUpdateRequest(BaseModel):
     topic_tags: list[str] | None = None
     max_score: float | None = Field(None, gt=0)
     is_exam_mode: bool | None = None
+    exam_duration_minutes: int | None = Field(None, ge=1, le=600)
+    exam_max_pauses: int | None = Field(None, ge=0, le=30)
+    exam_strict_proctor: bool | None = None
 
 
 class InstructorAssignmentResponse(BaseModel):
@@ -94,6 +101,9 @@ class InstructorAssignmentResponse(BaseModel):
     grade_name: str | None = None
     topic_tags: list[str] | None = None
     is_exam_mode: bool = False
+    exam_duration_minutes: int | None = None
+    exam_max_pauses: int | None = None
+    exam_strict_proctor: bool = False
     due_date: datetime | None = None
     is_published: bool = False
     max_score: float = 100.0
@@ -126,9 +136,11 @@ class InstructorSubmissionListItem(BaseModel):
     submission_id: uuid.UUID
     student_id: uuid.UUID
     student_name: str | None = None
+    student_email: str | None = None
     assignment_id: uuid.UUID
     assignment_title: str | None = None
     subject_name: str | None = None
+    assignment_instructor_name: str | None = None
     submitted_at: datetime
     processing_status: SubmissionProcessingStatus
     score_percentage: float | None = None
@@ -140,6 +152,7 @@ class InstructorSubmissionListItem(BaseModel):
 class InstructorSubmissionDetailResponse(InstructorSubmissionListItem):
     image_path: str
     student_email: str | None = None
+    uploaded_files: list[dict] = []
     feedback: "InstructorFeedbackResponse | None" = None
 
 
@@ -152,6 +165,7 @@ class InstructorFeedbackResponse(BaseModel):
     improvements: str | None = None
     instructor_comments: str | None = None
     graded_by: uuid.UUID | None = None
+    ai_snapshot: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -180,6 +194,7 @@ class AtRiskStudentResponse(BaseModel):
     student_id: uuid.UUID
     full_name: str
     email: str
+    grade_name: str | None = None
     risk_score: float = 0.0
     risk_factors: list[str] = []
     subjects_at_risk: list[str] = []
@@ -194,6 +209,7 @@ class ConceptHeatmapEntryResponse(BaseModel):
     topic_tag: str
     concept_name: str
     subject_name: str
+    grade_name: str | None = None
     struggle_percentage: float = 0.0
     affected_student_count: int = 0
     avg_score: float | None = None
@@ -233,7 +249,9 @@ class InstructorProfileResponse(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    is_email_verified: bool = False
     totp_enabled: bool = False
+    email_2fa_enabled: bool = False
     profile_image_url: str | None = None
     created_at: datetime
     subjects: list[InstructorSubjectResponse] = []
@@ -278,3 +296,57 @@ class InstructorSubjectDetailResponse(BaseModel):
     students_total_pages: int = 0
 
     model_config = {"from_attributes": True}
+
+
+# ── Live exam monitor (IoT + sessions) ──────────────────────────────────────
+
+
+class ExamMonitorAssignmentOption(BaseModel):
+    assignment_id: uuid.UUID
+    title: str
+    subject_name: str
+    grade_name: str | None = None
+    due_date: datetime | None = None
+
+
+class ExamMonitorStudentRow(BaseModel):
+    student_id: uuid.UUID
+    full_name: str
+    session_id: uuid.UUID | None = None
+    session_status: str
+    progress_pct: int
+    seconds_remaining: int | None = None
+    presence_label: str
+    posture_label: str
+    light_raw: float | None = None
+    device_online: bool
+    pause_count: int | None = None
+    absence_alerts: int | None = None
+    session_end_reason: str | None = None
+
+
+class ExamMonitorEventRow(BaseModel):
+    sent_at: datetime
+    student_id: uuid.UUID
+    student_name: str
+    category: str
+    description: str
+    status_label: str
+    event_kind: Literal["auto_pause", "exam_ended"] = "auto_pause"
+
+
+class ExamMonitorResponse(BaseModel):
+    assignments: list[ExamMonitorAssignmentOption]
+    selected_assignment_id: uuid.UUID | None = None
+    assignment_title: str | None = None
+    subject_name: str | None = None
+    grade_name: str | None = None
+    due_date: datetime | None = None
+    exam_duration_minutes: int | None = None
+    enrolled_total: int = 0
+    active_count: int = 0
+    paused_count: int = 0
+    submitted_count: int = 0
+    avg_seconds_remaining: float | None = None
+    students: list[ExamMonitorStudentRow] = []
+    events: list[ExamMonitorEventRow] = []

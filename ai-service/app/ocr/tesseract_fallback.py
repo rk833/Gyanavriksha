@@ -1,7 +1,7 @@
 import io
 import pytesseract
 from PIL import Image
-from ..preprocessing.image_processor import validate_image
+from ..preprocessing.image_processor import preprocess_image
 
 class TesseractService:
     """
@@ -20,17 +20,14 @@ class TesseractService:
             pytesseract.pytesseract.tesseract_cmd = path
 
     def extract_text(self, image_content: bytes) -> str:
-        """
-        Extracts text from image bytes using Tesseract.
-        """
-        # Validate the image first
-        if not validate_image(image_content):
-            print("TesseractService: Image validation failed.")
+        """Preprocess (resize if needed) then extract text with Tesseract."""
+        processed = preprocess_image(image_content)
+        if processed is None:
+            print("TesseractService: Image preprocessing failed.")
             return ""
 
         try:
-            # Convert bytes to PIL Image
-            image = Image.open(io.BytesIO(image_content))
+            image = Image.open(io.BytesIO(processed))
             
             # Perform OCR
             # --psm 3 is 'Fully automatic page segmentation, but no OSD (default)'

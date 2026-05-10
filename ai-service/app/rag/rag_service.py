@@ -1,13 +1,14 @@
 import os
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_classic.chains import create_retrieval_chain
+from langchain_google_vertexai import ChatVertexAI  # noqa: deprecated in LC3.2 but still functional
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from app.rag.chroma_client import chroma_manager
-from app.rag.document_preprocessing import get_document_preprocessor
+from app.rag.document_preprocessing import DocumentPreprocessor, get_document_preprocessor
+from app.core.google_auth import configure_google_credentials
 
 class DocumentUploadRequest(BaseModel):
     user_type: str  # admin, instructor, student
@@ -17,32 +18,54 @@ class DocumentUploadRequest(BaseModel):
     class_id: Optional[str] = None
     student_id: Optional[str] = None
     submitted_by: str
+    chunk_size: Optional[int] = None
 
 class QueryRequest(BaseModel):
     user_type: str  # admin, instructor, student
     query: str
     grade: Optional[int] = None
+    subject: Optional[str] = None
     instructor_id: Optional[str] = None
     class_id: Optional[str] = None
     student_id: Optional[str] = None
 
 class RAGService:
     def __init__(self):
-        # Using Gemini models via LangChain
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.3)
+        configure_google_credentials()
+        # Local embeddings — no API quota, runs on CPU, model downloaded once (~430 MB).
+        # BAAI/bge-base-en-v1.5 significantly outperforms MiniLM for retrieval on English text.
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-base-en-v1.5",
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        # Vertex AI is used only for the LLM (chat/generation), not embeddings.
+        self.llm = ChatVertexAI(model_name="gemini-2.5-flash", temperature=0.3)
         self.preprocessor = get_document_preprocessor()
         
         system_prompt = (
-            "You are an AI assistant for a learning platform. "
-            "Use the following pieces of retrieved context to answer the user's question. "
-            "If you don't know the answer, just say that you don't know. "
-            "Context: {context}"
+            "You are a friendly and knowledgeable AI tutor for a school learning platform in Nepal. "
+            "Students ask you questions about their curriculum, lessons, and subjects. "
+            "Answer directly, clearly, and helpfully — as a good teacher would. "
+            "Do NOT say 'Based on the provided text' or 'According to the context'. "
+            "Just answer naturally. "
+            "When the user asks a follow-up like 'it', 'that', 'this', or 'tell me more', "
+            "use the recent conversation in the input to resolve what it refers to. "
+            "Stay focused on that resolved topic and do not switch to unrelated textbook sections. "
+            "If the reference is genuinely ambiguous, ask one short clarifying question. "
+            "If the student asks to list units, chapters, or topics, list them all that appear in the context. "
+            "If the information is not in the context, say you don't have that detail yet and suggest "
+            "the student check their textbook for the full list. "
+            "\n\nContext from the curriculum:\n{context}"
         )
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("human", "{input}"),
         ])
+        # Keep chat latency predictable: retrieve enough context for quality,
+        # but cap payload size before LLM invocation.
+        self.retriever_k = 8
+        self.retriever_fetch_k = 32
+        self.max_context_docs = 12
 
     def get_collection(self, user_type: str, grade: Optional[int] = None, instructor_id: Optional[str] = None, class_id: Optional[str] = None, student_id: Optional[str] = None):
         if user_type == "admin":
@@ -61,9 +84,22 @@ class RAGService:
             raise ValueError(f"Unknown user type: {user_type}")
 
     def upload_document(self, file_path: str, request: DocumentUploadRequest):
-        chunks = self.preprocessor.process(file_path)
+        preprocessor = self.preprocessor
+        if request.chunk_size is not None:
+            preprocessor = DocumentPreprocessor(
+                chunk_size=max(64, min(2048, int(request.chunk_size))),
+                chunk_overlap=self.preprocessor.chunk_overlap,
+            )
+
+        raw_text = preprocessor.extract_text(file_path)
+        chunks = preprocessor.process(file_path)
         if not chunks:
             raise ValueError("No text could be extracted from the document.")
+
+        # Prepend a synthetic TOC chunk so "list all units" queries get full coverage.
+        toc = preprocessor.extract_toc(raw_text, source_name=os.path.basename(file_path))
+        if toc:
+            chunks = [toc] + chunks
 
         collection = self.get_collection(
             user_type=request.user_type,
@@ -100,42 +136,185 @@ class RAGService:
             
         ids = [f"{os.path.basename(file_path)}_{i}" for i in range(len(chunks))]
 
-        # Wrap the collection with Langchain's Chroma wrapper
         langchain_chroma = Chroma(
             client=chroma_manager.client,
             collection_name=collection.name,
             embedding_function=self.embeddings
         )
-        
+
+        # Local embeddings have no API quota — process all chunks in one shot.
         langchain_chroma.add_texts(texts=texts, metadatas=metadatas, ids=ids)
-        return {"status": "success", "chunks_added": len(chunks), "collection": collection.name}
+        ocr_summary = preprocessor.get_last_ocr_summary()
+        response = {
+            "status": "success",
+            "chunks_added": len(chunks),
+            "collection": collection.name,
+        }
+        if ocr_summary.get("used_ocr"):
+            images_total = int(ocr_summary.get("images_total", 0) or 0)
+            images_failed = int(ocr_summary.get("images_failed", 0) or 0)
+            response["ocr_summary"] = ocr_summary
+            response["partial_ocr"] = images_total > 0 and images_failed > 0
+        return response
 
     def query(self, request: QueryRequest):
-        collection = self.get_collection(
+        from langchain_core.documents import Document
+
+        # Subject filter — keeps cross-subject contamination low.
+        base_filter: dict | None = {"subject": request.subject} if request.subject else None
+
+        # Structural queries benefit from TOC chunks.
+        structural_keywords = (
+            "list", "all units", "all lessons", "all chapters",
+            "how many units", "how many lessons", "curriculum covers",
+            "what chapters", "what units", "what lessons",
+            "table of content", "topics covered",
+        )
+        is_structural = any(kw in request.query.lower() for kw in structural_keywords)
+
+        def _collect_docs_from_collection(collection_name: str) -> list[Document]:
+            langchain_chroma = Chroma(
+                client=chroma_manager.client,
+                collection_name=collection_name,
+                embedding_function=self.embeddings,
+            )
+            docs: list[Document] = []
+            if is_structural:
+                toc_where: dict = {"chunk_type": {"$eq": "toc"}}
+                if request.subject:
+                    toc_where = {
+                        "$and": [
+                            {"chunk_type": {"$eq": "toc"}},
+                            {"subject": {"$eq": request.subject}},
+                        ]
+                    }
+                toc_raw = langchain_chroma._collection.get(where=toc_where, limit=1)
+                if toc_raw and toc_raw.get("documents"):
+                    docs.append(
+                        Document(
+                            page_content=toc_raw["documents"][0],
+                            metadata=(toc_raw.get("metadatas") or [{}])[0],
+                        )
+                    )
+
+            search_kwargs: dict = {"k": self.retriever_k, "fetch_k": self.retriever_fetch_k}
+            if base_filter:
+                search_kwargs["filter"] = base_filter
+            docs.extend(
+                langchain_chroma.as_retriever(
+                    search_type="mmr",
+                    search_kwargs=search_kwargs,
+                ).invoke(request.query)
+            )
+            return docs
+
+        context_docs: list[Document] = []
+        seen_content: set[str] = set()
+
+        # Primary namespace for the requester.
+        primary = self.get_collection(
             user_type=request.user_type,
             grade=request.grade,
             instructor_id=request.instructor_id,
             class_id=request.class_id,
-            student_id=request.student_id
+            student_id=request.student_id,
         )
-        
-        langchain_chroma = Chroma(
-            client=chroma_manager.client,
-            collection_name=collection.name,
-            embedding_function=self.embeddings
-        )
-        
-        retriever = langchain_chroma.as_retriever(search_kwargs={"k": 4})
-        
+        for doc in _collect_docs_from_collection(primary.name):
+            if doc.page_content not in seen_content:
+                context_docs.append(doc)
+                seen_content.add(doc.page_content)
+
+        # Student queries can also use the instructor's subject collection when provided.
+        if (
+            request.user_type == "student"
+            and request.instructor_id
+            and request.class_id
+        ):
+            instructor_collection = chroma_manager.get_or_create_instructor_collection(
+                request.instructor_id,
+                request.class_id,
+            )
+            for doc in _collect_docs_from_collection(instructor_collection.name):
+                if doc.page_content not in seen_content:
+                    context_docs.append(doc)
+                    seen_content.add(doc.page_content)
+
+        # Also include grade-level curriculum collection for student queries.
+        if request.user_type == "student" and request.grade:
+            try:
+                curriculum_collection = chroma_manager.get_admin_collection(request.grade)
+                for doc in _collect_docs_from_collection(curriculum_collection.name):
+                    if doc.page_content not in seen_content:
+                        context_docs.append(doc)
+                        seen_content.add(doc.page_content)
+            except Exception:
+                # Keep chat resilient even if grade collection is unavailable.
+                pass
+
+        # Bound final context passed to the LLM to reduce generation latency.
+        if len(context_docs) > self.max_context_docs:
+            context_docs = context_docs[: self.max_context_docs]
+
         question_answer_chain = create_stuff_documents_chain(self.llm, self.prompt)
-        rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-        
-        response = rag_chain.invoke({"input": request.query})
+        response = question_answer_chain.invoke({"input": request.query, "context": context_docs})
         
         return {
-            "answer": response["answer"],
+            "answer": response,
             "context_sources": [
-                {"text": doc.page_content, **doc.metadata} 
-                for doc in response["context"]
-            ]
+                {"text": doc.page_content, **doc.metadata}
+                for doc in context_docs
+            ],
         }
+
+    def get_collection_stats(self) -> dict[str, Any]:
+        """Return live Chroma collection stats with per-subject chunk counts."""
+        collections = self._list_collections()
+        total_chunks = sum(item["chunk_count"] for item in collections)
+        return {
+            "collections": collections,
+            "total_collections": len(collections),
+            "total_chunks": total_chunks,
+        }
+
+    def export_collection_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-safe snapshot of live Chroma collections."""
+        return self.get_collection_stats()
+
+    def create_collection(self, name: str, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Create a Chroma collection if absent and return its basic stats."""
+        safe_name = (name or "").strip().replace("-", "_")
+        if not safe_name:
+            raise ValueError("Collection name is required.")
+        col = chroma_manager.client.get_or_create_collection(name=safe_name, metadata=metadata or {})
+        return {
+            "name": col.name,
+            "chunk_count": int(col.count() or 0),
+            "metadata": getattr(col, "metadata", None) or {},
+        }
+
+    def _list_collections(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for col in chroma_manager.client.list_collections():
+            collection = chroma_manager.client.get_collection(col.name)
+            chunk_count = int(collection.count() or 0)
+            subject_counts: dict[str, int] = {}
+            try:
+                raw = collection.get(include=["metadatas"])
+                for meta in raw.get("metadatas") or []:
+                    if not isinstance(meta, dict):
+                        continue
+                    subject = meta.get("subject")
+                    if isinstance(subject, str) and subject.strip():
+                        subject_counts[subject] = subject_counts.get(subject, 0) + 1
+            except Exception:
+                # Keep stats endpoint resilient even if metadata fetch fails.
+                pass
+            rows.append(
+                {
+                    "name": col.name,
+                    "chunk_count": chunk_count,
+                    "metadata": getattr(col, "metadata", None) or {},
+                    "subject_counts": subject_counts,
+                }
+            )
+        return rows

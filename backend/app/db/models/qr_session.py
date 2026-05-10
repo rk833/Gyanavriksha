@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, String
+from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, String, Text
 
 from app.db.base import Base
 from app.shared.source_enum import QrSessionStatus
@@ -22,10 +22,12 @@ class QrSession(Base):
     status = Column(SAEnum(QrSessionStatus, name="qr_session_status"), nullable=False)
     scanned_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    web_access_token = Column(Text, nullable=True)
+    web_refresh_token = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )
 

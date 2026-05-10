@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -13,10 +14,17 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Controller, useForm } from 'react-hook-form';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE_URL } from '../../config/api';
+import { completeBiometricSignIn, getBiometricTypeLabel } from '../../services/biometricAuth';
+import {
+  clearTwoFactorTrustForEmail,
+  setLastLoginEmail,
+  twoFactorTrustStorageKey,
+} from '../../utils/twoFactorTrust';
 
 type LoginFormValues = {
   email: string;
@@ -36,6 +44,37 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function LoginScreen({ navigation, onLoginSuccess, initialMessage }: LoginScreenProps) {
   const [submitError, setSubmitError] = useState<string | null>(initialMessage ?? null);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [biometricLabel, setBiometricLabel] = useState('Biometric');
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [twoFactorNudgeToken, setTwoFactorNudgeToken] = useState<string | null>(null);
+
+  const refreshBiometricLabel = useCallback(() => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+    void getBiometricTypeLabel().then(setBiometricLabel);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshBiometricLabel();
+    }, [refreshBiometricLabel])
+  );
+
+  const onBiometricLogin = async () => {
+    setSubmitError(null);
+    setBiometricBusy(true);
+    try {
+      const result = await completeBiometricSignIn();
+      if (result.ok) {
+        onLoginSuccess?.(result.accessToken);
+        return;
+      }
+      setSubmitError(result.message);
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
 
   const {
     control,
@@ -53,17 +92,38 @@ export default function LoginScreen({ navigation, onLoginSuccess, initialMessage
     setSubmitError(null);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
-        email: email.trim(),
-        password,
-      });
+      const normalizedEmail = email.trim().toLowerCase();
+      let trusted_device_token: string | null = null;
+      try {
+        trusted_device_token = await SecureStore.getItemAsync(twoFactorTrustStorageKey(normalizedEmail));
+      } catch {
+        trusted_device_token = null;
+      }
+
+      const body: Record<string, string> = { email: email.trim(), password };
+      if (trusted_device_token) {
+        body.trusted_device_token = trusted_device_token;
+      }
+
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, body);
 
       const requiresTwoFactor = response.data?.requires_2fa === true;
       const userId = response.data?.user_id;
 
       if (requiresTwoFactor) {
+        if (trusted_device_token) {
+          await clearTwoFactorTrustForEmail(normalizedEmail);
+        }
         if (navigation && typeof userId === 'string' && userId.length > 0) {
-          navigation.navigate('TwoFactorScreen', { user_id: userId });
+          const rawMethods = response.data?.two_factor_methods;
+          const twoFactorMethods =
+            Array.isArray(rawMethods) && rawMethods.length > 0 ? rawMethods : ['totp'];
+          await setLastLoginEmail(email.trim());
+          navigation.navigate('TwoFactorScreen', {
+            user_id: userId,
+            two_factor_methods: twoFactorMethods,
+            login_email: email.trim(),
+          });
           return;
         }
 
@@ -89,10 +149,28 @@ export default function LoginScreen({ navigation, onLoginSuccess, initialMessage
         await SecureStore.setItemAsync('refresh_token', refreshToken);
       }
 
-      onLoginSuccess?.(token);
-      if (!onLoginSuccess && navigation) {
-        navigation.navigate('HomeScreen');
+      await setLastLoginEmail(email.trim());
+
+      // Check if admin-created account needs a password change before full access
+      try {
+        const meRes = await axios.get(`${API_BASE_URL}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (meRes.data?.must_change_password === true) {
+          navigation?.navigate('ForceChangePasswordScreen', { token });
+          return;
+        }
+        const has2fa = meRes.data?.totp_enabled === true || meRes.data?.email_2fa_enabled === true;
+        if (!has2fa) {
+          setTwoFactorNudgeToken(token);
+          return;
+        }
+      } catch {
+        // If /me fails, proceed normally — not worth blocking login over
       }
+
+      onLoginSuccess?.(token);
+      // AppNavigator switches to tabs after auth success.
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         setSubmitError('Invalid email or password. Please try again.');
@@ -239,20 +317,22 @@ export default function LoginScreen({ navigation, onLoginSuccess, initialMessage
                   </View>
                 </View>
 
-                <TouchableOpacity
-                  style={styles.qrButton}
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    if (navigation) {
-                      navigation.navigate('QRLoginScreen');
-                      return;
-                    }
-
-                    Alert.alert('Preview mode', 'QR login navigation is not wired yet.');
-                  }}
-                >
-                  <Text style={styles.qrButtonText}>Login with QR Code</Text>
-                </TouchableOpacity>
+                {Platform.OS !== 'web' ? (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.biometricButton, biometricBusy ? styles.biometricButtonDisabled : null]}
+                      activeOpacity={0.85}
+                      onPress={() => void onBiometricLogin()}
+                      disabled={biometricBusy}
+                    >
+                      {biometricBusy ? (
+                        <ActivityIndicator color="#112D4E" />
+                      ) : (
+                        <Text style={styles.biometricButtonText}>Sign in with {biometricLabel}</Text>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                ) : null}
               </View>
 
               <View style={styles.footer}>
@@ -265,6 +345,30 @@ export default function LoginScreen({ navigation, onLoginSuccess, initialMessage
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      <Modal visible={!!twoFactorNudgeToken} transparent animationType="fade" onRequestClose={() => setTwoFactorNudgeToken(null)}>
+        <View style={styles.nudgeOverlay}>
+          <View style={styles.nudgeCard}>
+            <View style={styles.nudgeIconWrap}>
+              <Text style={styles.nudgeIcon}>🛡️</Text>
+            </View>
+            <Text style={styles.nudgeTitle}>Protect your account</Text>
+            <Text style={styles.nudgeBody}>
+              Add Two-Factor Auth from Profile {'>'} Two-Factor Auth for stronger security.
+            </Text>
+            <TouchableOpacity
+              style={styles.nudgePrimaryBtn}
+              activeOpacity={0.85}
+              onPress={() => {
+                const t = twoFactorNudgeToken;
+                setTwoFactorNudgeToken(null);
+                if (t) onLoginSuccess?.(t);
+              }}
+            >
+              <Text style={styles.nudgePrimaryText}>Continue</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -443,7 +547,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1.2,
   },
-  qrButton: {
+  biometricButton: {
     borderWidth: 1,
     borderColor: '#DBE2EF',
     backgroundColor: '#FFFFFF',
@@ -452,7 +556,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  qrButtonText: {
+  biometricButtonDisabled: {
+    opacity: 0.7,
+  },
+  biometricButtonText: {
     color: '#112D4E',
     fontSize: 15,
     fontWeight: '800',
@@ -490,5 +597,59 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  nudgeOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  nudgeCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#DBE2EF',
+    alignItems: 'center',
+  },
+  nudgeIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#EEF2F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  nudgeIcon: { fontSize: 24 },
+  nudgeTitle: {
+    color: '#112D4E',
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  nudgeBody: {
+    color: '#64748B',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  nudgePrimaryBtn: {
+    alignSelf: 'stretch',
+    backgroundColor: '#112D4E',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  nudgePrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

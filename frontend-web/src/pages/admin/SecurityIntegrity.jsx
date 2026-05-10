@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getSecurityOverview, getSecurityEvents, runIntegrityAudit } from '../../services/adminService';
+import { fmtDateTime } from '../../utils/dateUtils';
 
 const SEVERITY_BY_EVENT = {
   LOGIN_FAILED: 'warning',
@@ -49,6 +50,26 @@ function buildEvents(raw) {
     severity: SEVERITY_BY_EVENT[e.event_type] ?? 'info',
     time_ago: timeAgo(e.timestamp),
   }));
+}
+
+function formatAuditTime(value) {
+  if (value == null || value === '') return '—';
+  if (typeof value === 'number') {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? '—' : value.toLocaleString();
+  }
+  const raw = String(value).trim();
+  // Backward compatibility: previously stored as "YYYY-MM-DD HH:MM:SS UTC".
+  const legacyUtc = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC$/.exec(raw);
+  if (legacyUtc) {
+    const normalized = `${legacyUtc[1]}T${legacyUtc[2]}Z`;
+    const d = new Date(normalized);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+  }
+  return fmtDateTime(raw);
 }
 
 function CircularScore({ score }) {
@@ -223,7 +244,7 @@ function IntegrityCard({ overview, auditResult, onRunAudit, running, onViewLogs 
         <div>
           <p className="text-xs text-primary-light uppercase tracking-wider mb-1">Last Audit Time</p>
           <p className="font-medium text-white text-sm">
-            {typeof auditTime === 'string' ? auditTime : new Date(auditTime).toLocaleString()}
+            {formatAuditTime(auditTime)}
           </p>
         </div>
       </div>
@@ -275,23 +296,74 @@ function TwoFACard({ overview }) {
   );
 }
 
-function ScoreCard({ score }) {
+// Suggestions aligned with backend _compute_security_score: 2FA share (≤40 pts), integrity (+15/+30), base +30.
+function buildSecuritySuggestions(overview) {
+  const out = [];
+  if (!overview) return out;
+  const twoPct = overview?.two_fa_compliance?.compliance_percentage ?? 0;
+  const protectedN = overview?.two_fa_compliance?.two_fa_enabled_count ?? 0;
+  const totalUsers = overview?.two_fa_compliance?.total_users ?? 0;
+  const integrityStatus = overview?.integrity_status?.hash_check_status ?? 'No audit run yet';
+  const integrityOk = integrityStatus === 'Valid & Synchronized';
+
+  if (!integrityOk) {
+    out.push({
+      title: 'Integrity audit',
+      body:
+        integrityStatus === 'No audit run yet'
+          ? 'Run a curriculum integrity audit once, then whenever documents change materially. Maximum score expects status “Valid & Synchronized”.'
+          : `Current status “${integrityStatus}” leaves points on the table. Resolve metadata or storage issues and re-run audit until “Valid & Synchronized”.`,
+    });
+  }
+  if (twoPct < 100) {
+    out.push({
+      title: '2FA coverage',
+      body: `${twoPct}% of users (${protectedN}/${totalUsers || '—'} with 2FA). The score scales this share up to 40 points — enable TOTP in each user’s profile / security settings and remind high-privilege roles first.`,
+    });
+  }
+  if (out.length === 0) {
+    out.push({
+      title: 'Keep it steady',
+      body: 'Maintain periodic integrity audits after curriculum edits and onboard new users with 2FA so coverage does not drift.',
+    });
+  }
+  return out;
+}
+
+function ScoreCard({ score, overview }) {
   const level = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Needs Attention';
   const description = score >= 80
     ? 'System integrity is within optimal range.'
     : score >= 60
       ? 'Some security configurations need review.'
       : 'Multiple security issues require immediate attention.';
+  const suggestions = buildSecuritySuggestions(overview);
   return (
     <div className="bg-white rounded-xl border border-primary-light shadow-sm p-5">
       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Overall Security Score</p>
       <div className="flex items-center gap-4">
         <CircularScore score={score} />
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="font-bold text-primary-dark">{level}</p>
           <p className="text-xs text-slate-500 mt-1">{description}</p>
         </div>
       </div>
+      {overview && suggestions.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Suggestions</p>
+          <ul className="space-y-2.5">
+            {suggestions.map((s, i) => (
+              <li key={`${s.title}-${i}`} className="flex gap-2 text-xs text-slate-600 leading-relaxed">
+                <Info className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" aria-hidden />
+                <span>
+                  <span className="font-semibold text-slate-700">{s.title}:</span>{' '}
+                  {s.body}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -349,7 +421,7 @@ export default function SecurityIntegrity() {
             onViewLogs={() => navigate('/admin/audit-logs')}
           />
           <TwoFACard overview={overview} />
-          <ScoreCard score={score} />
+          <ScoreCard score={score} overview={overview} />
         </div>
       </div>
     </div>

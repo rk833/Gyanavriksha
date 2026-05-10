@@ -4,21 +4,29 @@ Route handlers declare HTTP contracts and immediately delegate to the
 application-layer use cases. No business logic, error mapping, or response
 construction occurs in this layer.
 """
+import mimetypes
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+
+from app.services import submission_service as submission_service_mod
 
 from app.api.auth.infrastructure.dependencies import require_role
 from app.api.instructor.application import service
 from app.core.database import get_db
 from app.db.models.user import User
 from app.schemas.common import PaginatedResponse
+from app.schemas.notification import NotificationResponse, UnreadCountResponse
+from app.schemas.user import MessageResponse
+from app.services import notification_service
 from app.schemas.instructor import (
     AssignmentCreateRequest,
     AssignmentUpdateRequest,
     AtRiskStudentResponse,
     ConceptHeatmapResponse,
+    ExamMonitorResponse,
     FeedbackOverrideRequest,
     InstructorAssignmentDetailResponse,
     InstructorAssignmentResponse,
@@ -35,6 +43,16 @@ from app.schemas.instructor import (
 from app.shared.source_enum import UserRole
 
 router = APIRouter(prefix="/api/instructors", tags=["Instructor"])
+
+
+@router.get("/exam-monitor", response_model=ExamMonitorResponse)
+def get_exam_monitor(
+    assignment_id: uuid.UUID | None = Query(None, description="Published exam assignment to monitor"),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Live exam cockpit: enrolled students, IoT telemetry, posture alerts timeline."""
+    return service.get_exam_monitor(db, str(current_user.user_id), assignment_id)
 
 
 @router.get("/dashboard", response_model=InstructorDashboardResponse)
@@ -226,6 +244,26 @@ def get_submission_detail(
     )
 
 
+@router.get("/submissions/{submission_id}/files/{file_index}")
+def download_submission_file(
+    submission_id: uuid.UUID,
+    file_index: int,
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Download one uploaded file for a submission the instructor may access."""
+    service.get_submission_detail(db, str(current_user.user_id), submission_id)
+    abs_path, fname = submission_service_mod.get_submission_file_for_download(
+        db, submission_id, file_index
+    )
+    media, _ = mimetypes.guess_type(fname)
+    return FileResponse(
+        abs_path,
+        filename=fname,
+        media_type=media or "application/octet-stream",
+    )
+
+
 @router.patch(
     "/submissions/{submission_id}/feedback",
     response_model=InstructorSubmissionDetailResponse,
@@ -263,6 +301,7 @@ def get_velocity_analytics(
 )
 def get_at_risk_students(
     subject_id: int | None = Query(None),
+    grade_id: int | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
@@ -273,6 +312,7 @@ def get_at_risk_students(
         db,
         str(current_user.user_id),
         subject_id=subject_id,
+        grade_id=grade_id,
         page=page,
         per_page=per_page,
     )
@@ -281,13 +321,14 @@ def get_at_risk_students(
 @router.get("/analytics/concept-heatmap", response_model=ConceptHeatmapResponse)
 def get_concept_heatmap(
     subject_id: int | None = Query(None),
+    grade_id: int | None = Query(None),
     timeframe: str = Query("all", pattern="^(7d|30d|all)$"),
     current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
     db: Session = Depends(get_db),
 ):
     """Return concept heatmap data showing topic-level knowledge struggle areas."""
     return service.get_concept_heatmap(
-        db, str(current_user.user_id), subject_id, timeframe
+        db, str(current_user.user_id), subject_id, grade_id, timeframe
     )
 
 
@@ -368,3 +409,63 @@ def update_profile(
         str(current_user.user_id),
         data.model_dump(exclude_unset=True),
     )
+
+
+# ── Notifications ────────────────────────────────────────────────────────────
+
+@router.get("/notifications", response_model=PaginatedResponse[NotificationResponse])
+def list_notifications(
+    type: str | None = Query(None),
+    read: bool | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Return paginated notifications for the current instructor."""
+    items, total, unread_count = notification_service.get_notifications(
+        db, current_user.user_id, type_filter=type, is_read=read, page=page, per_page=per_page,
+    )
+    total_pages = max(1, -(-total // per_page))
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "unread_count": unread_count,
+    }
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+def get_unread_count(
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Return the count of unread notifications for the current instructor."""
+    count = notification_service.get_unread_count(db, current_user.user_id)
+    return {"count": count}
+
+
+@router.patch("/notifications/{notification_id}/read", response_model=NotificationResponse)
+def mark_notification_read(
+    notification_id: uuid.UUID,
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Mark a single notification as read."""
+    notif = notification_service.mark_as_read(db, current_user.user_id, notification_id)
+    if not notif:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return notif
+
+
+@router.patch("/notifications/read-all", response_model=MessageResponse)
+def mark_all_read(
+    current_user: User = Depends(require_role([UserRole.INSTRUCTOR])),
+    db: Session = Depends(get_db),
+):
+    """Mark all notifications as read for this instructor."""
+    count = notification_service.mark_all_as_read(db, current_user.user_id)
+    return {"message": f"{count} notification(s) marked as read."}

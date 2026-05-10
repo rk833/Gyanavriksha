@@ -2,22 +2,26 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from jose import JWTError, jwt  # type: ignore
-from passlib.context import CryptContext  # type: ignore
 
 from app.core.config import settings
 
-# Password Hashing 
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    if not hashed_password:
+        return False
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except (ValueError, TypeError):
+        return False
 
 
 # JWT Tokens 
@@ -37,7 +41,14 @@ def create_refresh_token(data: dict) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
     )
-    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc), "type": "refresh"})
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": datetime.now(timezone.utc),
+            "type": "refresh",
+            "jti": secrets.token_urlsafe(16),
+        }
+    )
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 

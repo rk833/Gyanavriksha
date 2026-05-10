@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, UniqueConstraint
@@ -17,7 +17,7 @@ class InstructorSubject(Base):
     assigned_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")

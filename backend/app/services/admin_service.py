@@ -2,6 +2,7 @@
 import ipaddress
 import os
 import secrets
+import time
 import socket
 import string
 import uuid
@@ -10,9 +11,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from fastapi import HTTPException
+
+import redis as redis_sync
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.api.middleware.rate_limiter import AGGREGATE_RPM_PREFIX
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models.assignment import Assignment
 from app.db.models.audit_log import AuditLog
@@ -94,6 +100,17 @@ def _broadcast_admin_notification(
                 sent_at=datetime.now(timezone.utc),
             )
         )
+
+
+def notify_admins(
+    db: Session,
+    notif_type: NotificationType,
+    title: str,
+    body: str,
+    related_resource_id: str | None = None,
+) -> None:
+    """Public wrapper to create in-app notifications for all active admins."""
+    _broadcast_admin_notification(db, notif_type, title, body, related_resource_id)
 
 
 def _notify_for_audit_action(db: Session, action: str, description: str, resource_id: str | None) -> None:
@@ -245,6 +262,7 @@ def create_user(
         role=role,
         password_hash=hash_password(password),
         is_email_verified=True,
+        must_change_password=True,
     )
     db.add(user)
     db.flush()
@@ -331,10 +349,12 @@ def reset_password(db: Session, user: User) -> str:
     """Generate a new secure password, hash it, increment token_version, and return the plain-text value.
 
     Incrementing token_version invalidates all existing JWTs for this user.
+    Sets must_change_password so the user is forced to set a new password on next login.
     """
     password = _generate_password()
     user.password_hash = hash_password(password)
     user.token_version = (user.token_version or 0) + 1
+    user.must_change_password = True
     db.flush()
     return password
 
@@ -1150,6 +1170,21 @@ def requeue_curriculum_doc(db: Session, doc_id: uuid.UUID) -> str | None:
 
 def get_namespaces_from_db(db: Session) -> list[dict]:
     """Build a grade-grouped namespace tree from curriculum documents."""
+    ai_stats = _fetch_ai_collection_stats()
+    subject_chunk_counts: dict[tuple[int, str], int] = {}
+    if ai_stats:
+        for col in ai_stats.get("collections", []):
+            name = str(col.get("name", ""))
+            if not name.startswith("grade_"):
+                continue
+            try:
+                grade_level = int(name.split("_", 1)[1])
+            except Exception:
+                continue
+            for subject_name, count in (col.get("subject_counts") or {}).items():
+                if isinstance(subject_name, str):
+                    subject_chunk_counts[(grade_level, subject_name)] = int(count or 0)
+
     grades = (
         db.query(Grade).filter(Grade.is_active == True).order_by(Grade.grade_level).all()
     )
@@ -1162,22 +1197,25 @@ def get_namespaces_from_db(db: Session) -> list[dict]:
         )
         namespaces = []
         for subj in subjects:
-            done_docs = (
+            all_docs = (
                 db.query(CurriculumDocument)
                 .filter(
                     CurriculumDocument.subject_id == subj.subject_id,
-                    CurriculumDocument.embedding_status == EmbeddingStatus.DONE,
                 )
                 .all()
             )
-            if not done_docs:
+            if not all_docs:
                 continue
+            done_docs = [d for d in all_docs if d.embedding_status == EmbeddingStatus.DONE]
             last_updated = max((d.embedded_at for d in done_docs if d.embedded_at), default=None)
+            if last_updated is None:
+                last_updated = max((d.created_at for d in all_docs if d.created_at), default=None)
+            live_chunk_count = subject_chunk_counts.get((grade.grade_level, subj.subject_name))
             namespaces.append({
                 "name": subj.chroma_namespace,
                 "subject_name": subj.subject_name,
-                "chunk_count": 0,
-                "doc_count": len(done_docs),
+                "chunk_count": live_chunk_count if live_chunk_count is not None else len(done_docs),
+                "doc_count": len(all_docs),
                 "last_updated": last_updated,
             })
         result.append({
@@ -1209,7 +1247,8 @@ def get_vector_store_stats(db: Session) -> dict:
         .scalar()
         or 0
     )
-    namespace_count = (
+    ai_stats = _fetch_ai_collection_stats()
+    namespace_count = int(ai_stats.get("total_collections", 0)) if ai_stats else (
         db.query(func.count(Subject.subject_id))
         .filter(Subject.chroma_namespace.isnot(None))
         .scalar()
@@ -1227,10 +1266,10 @@ def get_vector_store_stats(db: Session) -> dict:
         "total_pending": pending,
         "total_failed": failed,
         "total_namespaces": namespace_count,
-        "total_chunks": done,
+        "total_chunks": int(ai_stats.get("total_chunks", 0)) if ai_stats else done,
         "embedding_success_rate": success_rate,
         "last_indexed_at": last_indexed,
-        "ai_service_status": "stub",
+        "ai_service_status": "live" if ai_stats else "offline",
     }
 
 
@@ -1262,7 +1301,40 @@ def get_export_snapshot(db: Session) -> dict:
     """Return a JSON-serialisable metadata snapshot of all namespaces and doc counts."""
     namespaces = get_namespaces_from_db(db)
     stats = get_vector_store_stats(db)
-    return {"namespaces": namespaces, "stats": stats}
+    ai_stats = _fetch_ai_collection_stats()
+    return {"namespaces": namespaces, "stats": stats, "live_collections": ai_stats.get("collections", []) if ai_stats else []}
+
+
+def _fetch_ai_collection_stats() -> dict | None:
+    """Fetch live collection stats from AI service; return None if unavailable."""
+    try:
+        url = f"{settings.AI_SERVICE_URL}/rag/collections/stats"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            if resp.status < 200 or resp.status >= 300:
+                return None
+            data = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(data)
+            if isinstance(parsed, dict):
+                return parsed
+            return None
+    except Exception:
+        return None
+
+
+def create_live_collection(name: str) -> dict | None:
+    """Create a live collection in AI service; return details or None."""
+    try:
+        url = f"{settings.AI_SERVICE_URL}/rag/collections"
+        data = urllib.parse.urlencode({"name": name}).encode("utf-8")
+        req = urllib.request.Request(url=url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status < 200 or resp.status >= 300:
+                return None
+            body = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(body)
+            return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
 
 
 import hashlib
@@ -1281,7 +1353,7 @@ def _generate_mac() -> str:
     return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
 
 
-def _device_to_response_dict(device: IotDevice) -> dict:
+def _device_to_response_dict(device: IotDevice, student_name: str | None = None) -> dict:
     """Map an IotDevice ORM row to the IoTDeviceResponse field set."""
     return {
         "device_id": device.device_id,
@@ -1299,7 +1371,28 @@ def _device_to_response_dict(device: IotDevice) -> dict:
         "latest_distance_cm": None,
         "latest_alert": None,
         "latest_telemetry_at": None,
+        "assigned_student_id": device.assigned_student_id,
+        "assigned_student_name": student_name,
     }
+
+
+def _effective_device_status(
+    device: IotDevice,
+    *,
+    now: datetime | None = None,
+    stale_after: timedelta = timedelta(seconds=30),
+) -> str:
+    """Return freshness-aware device status used by admin dashboards."""
+    raw = (device.status or "offline").strip().lower()
+    if raw != "online":
+        return raw
+    ts = device.last_seen_at
+    if ts is None:
+        return "offline"
+    ref = now or datetime.now(timezone.utc)
+    if (ref - ts) > stale_after:
+        return "offline"
+    return "online"
 
 
 def node_id_exists(db: Session, node_id: str) -> bool:
@@ -1323,8 +1416,6 @@ def list_iot_devices(
 ) -> dict:
     """Return paginated device list with network summary stats."""
     query = db.query(IotDevice).filter(IotDevice.status != "decommissioned")
-    if status:
-        query = query.filter(IotDevice.status == status)
     if device_type:
         query = query.filter(IotDevice.device_type == device_type)
     if node_id:
@@ -1332,10 +1423,19 @@ def list_iot_devices(
     if location:
         query = query.filter(IotDevice.location.ilike(f"%{location}%"))
 
-    total_count = query.count()
-    devices = query.offset((page - 1) * per_page).limit(per_page).all()
+    all_devices = query.order_by(IotDevice.registered_at.desc()).all()
+    now = datetime.now(timezone.utc)
+    summary_devices = list(all_devices)
+    status_filter = (status or "").strip().lower()
+    if status_filter:
+        all_devices = [d for d in all_devices if _effective_device_status(d, now=now) == status_filter]
 
-    active_nodes = db.query(IotDevice).filter(IotDevice.status == "online").count()
+    total_count = len(all_devices)
+    start = max((page - 1) * per_page, 0)
+    end = start + per_page
+    devices = all_devices[start:end]
+
+    active_nodes = sum(1 for d in summary_devices if _effective_device_status(d, now=now) == "online")
     threshold = datetime.now(timezone.utc) - timedelta(hours=24)
     alerts_count = (
         db.query(IotDevice)
@@ -1343,9 +1443,18 @@ def list_iot_devices(
         .count()
     )
 
+    # Pre-fetch student names for all assigned devices in a single query
+    assigned_ids = [d.assigned_student_id for d in devices if d.assigned_student_id]
+    student_map: dict = {}
+    if assigned_ids:
+        students = db.query(User).filter(User.user_id.in_(assigned_ids)).all()
+        student_map = {str(s.user_id): s.full_name for s in students}
+
     device_rows = []
     for device in devices:
-        row = _device_to_response_dict(device)
+        s_name = student_map.get(str(device.assigned_student_id)) if device.assigned_student_id else None
+        row = _device_to_response_dict(device, s_name)
+        row["status"] = _effective_device_status(device, now=now)
         last_light = (
             db.query(SensorLog)
             .filter(SensorLog.device_id == device.device_id, SensorLog.sensor_type == "ldr")
@@ -1431,12 +1540,27 @@ def update_iot_device_fields(
     device: IotDevice,
     location: str | None,
     description: str | None,
+    assigned_student_id: str | None = None,
 ) -> None:
     """Apply non-None field updates to the device."""
+    import uuid as _uuid
     if location is not None:
-        device.location = location
+        # Treat empty string as clearing the location (allow null locations)
+        device.location = location if location.strip() else None
     if description is not None:
-        device.description = description
+        device.description = description if description.strip() else None
+    if assigned_student_id is not None:
+        if assigned_student_id == "":
+            # Empty string = unassign
+            device.assigned_student_id = None
+        else:
+            try:
+                device.assigned_student_id = _uuid.UUID(assigned_student_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid student ID format: {assigned_student_id!r}",
+                )
     db.flush()
 
 
@@ -1496,8 +1620,10 @@ def update_iot_device_status(
 
 def get_iot_network_health(db: Session) -> dict:
     """Return overall IoT network health KPIs."""
-    total = db.query(IotDevice).filter(IotDevice.status != "decommissioned").count()
-    online = db.query(IotDevice).filter(IotDevice.status == "online").count()
+    devices = db.query(IotDevice).filter(IotDevice.status != "decommissioned").all()
+    total = len(devices)
+    now = datetime.now(timezone.utc)
+    online = sum(1 for d in devices if _effective_device_status(d, now=now) == "online")
     threshold = datetime.now(timezone.utc) - timedelta(hours=24)
     alerts = (
         db.query(IotDevice)
@@ -1792,6 +1918,23 @@ def _set_setting(db: Session, key: str, value: object) -> None:
     db.flush()
 
 
+def _aggregate_rpm_usage_pct(threshold_per_min: int) -> float | None:
+    """Share of current calendar-minute request volume vs security-dashboard threshold (Redis)."""
+    if threshold_per_min <= 0:
+        return None
+    key = f"{AGGREGATE_RPM_PREFIX}{int(time.time() // 60)}"
+    try:
+        r = redis_sync.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            raw = r.get(key)
+            rpm = int(raw) if raw not in (None, "") else 0
+        finally:
+            r.close()
+        return round(min(100.0, 100.0 * rpm / float(threshold_per_min)), 1)
+    except Exception:
+        return None
+
+
 def _compute_security_score(two_fa: dict, last_audit: dict | None) -> int:
     """Derive overall security score (0-100) from 2FA coverage and integrity audit."""
     score = int(two_fa["compliance_percentage"] * 0.4)
@@ -1822,10 +1965,24 @@ def get_security_overview(db: Session) -> dict:
     ingest_rejected = int(_get_setting(db, "iot_ingest_rejected") or 0)
     integrity_violations = int(_get_setting(db, "iot_integrity_violations") or 0)
     last_audit = _get_setting(db, "last_integrity_audit")
+    if isinstance(last_audit, dict) and not last_audit.get("audit_time"):
+        latest_audit_log = (
+            db.query(AuditLog.created_at)
+            .filter(AuditLog.action == "INTEGRITY_AUDIT_RUN")
+            .order_by(AuditLog.created_at.desc())
+            .first()
+        )
+        if latest_audit_log and latest_audit_log[0]:
+            ts = latest_audit_log[0]
+            last_audit = {
+                **last_audit,
+                "audit_time": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            }
     threshold = int(_get_setting(db, "rate_limit_threshold") or 2500)
+    usage_pct = _aggregate_rpm_usage_pct(threshold)
     return {
         "jwt_rbac_status": _build_rbac_status(db),
-        "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": None},
+        "api_rate_limit": {"threshold_per_min": threshold, "current_usage_pct": usage_pct},
         "device_auth": {
             "active_api_keys_count": iot_key_count,
             "ingest_accepted_count": ingest_ok,
@@ -1940,6 +2097,7 @@ def get_admin_settings(db: Session) -> dict:
         "notification_prefs": raw_notif if isinstance(raw_notif, dict) else None,
         "appearance_prefs": raw_appearance if isinstance(raw_appearance, dict) else None,
         "webhook_url": _get_setting(db, "webhook_url"),
+        "rate_limit_threshold": int(_get("rate_limit_threshold", 2500)),
     }
 
 

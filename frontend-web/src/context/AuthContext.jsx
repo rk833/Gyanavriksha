@@ -58,7 +58,21 @@ export function AuthProvider({ children }) {
    * @returns {Promise<object>} Login response, possibly with `requires_2fa: true`.
    */
   const login = async (email, password) => {
+    const trustKey = authService.twoFactorTrustStorageKey(email);
+    let hadTrust = false;
+    try {
+      hadTrust = !!localStorage.getItem(trustKey);
+    } catch {
+      hadTrust = false;
+    }
     const data = await authService.login(email, password);
+    if (data.requires_2fa && hadTrust) {
+      try {
+        localStorage.removeItem(trustKey);
+      } catch {
+        /* no-op */
+      }
+    }
     if (data.requires_2fa) {
       return data;
     }
@@ -71,12 +85,28 @@ export function AuthProvider({ children }) {
   /**
    * Complete a 2FA login by exchanging the TOTP code for full tokens.
    *
+   * @param {string} email - Used to store optional "trust this device" token (per browser).
    * @param {string} userId
    * @param {string} code
+   * @param {string} method
+   * @param {boolean} rememberDevice - If true, server returns a device token (skip 2FA for 3 days on this browser).
    * @returns {Promise<object>} Token response with the resolved user.
    */
-  const complete2FA = async (userId, code) => {
-    const data = await authService.verify2FA(userId, code);
+  const complete2FA = async (email, userId, code, method = 'totp', rememberDevice = false) => {
+    const data = await authService.verify2FA(userId, code, method, rememberDevice);
+    if (rememberDevice && data.trusted_device_token && email) {
+      try {
+        localStorage.setItem(authService.twoFactorTrustStorageKey(email), data.trusted_device_token);
+      } catch {
+        /* no-op */
+      }
+    } else if (!rememberDevice && email) {
+      try {
+        localStorage.removeItem(authService.twoFactorTrustStorageKey(email));
+      } catch {
+        /* no-op */
+      }
+    }
     localStorage.setItem('access_token', data.access_token);
     localStorage.setItem('refresh_token', data.refresh_token);
     const userData = await fetchUser();

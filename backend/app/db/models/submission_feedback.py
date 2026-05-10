@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
@@ -19,6 +19,7 @@ class SubmissionFeedback(Base):
     llm_model_used = Column(String(100), nullable=True)
     llm_tokens_used = Column(Integer, nullable=True)
     knowledge_gap_detected = Column(Boolean, nullable=False, default=False, server_default="false")
+    ai_snapshot = Column(JSONB, nullable=True)
     score_percentage = Column(Float, nullable=True)
     strengths = Column(Text, nullable=True)
     improvements = Column(Text, nullable=True)
@@ -27,6 +28,6 @@ class SubmissionFeedback(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         server_default="now()",
     )

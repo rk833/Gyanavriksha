@@ -14,6 +14,11 @@ export default function ProtectedRoute({ children, allowedRoles }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // Block access to any protected page until the forced password change is done.
+  if (user?.must_change_password) {
+    return <Navigate to="/force-change-password" replace />;
+  }
+
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     // Redirect to user's own dashboard based on role
     const dashboardMap = {

@@ -103,6 +103,27 @@ export const getSubmissionDetail = (id) =>
   api.get(`/api/instructors/submissions/${id}`);
 
 /**
+ * Download one uploaded file for a submission the instructor can access.
+ *
+ * @param {string} submissionId
+ * @param {number} fileIndex
+ * @param {string} [filename]
+ */
+export const downloadSubmissionFile = (submissionId, fileIndex, filename) =>
+  api.get(`/api/instructors/submissions/${submissionId}/files/${fileIndex}`, {
+    responseType: 'blob',
+    timeout: 120000,
+  }).then((res) => {
+    const blob = new Blob([res.data]);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `submission-${fileIndex}`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  });
+
+/**
  * Create or override instructor feedback and score on a submission.
  *
  * @param {string} id - Submission UUID.
@@ -124,7 +145,7 @@ export const getVelocityAnalytics = (params = {}) =>
 /**
  * Fetch paginated at-risk students identified by the analytics engine.
  *
- * @param {{ subject_id?: number, page?: number, per_page?: number }} params
+ * @param {{ subject_id?: number, grade_id?: number, page?: number, per_page?: number }} params
  * @returns {Promise<import('./types').PaginatedResponse>}
  */
 export const getAtRiskStudents = (params = {}) =>
@@ -133,7 +154,7 @@ export const getAtRiskStudents = (params = {}) =>
 /**
  * Fetch concept heatmap data showing topic-level knowledge struggle areas.
  *
- * @param {{ subject_id?: number, timeframe?: '7d'|'30d'|'all' }} params
+ * @param {{ subject_id?: number, grade_id?: number, timeframe?: '7d'|'30d'|'all' }} params
  * @returns {Promise<import('./types').ConceptHeatmapResponse>}
  */
 export const getConceptHeatmap = (params = {}) =>
@@ -169,6 +190,14 @@ export const deleteDocument = (id) =>
   api.delete(`/api/instructors/knowledge-base/${id}`);
 
 /**
+ * Live exam monitor: roster, session states, IoT telemetry, posture alert feed.
+ *
+ * @param {{ assignment_id?: string }} params
+ */
+export const getExamMonitor = (params = {}) =>
+  api.get('/api/instructors/exam-monitor', { params });
+
+/**
  * Fetch the current instructor's profile including assigned subjects.
  *
  * @returns {Promise<import('./types').InstructorProfileResponse>}
@@ -182,3 +211,17 @@ export const getProfile = () => api.get('/api/instructors/profile');
  * @returns {Promise<import('./types').InstructorProfileResponse>}
  */
 export const updateProfile = (data) => api.patch('/api/instructors/profile', data);
+
+// ── Notifications ─────────────────────────────────────────────────────────
+
+export const getNotifications = (params = {}) =>
+  api.get('/api/instructors/notifications', { params });
+
+export const getUnreadCount = () =>
+  api.get('/api/instructors/notifications/unread-count');
+
+export const markNotificationRead = (id) =>
+  api.patch(`/api/instructors/notifications/${id}/read`);
+
+export const markAllNotificationsRead = () =>
+  api.patch('/api/instructors/notifications/read-all');

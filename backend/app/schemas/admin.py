@@ -254,9 +254,10 @@ class IoTDeviceCreateRequest(BaseModel):
 class IoTDeviceUpdateRequest(BaseModel):
     """Request body for partially updating an IoT device record."""
 
-    location: Optional[str] = Field(None, min_length=1, max_length=150)
+    location: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = None
     status: Optional[str] = None
+    assigned_student_id: Optional[str] = None
 
 
 class DeviceStatusUpdateRequest(BaseModel):
@@ -283,6 +284,8 @@ class IoTDeviceResponse(BaseModel):
     latest_distance_cm: Optional[float] = None
     latest_alert: Optional[str] = None
     latest_telemetry_at: Optional[datetime] = None
+    assigned_student_id: Optional[uuid.UUID] = None
+    assigned_student_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -406,6 +409,7 @@ class AdminSettingsResponse(BaseModel):
     notification_prefs: Optional[dict] = None
     appearance_prefs: Optional[dict] = None
     webhook_url: Optional[str] = None
+    rate_limit_threshold: int = Field(default=2500, ge=100, le=1_000_000)
 
 
 class AdminSettingsUpdateRequest(BaseModel):
@@ -422,6 +426,7 @@ class AdminSettingsUpdateRequest(BaseModel):
     notification_prefs: Optional[dict] = None
     appearance_prefs: Optional[dict] = None
     webhook_url: Optional[str] = None
+    rate_limit_threshold: Optional[int] = Field(None, ge=100, le=1_000_000)
 
 
 class IntegrationTestRequest(BaseModel):

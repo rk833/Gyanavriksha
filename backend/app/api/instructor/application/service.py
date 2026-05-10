@@ -9,10 +9,13 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.db.models.grade import Grade
+from app.db.models.subject import Subject
 from app.schemas.common import PaginatedResponse
 from app.schemas.instructor import (
     AtRiskStudentResponse,
     ConceptHeatmapResponse,
+    ExamMonitorResponse,
     InstructorAssignmentDetailResponse,
     InstructorAssignmentResponse,
     InstructorDashboardResponse,
@@ -25,6 +28,8 @@ from app.schemas.instructor import (
     VelocityAnalyticsResponse,
 )
 from app.services import instructor_service
+from app.services import rag_service
+from app.shared.source_enum import EmbeddingStatus
 
 
 def _calculate_total_pages(total: int, per_page: int) -> int:
@@ -316,6 +321,7 @@ def get_at_risk_students(
     db: Session,
     instructor_id: str,
     subject_id: "int | None",
+    grade_id: "int | None",
     page: int,
     per_page: int,
 ) -> PaginatedResponse[AtRiskStudentResponse]:
@@ -324,6 +330,7 @@ def get_at_risk_students(
         db,
         instructor_id,
         subject_id=subject_id,
+        grade_id=grade_id,
         page=page,
         per_page=per_page,
     )
@@ -336,6 +343,7 @@ def get_concept_heatmap(
     db: Session,
     instructor_id: str,
     subject_id: "int | None",
+    grade_id: "int | None",
     timeframe: str,
 ) -> ConceptHeatmapResponse:
     """Return concept heatmap data highlighting topic-level struggle areas."""
@@ -344,6 +352,7 @@ def get_concept_heatmap(
             db,
             instructor_id,
             subject_id=subject_id,
+            grade_id=grade_id,
             timeframe=timeframe,
         )
     )
@@ -388,6 +397,35 @@ async def upload_document(
     result = instructor_service.upload_document(
         db, instructor_id, subject_id, file.filename, content, doc_type
     )
+    doc_id = result["doc_id"]
+
+    grade_level, subject_name = (
+        db.query(Grade.grade_level, Subject.subject_name)
+        .join(Subject, Subject.grade_id == Grade.grade_id)
+        .filter(Subject.subject_id == subject_id)
+        .first()
+        or (None, None)
+    )
+    try:
+        rag_response = await rag_service.upload_document_bytes_to_rag(
+            file_name=file.filename,
+            file_bytes=content,
+            content_type=file.content_type,
+            user_type="instructor",
+            submitted_by=instructor_id,
+            grade=grade_level,
+            subject=subject_name,
+            instructor_id=instructor_id,
+            class_id=str(subject_id),
+        )
+        instructor_service.set_document_embedding_status(
+            db,
+            doc_id,
+            EmbeddingStatus.DONE,
+            chroma_collection_id=rag_response.get("collection"),
+        )
+    except HTTPException:
+        instructor_service.set_document_embedding_status(db, doc_id, EmbeddingStatus.FAILED)
     return KnowledgeBaseDocumentResponse(**result)
 
 
@@ -428,6 +466,21 @@ def get_profile(
     return InstructorProfileResponse(
         **instructor_service.get_instructor_profile(db, instructor_id)
     )
+
+
+def get_exam_monitor(
+    db: Session,
+    instructor_id: str,
+    assignment_id: uuid.UUID | None,
+) -> ExamMonitorResponse:
+    """Return live roster + telemetry for one published exam assignment."""
+    raw = instructor_service.get_exam_monitor_snapshot(db, instructor_id, assignment_id)
+    if raw is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exam assignment not found or not published for monitoring",
+        )
+    return ExamMonitorResponse(**raw)
 
 
 def update_profile(

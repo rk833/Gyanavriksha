@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, QrCode, Loader2, ArrowRight, User, GraduationCap, Settings } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, QrCode, Loader2, ArrowRight, User, GraduationCap, Settings, Shield, Smartphone, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
+import authService from '../../services/authService';
 
 const ROLES = [
   { key: 'student', label: 'Student', icon: GraduationCap },
@@ -25,16 +26,76 @@ export default function Login() {
   const [needs2FA, setNeeds2FA] = useState(false);
   const [twoFACode, setTwoFACode] = useState('');
   const [twoFAUserId, setTwoFAUserId] = useState(null);
+  const [twoFactorMethods, setTwoFactorMethods] = useState([]);
+  const [verifyMethod, setVerifyMethod] = useState('totp');
+  const [emailSendBusy, setEmailSendBusy] = useState(false);
+  const [rememberDevice3Days, setRememberDevice3Days] = useState(false);
 
   const from = location.state?.from?.pathname;
 
-  const getRedirectPath = (role) => {
+  const getRoleDashboardPath = (role) => {
     const dashboards = {
       student: '/student/dashboard',
       instructor: '/instructor/dashboard',
       admin: '/admin/dashboard',
     };
-    return from || dashboards[role] || '/login';
+    return dashboards[role] || '/login';
+  };
+
+  const getRedirectPath = (role) => {
+    const dashboard = getRoleDashboardPath(role);
+    if (!from) return dashboard;
+    const rolePrefix = `/${role}`;
+    // Only honor "from" when it belongs to the same role scope.
+    return from.startsWith(rolePrefix) ? from : dashboard;
+  };
+
+  const normalizeRole = (role) => String(role || '').trim().toLowerCase();
+
+  const suggestTwoFactorIfDisabled = (user) => {
+    const has2fa = user?.totp_enabled === true || user?.email_2fa_enabled === true;
+    if (!has2fa) {
+      const role = user?.role || 'student';
+      const settingsPath = `/${role}/settings`;
+      toast.custom((t) => (
+        <div
+          className={`max-w-sm w-[92vw] rounded-2xl border border-primary-light bg-white shadow-xl p-4 ${
+            t.visible ? 'animate-enter' : 'animate-leave'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary-light/40 flex items-center justify-center text-lg">
+              🛡️
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-primary-dark">Security recommendation</p>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                Enable Two-Factor Auth for stronger account protection.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+                  onClick={() => toast.dismiss(t.id)}
+                >
+                  Later
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-white hover:bg-primary/90"
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    navigate(settingsPath);
+                  }}
+                >
+                  Set up now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ), { duration: 6500 });
+    }
   };
 
   const validate = () => {
@@ -54,18 +115,36 @@ export default function Login() {
     try {
       const data = await login(email, password);
       if (data.requires_2fa) {
+        const methods =
+          Array.isArray(data.two_factor_methods) && data.two_factor_methods.length > 0
+            ? data.two_factor_methods
+            : ['totp'];
+        setTwoFactorMethods(methods);
+        const initial = methods.includes('totp') ? 'totp' : 'email';
+        setVerifyMethod(initial);
         setNeeds2FA(true);
         setTwoFAUserId(data.user_id);
-        toast('Enter your 2FA code to continue');
+        toast.success('Enter a verification code to continue');
       } else {
-        const actualRole = data.user?.role;
-        if (actualRole && actualRole !== selectedRole) {
-          toast.error('Invalid email or password for the selected role.');
+        const actualRole = normalizeRole(data.user?.role);
+        if (!actualRole) {
+          toast.error('Could not determine account role');
           await logout();
           return;
         }
+        if (actualRole !== normalizeRole(selectedRole)) {
+          toast.error(`This account is ${actualRole}. Please select ${actualRole} role to sign in.`);
+          await logout();
+          return;
+        }
+        if (data.user?.must_change_password) {
+          toast('Please set a new password to continue.', { icon: '🔐' });
+          navigate('/force-change-password', { replace: true });
+          return;
+        }
+        suggestTwoFactorIfDisabled(data.user);
         toast.success('Welcome back!');
-        navigate(getRedirectPath(actualRole || selectedRole), { replace: true });
+        navigate(getRedirectPath(actualRole), { replace: true });
       }
     } catch (err) {
       const detail = err.response?.data?.detail || 'Login failed';
@@ -83,17 +162,30 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      const data = await complete2FA(twoFAUserId, twoFACode);
-      const actualRole = data.user?.role;
-      if (actualRole && actualRole !== selectedRole) {
-        toast.error('Invalid email or password for the selected role.');
+      const data = await complete2FA(email.trim(), twoFAUserId, twoFACode, verifyMethod, rememberDevice3Days);
+      const actualRole = normalizeRole(data.user?.role);
+      if (!actualRole) {
+        toast.error('Could not determine account role');
         await logout();
         setNeeds2FA(false);
         setTwoFACode('');
         return;
       }
+      if (actualRole !== normalizeRole(selectedRole)) {
+        toast.error(`This account is ${actualRole}. Please select ${actualRole} role to sign in.`);
+        await logout();
+        setNeeds2FA(false);
+        setTwoFACode('');
+        return;
+      }
+      if (data.user?.must_change_password) {
+        toast('Please set a new password to continue.', { icon: '🔐' });
+        navigate('/force-change-password', { replace: true });
+        return;
+      }
+      suggestTwoFactorIfDisabled(data.user);
       toast.success('Welcome back!');
-      navigate(getRedirectPath(actualRole || selectedRole), { replace: true });
+      navigate(getRedirectPath(actualRole), { replace: true });
     } catch (err) {
       const detail = err.response?.data?.detail || 'Invalid code';
       toast.error(detail);
@@ -102,38 +194,137 @@ export default function Login() {
     }
   };
 
+  const sendEmailCode = async () => {
+    if (!twoFAUserId) return;
+    setEmailSendBusy(true);
+    try {
+      await authService.send2FAEmailCode(twoFAUserId);
+      toast.success('If email sign-in is enabled, a code was sent to your inbox');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not send email code');
+    } finally {
+      setEmailSendBusy(false);
+    }
+  };
+
   if (needs2FA) {
+    const showTotp = twoFactorMethods.includes('totp');
+    const showEmail = twoFactorMethods.includes('email');
+
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4 font-display">
-        <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-primary-light p-8">
-          <h2 className="text-2xl font-bold text-primary-dark mb-2">Two-Factor Authentication</h2>
-          <p className="text-slate-500 mb-6">Enter the 6-digit code from your authenticator app.</p>
-          <form onSubmit={handle2FASubmit} className="space-y-4">
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              value={twoFACode}
-              onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ''))}
-              placeholder="000000"
-              className="w-full text-center text-2xl tracking-[0.5em] px-4 py-3 border border-primary-light rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-primary text-white rounded-lg font-semibold hover:bg-primary/90 transition disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Verify'}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setNeeds2FA(false); setTwoFACode(''); }}
-              className="w-full text-center text-sm text-slate-500 hover:text-primary-dark"
-            >
-              Back to login
-            </button>
-          </form>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-primary-light/30 flex items-center justify-center px-4 py-10 font-display">
+        <div className="w-full max-w-md">
+          <div className="bg-white rounded-2xl shadow-lg shadow-primary/5 border border-primary-light/80 overflow-hidden">
+            <div className="bg-gradient-to-r from-primary-dark to-primary px-6 py-8 text-white">
+              <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center mb-4">
+                <Shield className="w-6 h-6" />
+              </div>
+              <h2 className="text-2xl font-bold tracking-tight">Verify it&apos;s you</h2>
+              <p className="text-primary-light/90 text-sm mt-2 leading-relaxed">
+                Your account has two-step verification. Choose how you want to sign in.
+              </p>
+            </div>
+
+            <div className="p-6">
+              {(showTotp && showEmail) && (
+                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl mb-6">
+                  <button
+                    type="button"
+                    onClick={() => { setVerifyMethod('totp'); setTwoFACode(''); }}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition ${
+                      verifyMethod === 'totp' ? 'bg-white text-primary-dark shadow-sm' : 'text-slate-600 hover:text-primary-dark'
+                    }`}
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    App
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setVerifyMethod('email'); setTwoFACode(''); }}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition ${
+                      verifyMethod === 'email' ? 'bg-white text-primary-dark shadow-sm' : 'text-slate-600 hover:text-primary-dark'
+                    }`}
+                  >
+                    <Mail className="w-4 h-4" />
+                    Email
+                  </button>
+                </div>
+              )}
+
+              {verifyMethod === 'totp' && (
+                <p className="text-sm text-slate-600 mb-4 flex items-start gap-2">
+                  <KeyRound className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                  Open your authenticator app (Google Authenticator, Authy, etc.) and enter the 6-digit code.
+                </p>
+              )}
+
+              {verifyMethod === 'email' && (
+                <div className="mb-4 space-y-3">
+                  <p className="text-sm text-slate-600 flex items-start gap-2">
+                    <Mail className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                    We&apos;ll email you a one-time code. Check your inbox (and spam) after tapping send.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void sendEmailCode()}
+                    disabled={emailSendBusy}
+                    className="w-full py-2.5 rounded-xl border-2 border-primary/30 text-primary-dark font-semibold text-sm hover:bg-primary-light/20 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {emailSendBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Send code to email
+                  </button>
+                </div>
+              )}
+
+              <form onSubmit={handle2FASubmit} className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                    {verifyMethod === 'email' ? 'Email code' : 'Authenticator code'}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={twoFACode}
+                    onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="• • • • • •"
+                    className="w-full text-center text-2xl tracking-[0.4em] px-4 py-4 border-2 border-primary-light rounded-xl focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none transition"
+                    autoFocus
+                  />
+                </div>
+                <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-primary-light/80 bg-slate-50/80 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={rememberDevice3Days}
+                    onChange={(e) => setRememberDevice3Days(e.target.checked)}
+                    className="mt-0.5 rounded border-primary-light text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    Don&apos;t ask for a second step on this device for <span className="font-semibold text-slate-800">3 days</span> (this browser only).
+                  </span>
+                </label>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3.5 bg-gradient-to-r from-primary-dark to-primary text-white rounded-xl font-semibold hover:opacity-95 transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-md shadow-primary/20"
+                >
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Continue'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNeeds2FA(false);
+                    setTwoFACode('');
+                    setTwoFAUserId(null);
+                    setRememberDevice3Days(false);
+                  }}
+                  className="w-full text-center text-sm text-slate-500 hover:text-primary-dark font-medium"
+                >
+                  Back to login
+                </button>
+              </form>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -272,21 +463,25 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="flex items-center my-6">
-            <div className="flex-1 border-t border-primary-light" />
-            <span className="px-4 text-xs text-slate-400 uppercase tracking-wider">Alternative Access</span>
-            <div className="flex-1 border-t border-primary-light" />
-          </div>
+          {/* Divider — student QR + optional spacing */}
+          {selectedRole === 'student' && (
+            <div className="flex items-center my-6">
+              <div className="flex-1 border-t border-primary-light" />
+              <span className="px-4 text-xs text-slate-400 uppercase tracking-wider">Alternative Access</span>
+              <div className="flex-1 border-t border-primary-light" />
+            </div>
+          )}
 
-          {/* QR Login */}
-          <Link
-            to="/qr-login"
-            className="w-full flex items-center justify-center gap-2 py-3 border-2 border-primary-light rounded-lg text-primary-dark font-semibold uppercase tracking-wider text-sm hover:border-primary/40 hover:bg-primary-light/30 transition"
-          >
-            <QrCode className="w-5 h-5" />
-            Login with QR Code (IoT Bridge)
-          </Link>
+          {/* QR login — students only */}
+          {selectedRole === 'student' && (
+            <Link
+              to="/qr-login"
+              className="w-full flex items-center justify-center gap-2 py-3 border-2 border-primary-light rounded-lg text-primary-dark font-semibold uppercase tracking-wider text-sm hover:border-primary/40 hover:bg-primary-light/30 transition"
+            >
+              <QrCode className="w-5 h-5" />
+              Login with QR code (web via mobile)
+            </Link>
+          )}
 
           {/* Footer links */}
           <div className="mt-6 flex items-center justify-between text-sm text-slate-500">

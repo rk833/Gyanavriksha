@@ -249,6 +249,7 @@ dist
 
 # Uploaded files
 uploads/
+ai-service/chroma_data/
 
 # claude artefacts
 claude-artefacts/
@@ -259,3 +260,8 @@ claude-artefacts/
 /SPRINT_GUIDES/
 /Admin_Use_Case_Diagram.png
 /Requirement_Catalogue_Gyanavriksha.docx
+/ai-service/service-account.json
+# Ignore large design/assets folders
+/Wireframes for web/
+/Mobile_app_images/
+/ai-service/chroma_data/

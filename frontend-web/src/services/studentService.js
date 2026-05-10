@@ -39,7 +39,7 @@ export const getEnrollments = (params = {}) =>
 /**
  * Fetch paginated published assignments for the student's enrolled subjects.
  *
- * @param {{ subject_id?: number, status?: 'open'|'closed'|'all', page?: number, per_page?: number }} params
+ * @param {{ subject_id?: number, status?: 'open'|'closed'|'all', due_on?: string, page?: number, per_page?: number }} params
  * @returns {Promise<import('./types').PaginatedResponse>}
  */
 export const getAssignments = (params = {}) =>
@@ -52,6 +52,14 @@ export const getAssignments = (params = {}) =>
  * @returns {Promise<import('./types').AssignmentDetailResponse>}
  */
 export const getAssignmentDetail = (id) => api.get(`/api/students/assignments/${id}`);
+
+/** Start or resume a persisted exam session (server `exam_sessions` row). */
+export const postExamSessionStart = (assignmentId) =>
+  api.post(`/api/students/assignments/${assignmentId}/exam-session/start`);
+
+/** Abandon in-progress exam (counts as attempt used). */
+export const postExamSessionTerminate = (sessionId) =>
+  api.post(`/api/students/exam-sessions/${sessionId}/terminate`);
 
 /**
  * Upload handwritten work images as a new submission.
@@ -84,6 +92,27 @@ export const getSubmissions = (params = {}) =>
  * @returns {Promise<import('./types').SubmissionDetailResponse>}
  */
 export const getSubmissionDetail = (id) => api.get(`/api/students/submissions/${id}`);
+
+/**
+ * Download one uploaded file for the student's submission (blob; triggers save in browser).
+ *
+ * @param {string} submissionId
+ * @param {number} fileIndex
+ * @param {string} [filename] - Suggested download name.
+ */
+export const downloadSubmissionFile = (submissionId, fileIndex, filename) =>
+  api.get(`/api/students/submissions/${submissionId}/files/${fileIndex}`, {
+    responseType: 'blob',
+    timeout: 120000,
+  }).then((res) => {
+    const blob = new Blob([res.data]);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `submission-${fileIndex}`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  });
 
 /**
  * Fetch AI-generated grading feedback for a specific submission.
@@ -130,7 +159,7 @@ export const getProfile = () => api.get('/api/students/profile');
 /**
  * Update the current student's profile (name and/or image URL).
  *
- * @param {{ full_name?: string, profile_image_url?: string }} data
+ * @param {{ full_name?: string, profile_image_url?: string, notification_preferences?: { grading_updates?: boolean, quiz_reminders?: boolean, posture_connection?: boolean } }} data
  * @returns {Promise<import('./types').UserResponse>}
  */
 export const updateProfile = (data) => api.patch('/api/students/profile', data);
@@ -185,3 +214,40 @@ export const getLibraryDocuments = (params = {}) =>
  * @returns {Promise<import('./types').CurriculumDocumentResponse>}
  */
 export const getLibraryDocument = (id) => api.get(`/api/students/library/${id}`);
+
+/**
+ * Resume a paused exam session (e.g. after IoT auto-pause).
+ *
+ * @param {string} sessionId - ExamSession UUID.
+ * @returns {Promise<import('./types').ExamSessionResponse>}
+ */
+export const resumeExamSession = (sessionId) =>
+  api.post(`/api/students/exam-sessions/${sessionId}/resume`);
+
+/**
+ * Fetch IoT device status and latest sensor readings for the current student.
+ *
+ * @returns {Promise<{devices: object[], latest_distance_cm: number|null, latest_ldr_value: number|null}>}
+ */
+export const getIotStatus = () => api.get('/api/students/iot/status');
+
+/**
+ * Download a curriculum document as a file blob (uses auth token automatically).
+ *
+ * @param {string} docId - Document UUID.
+ * @param {string} fileName - Suggested save name.
+ */
+export const downloadDocument = async (docId, fileName) => {
+  const res = await api.get(`/api/students/library/${docId}/download`, {
+    responseType: 'blob',
+    timeout: 180_000,
+  });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};

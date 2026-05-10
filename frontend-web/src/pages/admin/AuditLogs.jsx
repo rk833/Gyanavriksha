@@ -109,10 +109,11 @@ function Pagination({ page, totalPages, onChange }) {
 
 function formatTimestamp(ts) {
   if (!ts) return '—';
-  const d = new Date(ts);
+  const hasOff = ts.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(ts);
+  const d = new Date(hasOff ? ts : ts + 'Z');
   return {
-    date: d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-    time: d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) + ' UTC',
+    date: d.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' }),
+    time: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
   };
 }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   User,
   ArrowLeft,
@@ -156,7 +157,7 @@ export default function StudentReview() {
                         {s.score_percentage != null ? `${s.score_percentage}%` : '—'}
                       </td>
                       <td className="py-3 px-3 text-right text-xs text-slate-500">
-                        {new Date(s.submitted_at).toLocaleDateString()}
+                        {fmtDate(s.submitted_at)}
                       </td>
                     </tr>
                   ))}

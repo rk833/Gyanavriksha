@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   User,
   Mail,
   BookOpen,
   TrendingUp,
   FileText,
-  Award,
   MessageSquare,
   Zap,
 } from 'lucide-react';
@@ -145,7 +145,10 @@ export default function StudentProfile() {
               </button>
             </div>
             <div className="space-y-3">
-              {enrollments.map((enr) => (
+              {enrollments.map((enr) => {
+                const pctRaw = Number(enr.completion_percentage);
+                const pctSafe = Number.isFinite(pctRaw) ? Math.min(Math.max(pctRaw, 0), 100) : 0;
+                return (
                 <div key={enr.enrollment_id} className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-primary-light flex items-center justify-center">
@@ -154,28 +157,27 @@ export default function StudentProfile() {
                     <span className="text-sm font-medium text-slate-700">{enr.subject_name}</span>
                   </div>
                   <div className="flex items-center gap-3 w-40">
-                    <div className="flex-1 bg-slate-100 rounded-full h-2">
+                    <div className="flex-1 bg-slate-100 rounded-full h-2 min-w-0">
                       <div
-                        className="bg-primary rounded-full h-2 transition-all"
-                        style={{ width: `${enr.completion_percentage}%` }}
+                        className="bg-primary rounded-full h-2 transition-all max-w-full"
+                        style={{ width: `${pctSafe}%` }}
                       />
                     </div>
-                    <span className="text-xs text-slate-500 w-10 text-right">
-                      {enr.completion_percentage}%
+                    <span className="text-xs text-slate-500 w-10 text-right shrink-0">
+                      {pctSafe.toFixed(pctSafe % 1 === 0 ? 0 : 1)}%
                     </span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {enrollments.length === 0 && (
                 <p className="text-sm text-slate-400 text-center py-4">No subjects enrolled</p>
               )}
             </div>
           </div>
 
-          {/* Recent activity & achievements */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Recent Activity */}
-            <div className="bg-white rounded-xl border border-primary-light p-5">
+          {/* Recent activity */}
+          <div className="bg-white rounded-xl border border-primary-light p-5">
               <h3 className="font-semibold text-primary-dark mb-3">Recent Activity</h3>
               <div className="space-y-3">
                 {dashboard?.recent_submissions?.length > 0 ? (
@@ -185,7 +187,7 @@ export default function StudentProfile() {
                       <div>
                         <p className="text-sm text-slate-700">{sub.assignment_title} Submitted</p>
                         <p className="text-xs text-slate-400">
-                          {sub.submitted_at ? new Date(sub.submitted_at).toLocaleDateString() : ''}
+                          {fmtDate(sub.submitted_at)}
                         </p>
                       </div>
                     </div>
@@ -194,23 +196,6 @@ export default function StudentProfile() {
                   <p className="text-sm text-slate-400 text-center py-4">No recent activity</p>
                 )}
               </div>
-            </div>
-
-            {/* Achievements */}
-            <div className="bg-white rounded-xl border border-primary-light p-5">
-              <h3 className="font-semibold text-primary-dark mb-3">Achievements</h3>
-              <div className="grid grid-cols-4 gap-3">
-                {[...Array(8)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-12 h-12 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto"
-                  >
-                    <Award className="w-5 h-5 text-slate-300" />
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-slate-400 text-center mt-3">Achievements coming soon</p>
-            </div>
           </div>
         </div>
       </div>

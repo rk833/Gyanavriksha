@@ -30,8 +30,16 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM_EMAIL: str = "noreply@gyanavriksha.com"
 
+    # Contact form receiver
+    CONTACT_RECEIVER_EMAIL: str = "aayushshah817@gmail.com"
+
     # Frontend URL (for email verification/reset links)
     FRONTEND_URL: str = "http://localhost:5173"
+
+    # AI Microservice
+    AI_SERVICE_URL: str = "http://localhost:8001"
+    AI_SERVICE_TIMEOUT: float = 60.0
+    AI_SERVICE_LONG_TIMEOUT: float = 120.0
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

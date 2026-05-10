@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { fmtDate } from '../../utils/dateUtils';
 import {
   User,
   Mail,
@@ -85,7 +86,7 @@ export default function InstructorProfile() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-500">Joined</span>
                 <span className="text-sm text-primary-dark">
-                  {profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : '—'}
+                  {fmtDate(profile?.created_at)}
                 </span>
               </div>
             </div>
@@ -171,7 +172,7 @@ export default function InstructorProfile() {
                         <span className="font-medium">{sub.student_name}</span> submitted {sub.assignment_title}
                       </p>
                       <p className="text-xs text-slate-400">
-                        {sub.subject_name} &middot; {new Date(sub.submitted_at).toLocaleDateString()}
+                        {sub.subject_name} &middot; {fmtDate(sub.submitted_at)}
                       </p>
                     </div>
                     {sub.score_percentage != null && (
