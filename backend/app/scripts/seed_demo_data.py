@@ -6,6 +6,9 @@ Run from the `backend` folder:
     uv run python -m app.scripts.seed_demo_data
 
 This script is idempotent: running it again will skip existing records.
+
+Bruno/OpenAPI example bodies for the same demo users live in
+``app/scripts/demo_api_request_bodies.json`` (repo root ``test-reports/`` for markdown test matrices).
 """
 import hashlib
 import json

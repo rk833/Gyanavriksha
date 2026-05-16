@@ -1,0 +1,256 @@
+================================================================================
+GYANAVRIKSHA - VIVA PREP (Simple English)
+Database: triggers, sequences, authentication, authorization
+================================================================================
+
+Read this before your viva. It matches YOUR project code.
+
+
+--------------------------------------------------------------------------------
+1. TRIGGERS (Database rules that run automatically)
+--------------------------------------------------------------------------------
+
+WHERE IN MIGRATIONS:
+  File: backend/alembic/versions/d4e5f6a7b8c0_exam_sessions_triggers_and_views.py
+  Table: exam_sessions only
+
+WHAT IS A TRIGGER?
+  A trigger is like an automatic guard on the database. When someone inserts
+  or updates a row, PostgreSQL runs a small function BEFORE the change is saved.
+
+OUR 3 TRIGGERS:
+
+  (1) trg_exam_sessions_bi_default_started_at  (BEFORE INSERT)
+      - If started_at is empty, the database fills it with current UTC time.
+      - WHY: Every exam session must have a real start time, even if the app
+        forgets to send one. One place to set the rule = fewer bugs.
+
+  (2) trg_exam_sessions_biu_validate_timestamps  (BEFORE INSERT OR UPDATE)
+      - If ended_at is set, it must NOT be earlier than started_at.
+      - WHY: Stops impossible data (exam "ended" before it "started").
+        Protects reports and fairness of exam timing.
+
+  (3) trg_exam_sessions_bu_immutable_keys  (BEFORE UPDATE)
+      - student_id and assignment_id cannot be changed after the row exists.
+      - WHY: An exam session must always belong to the same student and same
+        assignment. Prevents cheating or fixing mistakes by swapping IDs.
+
+SAME FILE ALSO HAS 3 VIEWS (not triggers, but exam-related):
+  - v_exam_sessions_active          -> live/paused exams
+  - v_exam_session_detail           -> exam + student name + assignment title
+  - v_exam_sessions_per_assignment_stats -> counts per assignment
+  WHY VIEWS: Ready-made queries for admin dashboards / reports without
+  repeating long JOINs in application code.
+
+VIVA ONE-LINER:
+  "We use PostgreSQL triggers on exam_sessions so data integrity is enforced
+   in the database, not only in Python."
+
+
+--------------------------------------------------------------------------------
+2. SEQUENCES (Auto-incrementing numbers for primary keys)
+--------------------------------------------------------------------------------
+
+IMPORTANT - DO NOT CONFUSE TWO MEANINGS OF "SEQUENCE":
+
+  A) In many Alembic files you see:
+       from typing import Sequence, Union
+     That is PYTHON typing for Alembic migration metadata.
+     It is NOT a database sequence. Ignore it for viva unless they ask
+     about Alembic itself.
+
+  B) Database SEQUENCE (what examiners usually mean):
+     In PostgreSQL, when a column is INTEGER/BIGINT with autoincrement=True,
+     Postgres creates a hidden SEQUENCE that gives 1, 2, 3, ... for new rows.
+
+WHERE WE USE AUTO-INCREMENT (implicit sequences) IN MIGRATIONS:
+
+  - grades.grade_id
+      Migration: 6393f2c09201_add_grade_table.py
+
+  - subjects.subject_id
+      Migration: 5825a079045e_add_subject_table.py
+
+  - audit_logs.log_id
+      Migration: 2a49a3ec3d9a_add_audit_log_table.py
+
+  - sensor_logs.log_id
+      Migration: ea4569f54b95_add_sensor_log_table.py
+
+WHY USE SEQUENCES / AUTO-INCREMENT?
+  - Simple numeric IDs for lookup tables and high-volume logs.
+  - Database generates the next number safely (no two rows get the same id).
+  - Good for tables that get many rows (sensor logs, audit logs).
+
+WHAT WE USE INSTEAD OF SEQUENCES FOR MOST USERS / MAIN ENTITIES:
+  - user_id, assignment_id, session_id, etc. use UUID (random unique id).
+  - Migration example: 2546386895e9_add_user_table.py uses UUID for user_id.
+  - WHY UUID: Harder to guess, works across services, no central counter leak.
+
+VIVA ONE-LINER:
+  "We do not define named CREATE SEQUENCE in migrations; PostgreSQL sequences
+   back our autoincrement integer primary keys on grades, subjects, and logs.
+   Main business entities use UUIDs."
+
+
+--------------------------------------------------------------------------------
+3. AUTHENTICATION (Who are you? Proving identity)
+--------------------------------------------------------------------------------
+
+SIMPLE MEANING:
+  Authentication = login. Proving you are the real user (email + password,
+  then maybe 2FA, then you get a token).
+
+WHERE IN DATABASE (Alembic migrations under backend/alembic/versions):
+
+  - 2546386895e9_add_user_table.py
+      users table: email, password_hash, role, is_active, failed_login_attempts,
+      locked_until, totp for authenticator app, etc.
+
+  - d193aed70873_add_refresh_tokens_table.py
+      Stores hashed refresh tokens so users can get new access tokens without
+      typing password every time. Tracks device/IP and expiry.
+
+  - 040651f54dfc_add_email_verification_table.py
+      Tokens for verify email, reset password, 2FA setup (stored as hashes).
+
+  - a1c9e3b72f4d_add_token_version_to_users.py
+      token_version on user: when admin forces password reset, old JWTs stop working.
+
+  - e7f8a9b0c1d2_add_email_2fa_and_challenges.py
+      email_2fa_enabled + two_factor_email_challenges (email OTP codes).
+
+  - a8b9c0d1e2f3_add_two_factor_trusted_devices.py
+      "Remember this device" so 2FA is skipped on trusted devices for a while.
+
+  - 2d9bea4cf8f7_add_qr_sessions_table.py (and later columns)
+      QR login for smart desk / IoT flow.
+
+WHERE IN APPLICATION CODE (not in alembic folder):
+
+  - backend/app/services/auth_service.py
+      authenticate_user(): check password, lockout after 5 fails, 2FA flow,
+      issue access + refresh tokens.
+
+  - backend/app/core/security.py
+      hash_password (bcrypt), create_access_token / create_refresh_token (JWT),
+      decode_token, hash verification tokens.
+
+  - backend/app/api/auth/presentation/router.py
+      HTTP routes: /api/auth/login, register, refresh, 2FA verify, etc.
+
+  - backend/app/api/auth/infrastructure/dependencies.py
+      get_current_user(): reads Bearer token from request, validates JWT,
+      loads user from DB, checks token_version and is_active.
+
+FLOW IN SIMPLE STEPS:
+  1. User sends email + password to login API.
+  2. Server checks bcrypt hash; may require TOTP or email code if 2FA on.
+  3. Server returns JWT access token (short life) + refresh token (longer).
+  4. Client sends "Authorization: Bearer <access_token>" on every API call.
+  5. get_current_user decodes token; if invalid/expired -> 401 Unauthorized.
+
+WHY WE USE THESE PIECES:
+  - Password hash: never store plain passwords.
+  - JWT: stateless proof of login between requests.
+  - Refresh tokens in DB: can revoke sessions, rotate tokens safely.
+  - 2FA: extra layer if password is stolen.
+  - token_version: instant logout everywhere after password reset.
+  - Lockout: slow down brute-force password guessing.
+
+VIVA ONE-LINER:
+  "Authentication is JWT + bcrypt in the API, with refresh tokens, 2FA, and
+   supporting tables created by Alembic migrations on users and related tables."
+
+
+--------------------------------------------------------------------------------
+4. AUTHORIZATION (What are you allowed to do?)
+--------------------------------------------------------------------------------
+
+SIMPLE MEANING:
+  Authorization = permissions AFTER login. You are logged in, but are you
+  allowed to open the admin panel or only your own student data?
+
+WHERE ROLE IS STORED:
+  - users.role column from 2546386895e9_add_user_table.py
+  - Enum values: STUDENT, INSTRUCTOR, ADMIN
+  - Python enum: backend/app/shared/source_enum.py -> UserRole
+
+WHERE ENFORCED IN CODE:
+  - backend/app/api/auth/infrastructure/dependencies.py
+      require_role([UserRole.ADMIN])  -> if wrong role, HTTP 403 Forbidden
+
+  - Used on routers, for example:
+      backend/app/api/admin/presentation/router.py
+        almost every route needs ADMIN role
+      instructor and student routers use INSTRUCTOR or STUDENT as needed
+
+DIFFERENCE FOR VIVA (memorize this):
+  - Authentication -> 401 Unauthorized ("I don't know who you are" or bad token)
+  - Authorization  -> 403 Forbidden ("I know who you are, but you can't do this")
+
+OTHER AUTHORIZATION-RELATED DATABASE PIECES:
+  - 2a49a3ec3d9a_add_audit_log_table.py
+      Records who did what (actor_id, action) for admin accountability.
+  - Business rules in services (e.g. student can only see own submissions)
+      This is authorization in application logic, not only role enum.
+
+WHY ROLE-BASED ACCESS:
+  - One login system; different dashboards and APIs per role.
+  - Admin can manage users; student cannot call admin endpoints.
+  - Central require_role() avoids copying checks in every function.
+
+VIVA ONE-LINER:
+  "Authorization is role-based: role in users table, checked with require_role
+   in FastAPI dependencies; wrong role returns 403."
+
+
+--------------------------------------------------------------------------------
+5. QUICK COMPARISON TABLE (say this if examiner asks "difference?")
+--------------------------------------------------------------------------------
+
+  | Topic            | Where mainly lives              | Purpose                    |
+  |------------------|---------------------------------|----------------------------|
+  | Trigger          | d4e5f6a7b8c0 migration         | DB auto-rules on exam rows |
+  | Sequence         | autoincrement PK migrations     | Auto IDs for logs/grades   |
+  | Authentication   | users + tokens + auth_service   | Login / prove identity     |
+  | Authorization    | users.role + require_role()     | Permission by role         |
+
+
+--------------------------------------------------------------------------------
+6. ALEMBIC FOLDER IN GENERAL (if they ask what versions/ folder is)
+--------------------------------------------------------------------------------
+
+  backend/alembic/versions/ = list of migration scripts.
+  Each file changes the database schema step by step (create table, add column).
+  Alembic tracks which revisions ran so all developers get the same database.
+
+  Triggers are rare in our project (only exam_sessions file above).
+  Most files only create/alter tables and indexes.
+
+
+--------------------------------------------------------------------------------
+7. SAMPLE VIVA QUESTIONS & SHORT ANSWERS
+--------------------------------------------------------------------------------
+
+Q: Why triggers instead of only Python validation?
+A: Python can be bypassed or have bugs; triggers always run in the database
+   for every client (app, script, admin tool).
+
+Q: Why both access and refresh token?
+A: Access token is short-lived (less damage if stolen). Refresh token lets
+   renew access without re-entering password; we store hash in DB to revoke.
+
+Q: Where is password stored?
+A: users.password_hash only (bcrypt), never plain text.
+
+Q: How does admin-only API work?
+A: Route uses Depends(require_role([UserRole.ADMIN])); others get 403.
+
+Q: Do we have CREATE SEQUENCE in SQL?
+A: No explicit migration; autoincrement columns use Postgres sequences internally.
+
+
+Good luck with your viva tomorrow!
+
+================================================================================

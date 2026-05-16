@@ -4,13 +4,13 @@
 #define WIFI_SSID "heavenyard_2"
 #define WIFI_PASSWORD "CLB4041D64"
 
-#define MQTT_BROKER "192.168.1.89"
+#define MQTT_BROKER "192.168.1.97"
 #define MQTT_PORT 1883
 #define MQTT_USER ""
 #define MQTT_PASSWORD ""
 
 #define DEVICE_ID "ESP32-Aayush"
-#define DEVICE_API_KEY "yLo6RWMl_0_l136wfb1epKAByHIEBfFUAsLg7IkeS2I"
+#define DEVICE_API_KEY "EE75rLRZzGFkVTTtVwQ-8j7SeyJWmpadOOGVcPKGqMg"
 #define FIRMWARE_VERSION "0.2.0"
 
 #define TOPIC_LIGHT "gyanavriksha/devices/" DEVICE_ID "/sensors/light"

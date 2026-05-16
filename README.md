@@ -23,41 +23,128 @@ This project targets **Students**, **Instructors**, and **Administrators** with 
 
 ### Prerequisites
 
-- Docker Desktop installed and running
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 
-### Start all services
+### Step 1 — Start all containers
 
 From the repository root (where `docker-compose.yml` lives):
 
 ```bash
 docker compose up --build -d
+```
+
+Wait until Postgres and Redis are healthy and the backend container has started (often ~20 seconds on first run).
+
+### Step 2 — Database setup (run once, or after a fresh DB)
+
+Apply migrations and seed demo users/data:
+
+```bash
 docker compose exec backend uv run alembic upgrade head
 docker compose exec backend uv run python -m app.scripts.seed_demo_data
+```
+
+Optional — index curriculum PDFs into ChromaDB for AI/RAG features:
+
+```bash
 docker compose exec backend uv run python -m app.scripts.index_curriculum_docs
 ```
 
-This starts containers in detached mode, applies migrations, seeds demo data, and indexes curriculum docs into ChromaDB.
+Without **migrations** and **seed**, the web app may fail on login or show empty data.
+
+### Step 3 — Open the app and sign in
+
+Open the web dashboard in your browser:
+
+**http://localhost:5173**
+
+Demo accounts (created by `seed_demo_data`):
+
+| Role | Email | Password |
+|------|--------|----------|
+| Student | `student@gyanavriksha.edu.np` | `Student@1234` |
+| Instructor | `instructor@gyanavriksha.edu.np` | `Instructor@1234` |
+| Admin | `admin@gyanavriksha.edu.np` | `Admin@1234` |
+
+Additional cohort users (e.g. `g9student01@gyanavriksha.edu.np`) use the same password as the main demo student unless you changed the seed script.
+
+### Verify containers
+
+```bash
+docker compose ps
+```
+
+All services should show **running**. If the backend fails, inspect logs:
+
+```bash
+docker compose logs backend -f
+```
+
+### Service endpoints (default)
+
+| Service | URL |
+|---------|-----|
+| **Frontend Web** (main UI) | http://localhost:5173 |
+| **Backend API** | http://localhost:8000 |
+| **Backend Swagger** | http://localhost:8000/docs |
+| **Backend health** | http://localhost:8000/health |
+| **AI microservice** | http://localhost:8001 |
+| **AI Swagger** | http://localhost:8001/docs |
+| **PostgreSQL** | `localhost:5432` (db: `gyanavriksha`, user/pass: `postgres` / `postgres`) |
+| **Redis** | `localhost:6379` |
+| **MQTT** | `localhost:1883` (WebSocket: `localhost:9001`) |
+
+### Mobile app (optional)
+
+The `frontend-mobile` container runs Expo with a tunnel. **`docker compose logs` usually does not show the QR** (non-interactive output). Use one of these instead:
+
+**Option A — Expo Dev Tools in the browser (easiest)**
+
+Open **http://localhost:8081** on your PC. The page shows a QR code and the `exp://…` URL. Scan with **Expo Go** on your phone.
+
+**Option B — Interactive shell inside the container**
+
+From the repository root (Git Bash or similar):
+
+If port 8081 is already in use by the background container, restart it first:
+
+```bash
+docker compose restart frontend-mobile
+```
+
+Wait a few seconds, then start Expo with a TTY so the QR can render:
+
+```bash
+docker compose exec -it frontend-mobile npx expo start --tunnel
+```
+
+The `-it` flags attach a real terminal; the QR often appears there. Press `Ctrl+C` when finished.
+
+**Logs only (QR may be missing)**
+
+```bash
+docker compose logs frontend-mobile -f
+```
+
+You should see `Tunnel connected` / `Tunnel ready` even when no QR is printed. Use Option A or B to connect.
+
+Set `EXPO_PUBLIC_API_BASE_URL` in `frontend-mobile/.env` to your PC’s LAN IP (e.g. `http://192.168.1.100:8000`) so the phone can reach the backend. See `frontend-mobile/README.md`.
+
+For day-to-day development on a PC, the web UI at **http://localhost:5173** is usually simpler than mobile.
 
 ### Stop services
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Reset everything (including DB volume)
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
-## Service endpoints (default)
-
-- **Frontend Web**: `http://localhost:5173`
-- **Backend API**: `http://localhost:8000` (Swagger docs: `http://localhost:8000/docs`)
-- **AI Microservice**: `http://localhost:8001` (Swagger docs: `http://localhost:8001/docs`)
-- **PostgreSQL**: `localhost:5432`
-- **Redis**: `localhost:6379`
-- **MQTT**: `localhost:1883` (WebSocket: `localhost:9001`)
+After a reset, run **Step 2** again before logging in.
 
 ## Local development (without Docker)
 

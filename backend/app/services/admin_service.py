@@ -912,7 +912,11 @@ def _has_submissions(db: Session, student_id: uuid.UUID, subject_id: int) -> boo
 
 
 def remove_enrollment_safe(db: Session, enrollment_id: uuid.UUID) -> str | None:
-    """Soft-delete an enrollment unless the student has active submissions.
+    """Hard-delete an enrollment unless the student has existing submissions.
+
+    Soft-deleting (is_active=False) is intentionally avoided here because
+    is_active=False is the 'pending approval' state — mixing removal with
+    pending would make removed students appear in the approval queue.
 
     Returns an error string or None on success.
     """
@@ -921,7 +925,7 @@ def remove_enrollment_safe(db: Session, enrollment_id: uuid.UUID) -> str | None:
         return "NOT_FOUND"
     if _has_submissions(db, enrollment.student_id, enrollment.subject_id):
         return "Cannot remove enrollment with existing submissions"
-    enrollment.is_active = False
+    db.delete(enrollment)
     db.flush()
     return None
 
