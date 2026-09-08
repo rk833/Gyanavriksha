@@ -1,0 +1,240 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import QRCode from 'react-qr-code';
+import { QrCode, Loader2, ArrowLeft, RefreshCw, CheckCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
+import api from '../../services/api';
+import AuthLayout from '../../layouts/AuthLayout';
+import useAuth from '../../hooks/useAuth';
+
+export default function QRLogin() {
+  const navigate = useNavigate();
+  const { fetchUser } = useAuth();
+  const pollRef = useRef(null);
+
+  const [sessionId, setSessionId] = useState('');
+  const [qrData, setQrData] = useState('');
+  const [status, setStatus] = useState('loading');
+  const [timeLeft, setTimeLeft] = useState(120);
+
+  const createSession = useCallback(async () => {
+    setStatus('loading');
+    try {
+      const { data } = await api.post('/api/auth/qr/create');
+      setSessionId(data.session_id);
+      setQrData(data.qr_data);
+      setTimeLeft(data.expires_in || 120);
+      setStatus('pending');
+    } catch {
+      setStatus('error');
+      toast.error('Failed to create QR session');
+    }
+  }, []);
+
+  useEffect(() => {
+    createSession();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [createSession]);
+
+  useEffect(() => {
+    if (!sessionId || status === 'authenticated' || status === 'expired' || status === 'error') return;
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/api/auth/qr/status/${sessionId}`);
+        if (data.status === 'scanned') {
+          setStatus('scanned');
+        } else if (data.status === 'authenticated') {
+          if (data.access_token && data.refresh_token) {
+            clearInterval(pollRef.current);
+            setStatus('authenticated');
+            localStorage.setItem('access_token', data.access_token);
+            localStorage.setItem('refresh_token', data.refresh_token);
+            try {
+              await fetchUser();
+            } catch {
+              /* fetchUser clears user on failure */
+            }
+            toast.success('Signed in successfully');
+            navigate('/student/dashboard', { replace: true });
+          } else {
+            clearInterval(pollRef.current);
+            setStatus('expired');
+            toast.error('This QR sign-in was already used. Generate a new code.');
+          }
+        } else if (data.status === 'expired') {
+          clearInterval(pollRef.current);
+          setStatus('expired');
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 1500);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [sessionId, status, navigate, fetchUser]);
+
+  useEffect(() => {
+    if (status !== 'pending' && status !== 'scanned') return;
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setStatus('expired');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [status]);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleRegenerate = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    createSession();
+  };
+
+  const statusIndicator = () => {
+    switch (status) {
+      case 'pending':
+        return (
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary-dark text-white rounded-full text-sm font-mono">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            QR expires in {formatTime(timeLeft)}
+          </div>
+        );
+      case 'scanned':
+        return (
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary-light text-primary rounded-full text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Scanned! Waiting for confirmation...
+          </div>
+        );
+      case 'authenticated':
+        return (
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-full text-sm">
+            <CheckCircle className="w-4 h-4" />
+            Authenticated! Redirecting...
+          </div>
+        );
+      case 'expired':
+        return (
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 rounded-full text-sm">
+            QR code expired
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <AuthLayout>
+      <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-primary-light p-8">
+        <div className="text-center mb-6">
+          <h2 className="text-2xl font-bold text-primary-dark">Sign in on the web</h2>
+          <p className="text-slate-500 mt-1">
+            Log in with your student account on the mobile app, then scan this code to open the web portal on this
+            computer.
+          </p>
+        </div>
+
+        <div className="flex justify-center mb-4">
+          {status === 'loading' ? (
+            <div className="w-56 h-56 flex items-center justify-center border-2 border-dashed border-primary-light rounded-lg">
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            </div>
+          ) : status === 'error' ? (
+            <div className="w-56 h-56 flex flex-col items-center justify-center border-2 border-dashed border-primary-light rounded-lg text-slate-400">
+              <QrCode className="w-12 h-12 mb-2" />
+              <p className="text-sm">Failed to load</p>
+            </div>
+          ) : (
+            <div className="relative inline-flex p-3 border-2 border-primary-light rounded-lg bg-white">
+              <QRCode value={qrData} size={208} level="M" />
+              <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-primary rounded-tl" />
+              <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-primary rounded-tr" />
+              <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-primary rounded-bl" />
+              <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-primary rounded-br" />
+            </div>
+          )}
+        </div>
+
+        <div className="text-center mb-6">{statusIndicator()}</div>
+
+        <div className="border border-primary-light rounded-lg divide-y divide-primary-light mb-6">
+          <div className="flex items-center gap-3 p-3">
+            <span className="w-6 h-6 bg-primary-light rounded text-xs font-semibold flex items-center justify-center text-primary">
+              1
+            </span>
+            <p className="text-sm text-slate-600">
+              Sign in on the app with your <strong>student</strong> email and password (or quick sign-in)
+            </p>
+          </div>
+          <div className="flex items-center gap-3 p-3">
+            <span className="w-6 h-6 bg-primary-light rounded text-xs font-semibold flex items-center justify-center text-primary">
+              2
+            </span>
+            <p className="text-sm text-slate-600">
+              Open <strong>Scan QR for web login</strong> on the login screen
+            </p>
+          </div>
+          <div className="flex items-center gap-3 p-3">
+            <span className="w-6 h-6 bg-primary-light rounded text-xs font-semibold flex items-center justify-center text-primary">
+              3
+            </span>
+            <p className="text-sm text-slate-600">
+              Point your camera at this code
+              <br />
+              <span className="text-slate-400 text-xs">You'll be signed in automatically</span>
+            </p>
+          </div>
+        </div>
+
+        {status === 'expired' && (
+          <button
+            onClick={handleRegenerate}
+            className="w-full flex items-center justify-center gap-2 py-3 mb-3 bg-primary-dark text-white rounded-lg font-semibold hover:bg-primary-dark/90 transition"
+          >
+            <RefreshCw className="w-4 h-4" /> Regenerate QR Code
+          </button>
+        )}
+
+        <div className="flex items-center my-4">
+          <div className="flex-1 border-t border-primary-light" />
+          <span className="px-4 text-xs text-slate-400 uppercase tracking-wider">Or sign in another way</span>
+          <div className="flex-1 border-t border-primary-light" />
+        </div>
+
+        <Link
+          to="/login"
+          className="w-full flex items-center justify-center gap-2 py-3 bg-primary-dark text-white rounded-lg font-semibold hover:bg-primary-dark/90 transition"
+        >
+          <ArrowLeft className="w-4 h-4" /> Sign In with Email
+        </Link>
+        <Link
+          to="/login"
+          className="w-full flex items-center justify-center py-3 mt-2 border border-primary-light rounded-lg text-slate-600 text-sm hover:bg-primary-light/30 transition"
+        >
+          Cancel
+        </Link>
+
+        <div className="mt-6 pt-4 border-t border-primary-light text-center">
+          <p className="text-xs text-slate-400">Secured with 2FA &middot; Gyanavriksha</p>
+        </div>
+      </div>
+    </AuthLayout>
+  );
+}

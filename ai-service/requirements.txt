@@ -1,0 +1,34 @@
+# model access
+transformers
+sentence_transformers
+google-genai
+google-cloud-vision
+scikit-learn
+
+# rag focus
+langchain
+langchain-google-genai
+langchain-google-vertexai
+langchain-chroma
+langchain-classic
+langchain-text-splitters
+chromadb
+rank_bm25
+
+# ocr
+pytesseract
+opencv-python
+pymupdf
+
+# preprocessing
+pandas
+numpy
+matplotlib
+seaborn
+
+
+# core tech
+fastapi
+pydantic
+python-multipart
+uvicorn

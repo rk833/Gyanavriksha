@@ -1,0 +1,97 @@
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from functools import lru_cache
+from typing import Optional
+import os
+import tempfile
+from app.rag.rag_service import RAGService, DocumentUploadRequest, QueryRequest
+
+router = APIRouter(prefix="/rag", tags=["RAG"])
+
+@lru_cache(maxsize=1)
+def get_rag_service() -> RAGService:
+    """Singleton: model is loaded once and reused across all requests."""
+    return RAGService()
+
+@router.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    user_type: str = Form(...),
+    submitted_by: str = Form(...),
+    grade: Optional[int] = Form(None),
+    subject: Optional[str] = Form(None),
+    instructor_id: Optional[str] = Form(None),
+    class_id: Optional[str] = Form(None),
+    student_id: Optional[str] = Form(None),
+    chunk_size: Optional[int] = Form(None),
+    rag_service: RAGService = Depends(get_rag_service)
+):
+    try:
+        request = DocumentUploadRequest(
+            user_type=user_type,
+            grade=grade,
+            subject=subject,
+            instructor_id=instructor_id,
+            class_id=class_id,
+            student_id=student_id,
+            chunk_size=chunk_size,
+            submitted_by=submitted_by
+        )
+        
+        temp_dir = tempfile.mkdtemp()
+        # Create a file path with the original name for the preprocessor
+        original_named_path = os.path.join(temp_dir, file.filename if file.filename else "uploaded_doc")
+        
+        content = await file.read()
+        with open(original_named_path, "wb") as f:
+            f.write(content)
+            
+        result = rag_service.upload_document(original_named_path, request)
+        
+        # Cleanup
+        os.remove(original_named_path)
+        os.rmdir(temp_dir)
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/query")
+async def query_rag(
+    request: QueryRequest,
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.query(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/collections/stats")
+async def collection_stats(
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.get_collection_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/collections/snapshot")
+async def collection_snapshot(
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.export_collection_snapshot()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/collections")
+async def create_collection(
+    name: str = Form(...),
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    try:
+        return rag_service.create_collection(name=name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
